@@ -88,6 +88,59 @@ Each repo Watchdog wants the agent to work on must:
    https://open-inspect-web-watchdog.watchdog-no.workers.dev/settings → Images, so fresh sessions
    restore from a snapshot in seconds rather than re-running setup.
 
+## OpenAI model access (ChatGPT OAuth)
+
+Open-Inspect supports OpenAI models (`gpt-5.x` series, Codex variants) via ChatGPT subscription auth
+— not API keys. Watchdog uses a single shared ChatGPT account so every repo has OpenAI access
+through one global secret.
+
+### First-time setup
+
+1. Sign in to the shared `Watchdog AI` ChatGPT account (Plus/Pro/Team/Enterprise tier required — the
+   free tier doesn't grant API access).
+2. Install OpenCode locally:
+   ```sh
+   npm install -g opencode-ai@latest
+   ```
+3. Run the OAuth flow:
+   ```sh
+   opencode
+   # inside the TUI: /connect setup → ChatGPT → complete browser OAuth
+   ```
+4. Read the credentials file:
+   ```sh
+   cat ~/.local/share/opencode/auth.json
+   ```
+5. In the `openai` section, copy the `refresh` and `accountId` values.
+6. **Stash both values in 1Password under `Watchdog Open-Inspect → OpenAI OAuth`** so they survive a
+   fresh deploy without needing to re-OAuth.
+7. Add them to Open-Inspect:
+   - Visit https://open-inspect-web-watchdog.watchdog-no.workers.dev/settings → **Secrets**
+   - Scope dropdown → **All Repositories (Global)**
+   - Add `OPENAI_OAUTH_REFRESH_TOKEN` = `refresh` value
+   - Add `OPENAI_OAUTH_ACCOUNT_ID` = `accountId` value
+
+After this, OpenAI models appear in the model dropdown when starting a session against any Watchdog
+repo.
+
+### Restoring access
+
+If sessions start failing with `Token refresh failed` errors or OpenAI models stop working:
+
+1. The OAuth refresh token has likely been revoked or expired.
+2. Repeat steps 2–5 above to obtain new credentials.
+3. In the web UI Secrets page, **edit** (don't delete + re-add) the global
+   `OPENAI_OAUTH_REFRESH_TOKEN` and `OPENAI_OAUTH_ACCOUNT_ID` with the new values.
+4. Update the 1Password entry.
+
+No code or infra changes needed for restore.
+
+### Why global, not per-repo or per-developer
+
+Open-Inspect's secret store is repo-scoped, not user-scoped. Per-developer OAuth would mean
+last-write-wins between teammates editing the same repo's secrets. Single shared account on a global
+secret keeps it clean.
+
 ## Watchdog-specific customizations vs upstream
 
 The only diffs we maintain on top of `ColeMurray/background-agents` are this `WATCHDOG.md` file and
