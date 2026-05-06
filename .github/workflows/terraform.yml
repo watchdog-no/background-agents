@@ -167,6 +167,7 @@ jobs:
           terraform init \
             -backend-config="access_key=${{ secrets.R2_ACCESS_KEY_ID }}" \
             -backend-config="secret_key=${{ secrets.R2_SECRET_ACCESS_KEY }}" \
+            -backend-config="bucket=${{ secrets.R2_BUCKET_NAME }}" \
             -backend-config='endpoints={s3="https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com"}'
         working-directory: ${{ env.TF_WORKING_DIR }}
 
@@ -304,6 +305,7 @@ jobs:
           terraform init \
             -backend-config="access_key=${{ secrets.R2_ACCESS_KEY_ID }}" \
             -backend-config="secret_key=${{ secrets.R2_SECRET_ACCESS_KEY }}" \
+            -backend-config="bucket=${{ secrets.R2_BUCKET_NAME }}" \
             -backend-config='endpoints={s3="https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com"}'
         working-directory: ${{ env.TF_WORKING_DIR }}
 
