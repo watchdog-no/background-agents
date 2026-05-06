@@ -41,7 +41,11 @@ export async function getGitHubConfig(
       error: err instanceof Error ? err : new Error(String(err)),
       fallback: "fail_closed",
     });
-    return { ...FAIL_CLOSED, model: env.DEFAULT_MODEL };
+    return {
+      ...FAIL_CLOSED,
+      model: env.DEFAULT_MODEL,
+      reasoningEffort: env.DEFAULT_REASONING_EFFORT ?? null,
+    };
   }
 
   if (!response.ok) {
@@ -50,7 +54,11 @@ export async function getGitHubConfig(
       status: response.status,
       fallback: "fail_closed",
     });
-    return { ...FAIL_CLOSED, model: env.DEFAULT_MODEL };
+    return {
+      ...FAIL_CLOSED,
+      model: env.DEFAULT_MODEL,
+      reasoningEffort: env.DEFAULT_REASONING_EFFORT ?? null,
+    };
   }
 
   const data = (await response.json()) as {
@@ -68,7 +76,7 @@ export async function getGitHubConfig(
   if (!data.config) {
     return {
       model: env.DEFAULT_MODEL,
-      reasoningEffort: null,
+      reasoningEffort: env.DEFAULT_REASONING_EFFORT ?? null,
       autoReviewOnOpen: true,
       enabledRepos: null,
       allowedTriggerUsers: null,
@@ -79,7 +87,7 @@ export async function getGitHubConfig(
 
   return {
     model: data.config.model ?? env.DEFAULT_MODEL,
-    reasoningEffort: data.config.reasoningEffort,
+    reasoningEffort: data.config.reasoningEffort ?? env.DEFAULT_REASONING_EFFORT ?? null,
     autoReviewOnOpen: data.config.autoReviewOnOpen,
     enabledRepos: data.config.enabledRepos,
     allowedTriggerUsers: data.config.allowedTriggerUsers,

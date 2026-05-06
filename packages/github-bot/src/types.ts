@@ -14,6 +14,9 @@ export interface Env {
   /** Default model ID for new sessions. */
   DEFAULT_MODEL: string;
 
+  /** Default reasoning effort applied when no per-repo override is set. */
+  DEFAULT_REASONING_EFFORT?: string;
+
   /** GitHub App bot username (e.g., "open-inspect-bot[bot]"). */
   GITHUB_BOT_USERNAME: string;
 
