@@ -384,7 +384,7 @@ describe("handleReviewRequested", () => {
     expect(promptBody.authorId).toBe("github:1001");
     expect(promptBody.content).toContain("Pull Request #42");
     expect(promptBody.content).toContain("acme/widgets");
-    expect(promptBody.content).toContain("gh pr diff 42");
+    expect(promptBody.content).toContain("/code-review --pr 42 --post");
 
     // Verify logging
     expect(log.info).toHaveBeenCalledWith(
