@@ -216,6 +216,43 @@ project_root = "../../../"
 #          "https://cdn.example.com/logo.svg".
 # app_icon_url = ""
 
+# Override the R2 media bucket name (optional)
+# Defaults to "open-inspect-media-<deployment_name>" when left empty.
+# Set this when the bucket must be pre-created out-of-band — for example, when
+# the Cloudflare API token used by Terraform doesn't have permission to create
+# R2 buckets and an admin had to provision one with a specific name.
+#
+# Manual setup requirements (when an admin pre-creates the bucket):
+#   - Must live in the same Cloudflare account as the Workers (cloudflare_account_id).
+#   - Private bucket — do NOT enable public access. The control-plane Worker
+#     reads/writes objects through its binding; clients never hit R2 directly.
+#   - No CORS rules or lifecycle policies are required.
+#   - Location should match r2_media_location (default ENAM).
+#
+# Create with wrangler (equivalent to what Terraform would do):
+#   wrangler r2 bucket create <bucket-name> --location ENAM
+# Or create via the Cloudflare dashboard: R2 -> Create bucket (Standard storage class).
+#
+# After manual creation, import the bucket so Terraform manages the binding without
+# trying to recreate it:
+#   terraform import cloudflare_r2_bucket.media <cloudflare_account_id>/<bucket-name>/default
+#
+# WARNING — renaming an existing Terraform-managed bucket:
+# If you previously deployed without this variable (Terraform owns the default-named
+# bucket) and now set r2_media_bucket_name to a different name WITHOUT first running
+# `terraform import` on the new name, Terraform will destroy the existing bucket and
+# create a new one — permanently deleting all stored objects. Migrate objects first
+# (e.g. with rclone) and import the new bucket before applying.
+#
+# Worker runtime needs (granted automatically through the binding, listed for reference):
+#   - R2 object-level: Read, Write, Delete on this bucket only.
+# The Terraform/Cloudflare API token does NOT need object-level R2 permissions —
+# it only manages the bucket resource and the Worker binding. Required token scopes:
+#   - Workers R2 Storage: Edit (only needed when Terraform creates/manages the bucket;
+#     if the bucket is pre-created and imported, drop to Read or omit)
+#   - Workers Scripts: Edit (to attach the MEDIA_BUCKET binding to the Worker)
+# r2_media_bucket_name = ""
+
 # =============================================================================
 # Initial Deployment Flags
 # =============================================================================
