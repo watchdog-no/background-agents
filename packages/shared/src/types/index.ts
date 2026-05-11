@@ -356,6 +356,7 @@ export interface SessionState {
   tunnelUrls?: Record<string, string> | null;
   ttydUrl?: string | null;
   ttydToken?: string | null;
+  modalSandboxUrl?: string | null;
 }
 
 // Participant presence info

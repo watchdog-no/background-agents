@@ -13,7 +13,7 @@ import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
 import { getGitHubAppConfig, getCachedInstallationToken } from "../auth/github-app";
-import { createModalClient } from "../sandbox/client";
+import { buildModalSandboxUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
 import { createModalProvider } from "../sandbox/providers/modal-provider";
 import { createDaytonaProvider } from "../sandbox/providers/daytona-provider";
@@ -1646,6 +1646,7 @@ export class SessionDO extends DurableObject<Env> {
       tunnelUrls: sandbox?.tunnel_urls ? this.safeParseTunnelUrls(sandbox.tunnel_urls) : null,
       ttydUrl: sandbox?.ttyd_url ?? null,
       ttydToken,
+      modalSandboxUrl: buildModalSandboxUrl(this.env.MODAL_WORKSPACE, sandbox?.modal_object_id),
     };
   }
 
