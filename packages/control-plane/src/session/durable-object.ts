@@ -709,6 +709,7 @@ export class SessionDO extends DurableObject<Env> {
       };
     }
 
+    const workspace = this.env.MODAL_WORKSPACE;
     const config = {
       ...DEFAULT_LIFECYCLE_CONFIG,
       controlPlaneUrl,
@@ -719,6 +720,8 @@ export class SessionDO extends DurableObject<Env> {
         timeoutMs: parseInt(this.env.SANDBOX_INACTIVITY_TIMEOUT_MS || "600000", 10),
       },
       mcpServerLookup,
+      modalSandboxUrlBuilder: (providerObjectId: string) =>
+        buildModalSandboxUrl(workspace, providerObjectId),
     };
 
     // Create repo image lookup if D1 is available (Modal-only — Daytona doesn't use repo images)
