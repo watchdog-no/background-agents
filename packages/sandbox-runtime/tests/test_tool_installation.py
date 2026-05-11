@@ -325,6 +325,8 @@ class TestInstallSkills:
         agent_browser_dir = skills_dir / "agent-browser"
         agent_browser_dir.mkdir(parents=True)
         (agent_browser_dir / "SKILL.md").write_text("# agent-browser")
+        (agent_browser_dir / "scripts").mkdir()
+        (agent_browser_dir / "scripts" / "helper.py").write_text("print('ok')\n")
 
         with _patch_paths(
             legacy=tmp_path / "no-legacy",
@@ -336,6 +338,9 @@ class TestInstallSkills:
         skill_dest = workdir / ".opencode" / "skills" / "agent-browser" / "SKILL.md"
         assert skill_dest.exists()
         assert skill_dest.read_text() == "# agent-browser"
+        helper_dest = workdir / ".opencode" / "skills" / "agent-browser" / "scripts" / "helper.py"
+        assert helper_dest.exists()
+        assert helper_dest.read_text() == "print('ok')\n"
 
     def test_skills_dir_non_directory_is_ignored(self, tmp_path):
         """A non-directory skills path should not raise or copy files."""

@@ -84,32 +84,16 @@ ${prBranchesBlock}
 ${prDescriptionBlock}
 
 ## Instructions
-1. Run \`gh pr diff ${number}\` to see the full diff
-2. Review the changes thoroughly, focusing on:
-   - Correctness and potential bugs
-   - Security concerns
-   - Performance implications
-   - Code clarity and maintainability
-3. You may read individual files in the repo for additional context beyond the diff
-4. When your review is complete, submit it via:
+1. Use the $code-review skill to review this pull request and post the review to GitHub.
+2. Treat this request as:
 
-   gh api repos/${owner}/${repo}/pulls/${number}/reviews \\
-     --method POST \\
-     -f body="<your review summary>" \\
-     -f event="COMMENT|APPROVE|REQUEST_CHANGES"
+   /code-review --pr ${number} --post
 
-   Use APPROVE if the code looks good, REQUEST_CHANGES if changes are needed,
-   or COMMENT for general feedback.
-
-5. For inline comments on specific files:
-
-   gh api repos/${owner}/${repo}/pulls/${number}/comments \\
-     --method POST \\
-     -f body="<comment>" \\
-     -f path="<file path>" \\
-     -f commit_id="$(gh api repos/${owner}/${repo}/pulls/${number} --jq '.head.sha')" \\
-     -f line=<line number> \\
-     -f side="RIGHT"
+3. The review must be posted to GitHub because this session was started by a GitHub webhook and the
+   PR is where users will see the result. Do not stop after a local dry-run review.
+4. You may read individual files in the repo for context beyond the diff, but do not make code
+   changes as part of the review.
+5. Apply any Custom Instructions below as review focus while still posting the review.
 
 ${buildCustomInstructionsSection(codeReviewInstructions)}
 ${buildCommentGuidelines(isPublic)}`;
