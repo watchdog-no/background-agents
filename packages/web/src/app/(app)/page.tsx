@@ -82,10 +82,11 @@ export default function Home() {
     if (enabledModels.length === 0 || hasHydratedModelPreferences) return;
 
     const storedModel = localStorage.getItem(LAST_SELECTED_MODEL_STORAGE_KEY);
+    const defaultModel = enabledModels.includes(DEFAULT_MODEL)
+      ? DEFAULT_MODEL
+      : (enabledModels[0] ?? DEFAULT_MODEL);
     const selectedModelFromStorage =
-      storedModel && enabledModels.includes(storedModel)
-        ? storedModel
-        : (enabledModels[0] ?? DEFAULT_MODEL);
+      storedModel && enabledModels.includes(storedModel) ? storedModel : defaultModel;
 
     const storedReasoningEffort = localStorage.getItem(LAST_SELECTED_REASONING_EFFORT_STORAGE_KEY);
     const reasoningEffortFromStorage =
@@ -187,7 +188,9 @@ export default function Home() {
     if (!hasHydratedModelPreferences) return;
 
     if (enabledModels.length > 0 && !enabledModels.includes(selectedModel)) {
-      const fallback = enabledModels[0] ?? DEFAULT_MODEL;
+      const fallback = enabledModels.includes(DEFAULT_MODEL)
+        ? DEFAULT_MODEL
+        : (enabledModels[0] ?? DEFAULT_MODEL);
       setSelectedModel(fallback);
       setReasoningEffort(getDefaultReasoningEffort(fallback));
       return;

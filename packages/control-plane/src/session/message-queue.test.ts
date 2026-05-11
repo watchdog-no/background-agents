@@ -82,7 +82,10 @@ function createClientInfo(overrides: Partial<ClientInfo> = {}): ClientInfo {
   };
 }
 
-function buildQueue(options?: { getClientInfo?: (ws: WebSocket) => ClientInfo | null }) {
+function buildQueue(options?: {
+  getClientInfo?: (ws: WebSocket) => ClientInfo | null;
+  session?: SessionRow;
+}) {
   const repository = {
     createMessage: vi.fn(),
     createEvent: vi.fn(),
@@ -134,7 +137,7 @@ function buildQueue(options?: { getClientInfo?: (ws: WebSocket) => ClientInfo | 
     scmProvider: "github",
     getClientInfo: options?.getClientInfo ?? (() => createClientInfo()),
     validateReasoningEffort: vi.fn(() => null),
-    getSession: vi.fn(() => createSession()),
+    getSession: vi.fn(() => options?.session ?? createSession()),
     updateLastActivity,
     spawnSandbox,
     broadcast,
@@ -205,6 +208,26 @@ describe("SessionMessageQueue", () => {
       expect.objectContaining({ type: "prompt", messageId: "msg-42" })
     );
     expect(h.broadcast).toHaveBeenCalledWith({ type: "processing_status", isProcessing: true });
+  });
+
+  it("dispatches xhigh for the default GPT 5.5 model when effort is unset", async () => {
+    const h = buildQueue({
+      session: createSession({ model: "openai/gpt-5.5", reasoning_effort: null }),
+    });
+    const sandboxWs = { readyState: WebSocket.OPEN } as WebSocket;
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ model: null }));
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+
+    await h.queue.processMessageQueue();
+
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      sandboxWs,
+      expect.objectContaining({
+        type: "prompt",
+        model: "openai/gpt-5.5",
+        reasoningEffort: "xhigh",
+      })
+    );
   });
 
   it("marks processing message failed and broadcasts synthetic completion on stop", async () => {
