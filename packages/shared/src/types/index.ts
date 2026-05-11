@@ -332,6 +332,7 @@ export type ServerMessage =
   | { type: "code_server_info"; url: string; password: string }
   | { type: "ttyd_info"; url: string; token: string }
   | { type: "tunnel_urls"; urls: Record<string, string> }
+  | { type: "modal_sandbox_url"; url: string }
   | { type: "error"; code: string; message: string };
 
 // Session state sent to clients
@@ -356,6 +357,7 @@ export interface SessionState {
   tunnelUrls?: Record<string, string> | null;
   ttydUrl?: string | null;
   ttydToken?: string | null;
+  modalSandboxUrl?: string | null;
 }
 
 // Participant presence info

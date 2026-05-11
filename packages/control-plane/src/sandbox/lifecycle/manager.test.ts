@@ -328,6 +328,61 @@ describe("SandboxLifecycleManager", () => {
       ).toBe(true);
     });
 
+    it("broadcasts modal_sandbox_url after spawn when builder is configured", async () => {
+      const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const broadcaster = createMockBroadcaster();
+      const config = {
+        ...createTestConfig(),
+        modalSandboxUrlBuilder: (id: string) => `https://modal.example/${id}`,
+      };
+
+      const manager = new SandboxLifecycleManager(
+        createMockProvider(),
+        storage,
+        broadcaster,
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        config
+      );
+
+      await manager.spawnSandbox();
+
+      expect(storage.calls).toContain("updateSandboxModalObjectId:provider-obj-123");
+      const urlMessages = broadcaster.messages.filter(
+        (m) => (m as { type: string }).type === "modal_sandbox_url"
+      );
+      expect(urlMessages).toHaveLength(1);
+      expect(urlMessages[0]).toEqual({
+        type: "modal_sandbox_url",
+        url: "https://modal.example/provider-obj-123",
+      });
+    });
+
+    it("does not broadcast modal_sandbox_url when no builder is configured", async () => {
+      const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const broadcaster = createMockBroadcaster();
+
+      const manager = new SandboxLifecycleManager(
+        createMockProvider(),
+        storage,
+        broadcaster,
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        createTestConfig()
+      );
+
+      await manager.spawnSandbox();
+
+      expect(storage.calls).toContain("updateSandboxModalObjectId:provider-obj-123");
+      expect(
+        broadcaster.messages.some((m) => (m as { type: string }).type === "modal_sandbox_url")
+      ).toBe(false);
+    });
+
     it("schedules connecting timeout alarm after spawn", async () => {
       const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
       const storage = createMockStorage(createMockSession(), sandbox);
@@ -523,6 +578,48 @@ describe("SandboxLifecycleManager", () => {
 
       // Verify providerObjectId was stored for future snapshots
       expect(storage.calls).toContain("updateSandboxModalObjectId:new-modal-obj-after-restore");
+    });
+
+    it("broadcasts modal_sandbox_url after restore when builder is configured", async () => {
+      const sandbox = createMockSandbox({
+        status: "stopped",
+        snapshot_image_id: "img-abc123",
+      });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const broadcaster = createMockBroadcaster();
+      const provider = createMockProvider({
+        restoreFromSnapshot: vi.fn(async (config: RestoreConfig) => ({
+          success: true,
+          sandboxId: config.sandboxId,
+          providerObjectId: "restored-obj-456",
+        })),
+      });
+      const config = {
+        ...createTestConfig(),
+        modalSandboxUrlBuilder: (id: string) => `https://modal.example/${id}`,
+      };
+
+      const manager = new SandboxLifecycleManager(
+        provider,
+        storage,
+        broadcaster,
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        config
+      );
+
+      await manager.spawnSandbox();
+
+      expect(storage.calls).toContain("updateSandboxModalObjectId:restored-obj-456");
+      const urlMessages = broadcaster.messages.filter(
+        (m) => (m as { type: string }).type === "modal_sandbox_url"
+      );
+      expect(urlMessages).toHaveLength(1);
+      expect(urlMessages[0]).toEqual({
+        type: "modal_sandbox_url",
+        url: "https://modal.example/restored-obj-456",
+      });
     });
 
     it("resets isSpawningSandbox flag after restore throws error", async () => {

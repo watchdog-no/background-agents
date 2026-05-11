@@ -418,6 +418,10 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
           setSessionState((prev) => (prev ? { ...prev, tunnelUrls: data.urls } : null));
           break;
 
+        case "modal_sandbox_url":
+          setSessionState((prev) => (prev ? { ...prev, modalSandboxUrl: data.url } : null));
+          break;
+
         case "sandbox_ready":
           setSessionState((prev) => (prev ? { ...prev, sandboxStatus: "ready" } : null));
           break;
