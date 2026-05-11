@@ -395,6 +395,12 @@ variable "r2_media_location" {
   default     = "ENAM"
 }
 
+variable "r2_media_bucket_name" {
+  description = "Override the R2 media bucket name. Leave empty to use the default 'open-inspect-media-<deployment_name>'. Set this when the bucket must be pre-created out-of-band (e.g. when the Terraform credentials cannot create R2 buckets)."
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # Access Control
 # =============================================================================
