@@ -166,6 +166,14 @@ export interface SandboxLifecycleConfig {
   mcpServerLookup?: McpServerLookup;
   /** Resolves the spawn-time agent-slack-notify gate. */
   slackAgentNotifyLookup?: SlackAgentNotifyLookup;
+  /**
+   * Builds a deep link to the sandbox's detail panel in the provider dashboard.
+   * Called after a provider object id is persisted so the URL can be broadcast
+   * to already-connected clients. Returns null when no link can be built
+   * (e.g. workspace not configured, non-Modal provider). Optional — when
+   * absent the helper skips the broadcast entirely.
+   */
+  modalSandboxUrlBuilder?: (providerObjectId: string) => string | null;
 }
 
 /**
@@ -454,7 +462,7 @@ export class SandboxLifecycleManager {
       });
 
       if (result.providerObjectId) {
-        this.storage.updateSandboxModalObjectId(result.providerObjectId);
+        this.storeAndBroadcastModalObjectId(result.providerObjectId);
       }
       if (result.codeServerUrl && result.codeServerPassword) {
         await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -636,7 +644,7 @@ export class SandboxLifecycleManager {
         });
 
         if (result.providerObjectId) {
-          this.storage.updateSandboxModalObjectId(result.providerObjectId);
+          this.storeAndBroadcastModalObjectId(result.providerObjectId);
         }
         if (result.codeServerUrl && result.codeServerPassword) {
           await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -751,7 +759,7 @@ export class SandboxLifecycleManager {
       }
 
       if (result.providerObjectId && result.providerObjectId !== providerObjectId) {
-        this.storage.updateSandboxModalObjectId(result.providerObjectId);
+        this.storeAndBroadcastModalObjectId(result.providerObjectId);
       }
 
       if (result.codeServerUrl && result.codeServerPassword) {
@@ -1144,6 +1152,20 @@ export class SandboxLifecycleManager {
    */
   private getConnectedClientCount(): number {
     return this.wsManager.getConnectedClientCount();
+  }
+
+  /**
+   * Persist the provider object id and, when a URL builder is configured,
+   * broadcast the resulting dashboard link so already-connected clients can
+   * update without reconnecting. The initial subscribed snapshot covers
+   * clients that connect later.
+   */
+  private storeAndBroadcastModalObjectId(providerObjectId: string): void {
+    this.storage.updateSandboxModalObjectId(providerObjectId);
+    const url = this.config.modalSandboxUrlBuilder?.(providerObjectId);
+    if (url) {
+      this.broadcaster.broadcast({ type: "modal_sandbox_url", url });
+    }
   }
 
   /**
