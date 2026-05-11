@@ -161,6 +161,11 @@ git fetch upstream
 git merge upstream/main
 ```
 
+**Land sync PRs with "Create a merge commit", not squash.** Squashing collapses upstream's commits
+into a single new hash. The code is in `main`, but GitHub's "X commits behind" counter still shows
+us behind because none of the original upstream commit hashes are reachable from our history. Merge
+commits preserve those hashes and keep the counter accurate. Reserve squash for normal feature PRs.
+
 ## Related
 
 - Watchdog monorepo native local dev refactor:
