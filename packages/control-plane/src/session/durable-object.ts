@@ -699,7 +699,6 @@ export class SessionDO extends DurableObject<Env> {
     const sessionId = session?.session_name || session?.id || this.ctx.id.toString();
 
     // Create D1-backed lookups if database is available
-    // Create D1-backed lookups if database is available
     let mcpServerLookup: McpServerLookup | undefined;
     if (this.env.DB) {
       const mcpStore = new McpServerStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
@@ -710,6 +709,10 @@ export class SessionDO extends DurableObject<Env> {
     }
 
     const workspace = this.env.MODAL_WORKSPACE;
+    const modalSandboxUrlBuilder =
+      sandboxBackend === "modal"
+        ? (providerObjectId: string) => buildModalSandboxUrl(workspace, providerObjectId)
+        : undefined;
     const config = {
       ...DEFAULT_LIFECYCLE_CONFIG,
       controlPlaneUrl,
@@ -720,8 +723,7 @@ export class SessionDO extends DurableObject<Env> {
         timeoutMs: parseInt(this.env.SANDBOX_INACTIVITY_TIMEOUT_MS || "600000", 10),
       },
       mcpServerLookup,
-      modalSandboxUrlBuilder: (providerObjectId: string) =>
-        buildModalSandboxUrl(workspace, providerObjectId),
+      modalSandboxUrlBuilder,
     };
 
     // Create repo image lookup if D1 is available (Modal-only — Daytona doesn't use repo images)
@@ -1649,7 +1651,10 @@ export class SessionDO extends DurableObject<Env> {
       tunnelUrls: sandbox?.tunnel_urls ? this.safeParseTunnelUrls(sandbox.tunnel_urls) : null,
       ttydUrl: sandbox?.ttyd_url ?? null,
       ttydToken,
-      modalSandboxUrl: buildModalSandboxUrl(this.env.MODAL_WORKSPACE, sandbox?.modal_object_id),
+      modalSandboxUrl:
+        resolveSandboxBackendName(this.env.SANDBOX_PROVIDER) === "modal"
+          ? buildModalSandboxUrl(this.env.MODAL_WORKSPACE, sandbox?.modal_object_id)
+          : null,
     };
   }
 

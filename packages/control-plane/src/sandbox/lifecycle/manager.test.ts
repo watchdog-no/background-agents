@@ -579,6 +579,48 @@ describe("SandboxLifecycleManager", () => {
       expect(storage.calls).toContain("updateSandboxModalObjectId:new-modal-obj-after-restore");
     });
 
+    it("broadcasts modal_sandbox_url after restore when builder is configured", async () => {
+      const sandbox = createMockSandbox({
+        status: "stopped",
+        snapshot_image_id: "img-abc123",
+      });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const broadcaster = createMockBroadcaster();
+      const provider = createMockProvider({
+        restoreFromSnapshot: vi.fn(async (config: RestoreConfig) => ({
+          success: true,
+          sandboxId: config.sandboxId,
+          providerObjectId: "restored-obj-456",
+        })),
+      });
+      const config = {
+        ...createTestConfig(),
+        modalSandboxUrlBuilder: (id: string) => `https://modal.example/${id}`,
+      };
+
+      const manager = new SandboxLifecycleManager(
+        provider,
+        storage,
+        broadcaster,
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        config
+      );
+
+      await manager.spawnSandbox();
+
+      expect(storage.calls).toContain("updateSandboxModalObjectId:restored-obj-456");
+      const urlMessages = broadcaster.messages.filter(
+        (m) => (m as { type: string }).type === "modal_sandbox_url"
+      );
+      expect(urlMessages).toHaveLength(1);
+      expect(urlMessages[0]).toEqual({
+        type: "modal_sandbox_url",
+        url: "https://modal.example/restored-obj-456",
+      });
+    });
+
     it("resets isSpawningSandbox flag after restore throws error", async () => {
       const sandbox = createMockSandbox({
         status: "stopped",

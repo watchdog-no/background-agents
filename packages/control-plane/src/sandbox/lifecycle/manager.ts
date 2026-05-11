@@ -612,7 +612,7 @@ export class SandboxLifecycleManager {
         });
 
         if (result.providerObjectId) {
-          this.storage.updateSandboxModalObjectId(result.providerObjectId);
+          this.storeAndBroadcastModalObjectId(result.providerObjectId);
         }
         if (result.codeServerUrl && result.codeServerPassword) {
           await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -1123,13 +1123,6 @@ export class SandboxLifecycleManager {
   }
 
   /**
-   * Store code-server details in the database and push to connected clients.
-   * Shared by doSpawn() and restoreFromSnapshot().
-   *
-   * The storage adapter may encrypt the password before persisting;
-   * the plaintext is broadcast over the already-authenticated WebSocket.
-   */
-  /**
    * Persist the provider object id and, when a URL builder is configured,
    * broadcast the resulting dashboard link so already-connected clients can
    * update without reconnecting. The initial subscribed snapshot covers
@@ -1143,6 +1136,13 @@ export class SandboxLifecycleManager {
     }
   }
 
+  /**
+   * Store code-server details in the database and push to connected clients.
+   * Shared by doSpawn() and restoreFromSnapshot().
+   *
+   * The storage adapter may encrypt the password before persisting;
+   * the plaintext is broadcast over the already-authenticated WebSocket.
+   */
   private async storeAndBroadcastCodeServer(url: string, password: string): Promise<void> {
     this.log.info("Storing and broadcasting code-server info", { url });
     await this.storage.updateSandboxCodeServer(url, password);
