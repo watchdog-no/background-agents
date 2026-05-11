@@ -46,6 +46,10 @@ describe("extractModelFromLabels", () => {
     expect(extractModelFromLabels([{ name: "model:gpt-5.5" }])).toBe("openai/gpt-5.5");
   });
 
+  it("returns GPT 5.5 Pro for model:gpt-5.5-pro label", () => {
+    expect(extractModelFromLabels([{ name: "model:gpt-5.5-pro" }])).toBe("openai/gpt-5.5-pro");
+  });
+
   it("returns Opus 4.7 for model:opus-4-7 label", () => {
     expect(extractModelFromLabels([{ name: "model:opus-4-7" }])).toBe("anthropic/claude-opus-4-7");
   });
@@ -181,6 +185,19 @@ describe("resolveSessionModelSettings", () => {
 
     expect(result.model).toBe("anthropic/claude-opus-4-6");
     expect(result.reasoningEffort).toBe("max");
+  });
+
+  it("uses xhigh for the GPT 5.5 environment default", () => {
+    const result = resolveSessionModelSettings({
+      envDefaultModel: "openai/gpt-5.5",
+      configModel: null,
+      configReasoningEffort: null,
+      allowUserPreferenceOverride: true,
+      allowLabelModelOverride: true,
+    });
+
+    expect(result.model).toBe("openai/gpt-5.5");
+    expect(result.reasoningEffort).toBe("xhigh");
   });
 });
 

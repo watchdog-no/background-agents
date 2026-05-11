@@ -20,11 +20,14 @@ const ALLOWED_MODELS = new Set([
   "gpt-5.2",
   "gpt-5.4",
   "gpt-5.5",
+  "gpt-5.5-pro",
   "gpt-5.2-codex",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
   "gpt-5.1-codex",
 ]);
+
+const ACCURATE_COST_MODELS = new Set(["gpt-5.5-pro"]);
 
 // In-memory token cache (reset on sandbox restart - fresh refresh via bridge)
 let cachedAccessToken = null;
@@ -121,7 +124,20 @@ export const CodexAuthProxy = async (input) => {
           }
         }
 
-        // Inject GPT 5.3 Codex models if missing
+        // Inject models OpenCode may not have in its bundled metadata yet.
+        if (!provider.models["gpt-5.5-pro"]) {
+          provider.models["gpt-5.5-pro"] = {
+            name: "GPT 5.5 Pro",
+            attachment: false,
+            reasoning: true,
+            temperature: false,
+            options: {},
+            variants: {},
+            limit: { context: 1000000, output: 128000 },
+            cost: { input: 30, output: 180, cache: { read: 30, write: 0 } },
+          };
+        }
+
         if (!provider.models["gpt-5.3-codex"]) {
           provider.models["gpt-5.3-codex"] = {
             name: "GPT 5.3 Codex",
@@ -148,8 +164,10 @@ export const CodexAuthProxy = async (input) => {
           };
         }
 
-        // Zero out costs (Codex is subscription-based)
-        for (const model of Object.values(provider.models)) {
+        // Zero out costs for subscription-based Codex models. Preserve models
+        // with explicit per-token pricing.
+        for (const [modelId, model] of Object.entries(provider.models)) {
+          if (ACCURATE_COST_MODELS.has(modelId)) continue;
           model.cost = {
             input: 0,
             output: 0,

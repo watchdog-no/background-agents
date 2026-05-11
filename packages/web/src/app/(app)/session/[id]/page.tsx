@@ -313,7 +313,9 @@ function SessionPageContent() {
   // Reset to default if the selected model is no longer enabled
   useEffect(() => {
     if (enabledModels.length > 0 && !enabledModels.includes(selectedModel)) {
-      const fallback = enabledModels[0] ?? DEFAULT_MODEL;
+      const fallback = enabledModels.includes(DEFAULT_MODEL)
+        ? DEFAULT_MODEL
+        : (enabledModels[0] ?? DEFAULT_MODEL);
       setSelectedModel(fallback);
       setReasoningEffort(getDefaultReasoningEffort(fallback));
     }
