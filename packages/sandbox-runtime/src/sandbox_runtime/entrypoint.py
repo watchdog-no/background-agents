@@ -376,8 +376,7 @@ class SandboxSupervisor:
                 continue
 
             dest_dir = skills_dest / skill_dir.name
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy(skill_file, dest_dir / "SKILL.md")
+            shutil.copytree(skill_dir, dest_dir, dirs_exist_ok=True)
             installed_any = True
 
         if installed_any:
