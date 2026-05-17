@@ -7,6 +7,7 @@ This image provides a complete development environment with:
 - Python 3.12 with uv
 - OpenCode CLI pre-installed
 - agent-browser CLI with headless Chrome for browser automation
+- ffmpeg for browser video encoding
 - Sandbox entrypoint and bridge code
 """
 
@@ -45,8 +46,8 @@ TTYD_VERSION = "1.7.7"
 TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
 # Cache buster - change this to force Modal image rebuild
-# v50: opencode-ai pinned to 1.14.41 + _report_fatal_error kwarg fix
-CACHE_BUSTER = "v50-opencode-pin-and-fatal-error-kwarg"
+# v51: opencode-ai pinned to 1.14.41 + _report_fatal_error kwarg fix + ffmpeg for MP4 browser recordings
+CACHE_BUSTER = "v51-opencode-pin-fatal-error-kwarg-and-ffmpeg"
 
 # Base image with all development tools
 base_image = (
@@ -61,6 +62,7 @@ base_image = (
         "openssh-client",
         "jq",
         "unzip",  # Required for Bun installation
+        "ffmpeg",
         # Shared libraries required by headless Chromium
         "libnss3",
         "libnspr4",
