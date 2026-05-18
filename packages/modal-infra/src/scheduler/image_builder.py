@@ -25,6 +25,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Iterable
 
 import httpx
 import modal
@@ -45,11 +46,68 @@ log = get_logger("image_builder")
 CALLBACK_MAX_RETRIES = 3
 CALLBACK_BACKOFF_BASE = 2  # seconds: 2, 4, 8
 
+# Build log errors are surfaced through callbacks; keep them concise.
+BUILD_FAILURE_MESSAGE_MAX_CHARS = 500
+BUILD_FAILURE_REDACT_MIN_CHARS = 4
+
+_BUILD_LOG_EVENTS = (
+    "git.sync_complete",
+    "image_build.complete",
+    "setup.failed",
+    "setup.timeout",
+    "setup.error",
+    "supervisor.error",
+    "supervisor.fatal",
+)
+_SETUP_FAILURE_EVENTS = {"setup.failed", "setup.timeout", "setup.error"}
+_BUILD_FAILURE_EVENTS = _SETUP_FAILURE_EVENTS | {"supervisor.error", "supervisor.fatal"}
+
 
 class BuildError(Exception):
     """Raised when a build sandbox fails."""
 
     pass
+
+
+def _format_build_failure_event(entry: dict, redact_values: Iterable[str] = ()) -> str | None:
+    """Return a concise build failure message from a structured log entry."""
+    event = entry.get("event")
+    if not isinstance(event, str):
+        return None
+    if event not in _BUILD_FAILURE_EVENTS:
+        return None
+
+    if event in {"setup.failed", "setup.timeout"}:
+        message = _trim_build_failure_message(entry.get("output_tail"), redact_values)
+        if not message and entry.get("exit_code") is not None:
+            message = f"exit_code={entry['exit_code']}"
+    else:
+        message = _trim_build_failure_message(
+            entry.get("error_message") or entry.get("error"), redact_values
+        )
+
+    if not message:
+        return event
+    return f"{event}: {message}"
+
+
+def _trim_build_failure_message(value: object, redact_values: Iterable[str] = ()) -> str:
+    """Keep callback errors compact while preserving the most relevant tail."""
+    if not isinstance(value, str):
+        return ""
+    message = value.strip()
+    redactions = sorted(
+        {
+            redact_value
+            for redact_value in redact_values
+            if len(redact_value) >= BUILD_FAILURE_REDACT_MIN_CHARS
+        },
+        key=len,
+        reverse=True,
+    )
+    for redact_value in redactions:
+        message = message.replace(redact_value, "***")
+    return message[-BUILD_FAILURE_MESSAGE_MAX_CHARS:]
 
 
 async def _terminate_build_sandbox(handle, build_id: str, reason: str) -> bool:
@@ -155,37 +213,55 @@ def _generate_clone_token() -> str:
     return ""
 
 
-async def _stream_build_logs(sandbox) -> tuple[str, bool]:
+async def _stream_build_logs(
+    sandbox, redact_values: Iterable[str] = ()
+) -> tuple[str, bool, str | None]:
     """
     Stream sandbox stdout and extract build results.
 
     The entrypoint logs structured JSON lines. We look for:
     - event="git.sync_complete" with "head_sha" field
     - event="image_build.complete" to know the build finished
+    - setup/supervisor errors to preserve the actual build failure
 
     The sandbox stays alive after logging image_build.complete (it awaits
     shutdown_event), so we can snapshot_filesystem() while it's still running.
 
     Returns:
-        (head_sha, build_complete) tuple. head_sha is empty string if not found.
+        (head_sha, build_complete, error_message) tuple. head_sha is empty string if not found.
     """
     head_sha = ""
+    error_message: str | None = None
+    has_setup_failure = False
+    redact_values = tuple(redact_values)
     try:
         async for line in sandbox.stdout:
-            if "git.sync_complete" not in line and "image_build.complete" not in line:
+            if not any(event in line for event in _BUILD_LOG_EVENTS):
                 continue
             try:
                 entry = json.loads(line)
-                event = entry.get("event", "")
+                if not isinstance(entry, dict):
+                    continue
+                event = entry.get("event")
+                if not isinstance(event, str):
+                    continue
                 if event == "git.sync_complete" and entry.get("head_sha"):
                     head_sha = entry["head_sha"]
                 elif event == "image_build.complete":
-                    return head_sha, True
+                    return head_sha, True, None
+
+                failure_message = _format_build_failure_event(entry, redact_values)
+                is_setup_failure = event in _SETUP_FAILURE_EVENTS
+                if failure_message and (
+                    error_message is None or (is_setup_failure and not has_setup_failure)
+                ):
+                    error_message = failure_message
+                    has_setup_failure = is_setup_failure
             except json.JSONDecodeError:
                 continue
     except Exception as e:
         log.warn("build.stream_error", error=str(e))
-    return head_sha, False
+    return head_sha, False, error_message
 
 
 @app.function(
@@ -248,9 +324,15 @@ async def build_repo_image(
         )
 
         # 3. Stream stdout until build completes (sandbox stays alive for snapshotting)
-        base_sha, build_complete = await _stream_build_logs(handle.modal_sandbox)
+        redact_values = (clone_token, *((user_env_vars or {}).values()))
+        base_sha, build_complete, build_error = await _stream_build_logs(
+            handle.modal_sandbox,
+            redact_values=redact_values,
+        )
         if not build_complete:
             exit_code = handle.modal_sandbox.returncode
+            if build_error:
+                raise BuildError(f"Build sandbox exited without completing: {build_error}")
             raise BuildError(f"Build sandbox exited without completing (exit_code={exit_code})")
 
         # 4. Snapshot the running sandbox's filesystem
