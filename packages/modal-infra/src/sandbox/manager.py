@@ -207,7 +207,18 @@ class SandboxManager:
 
     @staticmethod
     def _inject_vcs_env_vars(env_vars: dict[str, str], clone_token: str | None) -> None:
-        """Inject VCS-neutral env vars based on SCM_PROVIDER."""
+        """Inject SCM provider metadata into the sandbox environment.
+
+        For interactive sandboxes ``clone_token`` should be ``None``. Git
+        authenticates per-request via the system git credential helper, which
+        fetches a fresh token from the control plane — embedding a 1h-TTL
+        token in env would silently 401 after expiry, which is strictly
+        worse than its absence.
+
+        For image-build sandboxes (one-shot, no control-plane access)
+        ``clone_token`` is required: the helper falls back to the env-var
+        token when ``CONTROL_PLANE_URL`` / ``SANDBOX_AUTH_TOKEN`` are unset.
+        """
         scm_provider = os.environ.get("SCM_PROVIDER", "github")
         if scm_provider == "bitbucket":
             env_vars["VCS_HOST"] = "bitbucket.org"
@@ -221,10 +232,6 @@ class SandboxManager:
 
         if clone_token:
             env_vars["VCS_CLONE_TOKEN"] = clone_token
-            if scm_provider == "github":
-                # Required by gh CLI and git push operations in the sandbox
-                env_vars["GITHUB_APP_TOKEN"] = clone_token
-                env_vars["GITHUB_TOKEN"] = clone_token
 
     async def create_sandbox(
         self,
@@ -267,7 +274,8 @@ class SandboxManager:
             }
         )
 
-        self._inject_vcs_env_vars(env_vars, config.clone_token)
+        # Interactive sandbox: rely on the in-sandbox git credential helper.
+        self._inject_vcs_env_vars(env_vars, clone_token=None)
 
         code_server_password: str | None = None
         if config.code_server_enabled:
@@ -599,7 +607,8 @@ class SandboxManager:
             }
         )
 
-        self._inject_vcs_env_vars(env_vars, clone_token)
+        # Interactive sandbox: rely on the in-sandbox git credential helper.
+        self._inject_vcs_env_vars(env_vars, clone_token=None)
 
         code_server_password: str | None = None
         if code_server_enabled:

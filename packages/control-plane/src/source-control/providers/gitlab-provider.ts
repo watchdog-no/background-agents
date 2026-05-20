@@ -18,6 +18,7 @@ import type {
   BuildGitPushSpecConfig,
   GitPushSpec,
   GitPushAuthContext,
+  CredentialHelperAuth,
 } from "../types";
 import { SourceControlProviderError } from "../errors";
 import type { GitLabProviderConfig } from "./types";
@@ -340,6 +341,20 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
     return {
       authType: "pat",
       token: this.accessToken,
+    };
+  }
+
+  /**
+   * GitLab PATs don't carry server-issued expiries we can read, so we surface a
+   * far-future expiry. The sandbox-side helper still rotates its cache on that
+   * cadence (~30 days) so revocations surface without manual intervention.
+   */
+  async generateCredentialHelperAuth(): Promise<CredentialHelperAuth> {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    return {
+      username: "oauth2",
+      password: this.accessToken,
+      expiresAtEpochMs: Date.now() + THIRTY_DAYS_MS,
     };
   }
 

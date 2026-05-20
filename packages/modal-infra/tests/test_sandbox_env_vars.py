@@ -328,9 +328,15 @@ def _fake_sandbox_create(captured):
     return fake_create_aio
 
 
+# Note: SCM tokens are never injected into the sandbox environment. Git
+# operations authenticate via the credential helper installed in the base
+# image, which fetches fresh tokens from the control plane per call.
+# These tests pin that contract.
+
+
 @pytest.mark.asyncio
 async def test_vcs_env_vars_default_github(monkeypatch):
-    """SCM_PROVIDER unset → github.com defaults."""
+    """SCM_PROVIDER unset → github.com defaults, no token in env."""
     captured = {}
     monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
     monkeypatch.delenv("SCM_PROVIDER", raising=False)
@@ -346,35 +352,14 @@ async def test_vcs_env_vars_default_github(monkeypatch):
     env = captured["env"]
     assert env["VCS_HOST"] == "github.com"
     assert env["VCS_CLONE_USERNAME"] == "x-access-token"
-    assert env["VCS_CLONE_TOKEN"] == "ghp_test123"
-    assert env["GITHUB_APP_TOKEN"] == "ghp_test123"
-    assert env["GITHUB_TOKEN"] == "ghp_test123"
-
-
-@pytest.mark.asyncio
-async def test_vcs_env_vars_explicit_github(monkeypatch):
-    """SCM_PROVIDER=github → same as default."""
-    captured = {}
-    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
-    monkeypatch.setenv("SCM_PROVIDER", "github")
-
-    manager = SandboxManager()
-    config = SandboxConfig(
-        repo_owner="acme",
-        repo_name="repo",
-        clone_token="ghp_test123",
-    )
-    await manager.create_sandbox(config)
-
-    env = captured["env"]
-    assert env["VCS_HOST"] == "github.com"
-    assert env["VCS_CLONE_USERNAME"] == "x-access-token"
-    assert env["VCS_CLONE_TOKEN"] == "ghp_test123"
+    assert "VCS_CLONE_TOKEN" not in env
+    assert "GITHUB_APP_TOKEN" not in env
+    assert "GITHUB_TOKEN" not in env
 
 
 @pytest.mark.asyncio
 async def test_vcs_env_vars_gitlab(monkeypatch):
-    """SCM_PROVIDER=gitlab → gitlab.com + oauth2."""
+    """SCM_PROVIDER=gitlab → gitlab.com + oauth2, no token in env."""
     captured = {}
     monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
     monkeypatch.setenv("SCM_PROVIDER", "gitlab")
@@ -390,15 +375,12 @@ async def test_vcs_env_vars_gitlab(monkeypatch):
     env = captured["env"]
     assert env["VCS_HOST"] == "gitlab.com"
     assert env["VCS_CLONE_USERNAME"] == "oauth2"
-    assert env["VCS_CLONE_TOKEN"] == "glpat_test123"
-    # GitHub-specific vars not set for GitLab
-    assert "GITHUB_APP_TOKEN" not in env
-    assert "GITHUB_TOKEN" not in env
+    assert "VCS_CLONE_TOKEN" not in env
 
 
 @pytest.mark.asyncio
 async def test_vcs_env_vars_bitbucket(monkeypatch):
-    """SCM_PROVIDER=bitbucket → bitbucket.org + x-token-auth."""
+    """SCM_PROVIDER=bitbucket → bitbucket.org + x-token-auth, no token in env."""
     captured = {}
     monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
     monkeypatch.setenv("SCM_PROVIDER", "bitbucket")
@@ -414,37 +396,12 @@ async def test_vcs_env_vars_bitbucket(monkeypatch):
     env = captured["env"]
     assert env["VCS_HOST"] == "bitbucket.org"
     assert env["VCS_CLONE_USERNAME"] == "x-token-auth"
-    assert env["VCS_CLONE_TOKEN"] == "bb_token_abc"
-    # GitHub-specific vars not set for Bitbucket
-    assert "GITHUB_APP_TOKEN" not in env
-    assert "GITHUB_TOKEN" not in env
-
-
-@pytest.mark.asyncio
-async def test_vcs_env_vars_no_token(monkeypatch):
-    """No clone token → token vars absent, host/username still set."""
-    captured = {}
-    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
-    monkeypatch.delenv("SCM_PROVIDER", raising=False)
-
-    manager = SandboxManager()
-    config = SandboxConfig(
-        repo_owner="acme",
-        repo_name="repo",
-    )
-    await manager.create_sandbox(config)
-
-    env = captured["env"]
-    assert env["VCS_HOST"] == "github.com"
-    assert env["VCS_CLONE_USERNAME"] == "x-access-token"
     assert "VCS_CLONE_TOKEN" not in env
-    assert "GITHUB_APP_TOKEN" not in env
-    assert "GITHUB_TOKEN" not in env
 
 
 @pytest.mark.asyncio
 async def test_restore_vcs_env_vars(monkeypatch):
-    """restore_from_snapshot injects VCS env vars."""
+    """restore_from_snapshot injects provider metadata but no token."""
     captured = {}
 
     class FakeImage:
@@ -470,7 +427,6 @@ async def test_restore_vcs_env_vars(monkeypatch):
     env = captured["env"]
     assert env["VCS_HOST"] == "bitbucket.org"
     assert env["VCS_CLONE_USERNAME"] == "x-token-auth"
-    assert env["VCS_CLONE_TOKEN"] == "bb_token_xyz"
-    # GitHub-specific vars not set for Bitbucket
+    assert "VCS_CLONE_TOKEN" not in env
     assert "GITHUB_APP_TOKEN" not in env
     assert "GITHUB_TOKEN" not in env

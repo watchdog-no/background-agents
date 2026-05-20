@@ -76,10 +76,10 @@ class SandboxSupervisor:
         self.repo_owner = os.environ.get("REPO_OWNER", "")
         self.repo_name = os.environ.get("REPO_NAME", "")
         self.vcs_host = os.environ.get("VCS_HOST", "github.com")
-        self.vcs_clone_username = os.environ.get("VCS_CLONE_USERNAME", "x-access-token")
-        self.vcs_clone_token = os.environ.get("VCS_CLONE_TOKEN") or os.environ.get(
-            "GITHUB_APP_TOKEN", ""
-        )
+        # Note: VCS credentials are no longer captured at sandbox start. Git
+        # operations authenticate per-call via the system-wide credential
+        # helper (`/usr/local/bin/oi-git-credentials`), which fetches fresh
+        # tokens from the control plane.
 
         # Parse session config if provided
         session_config_json = os.environ.get("SESSION_CONFIG", "{}")
@@ -104,35 +104,37 @@ class SandboxSupervisor:
         """The branch to clone/fetch — defaults to 'main'."""
         return self.session_config.get("branch") or "main"
 
-    def _build_repo_url(self, authenticated: bool = True) -> str:
-        """Build the HTTPS URL for the repository, optionally with clone credentials."""
-        if authenticated and self.vcs_clone_token:
-            return f"https://{self.vcs_clone_username}:{self.vcs_clone_token}@{self.vcs_host}/{self.repo_owner}/{self.repo_name}.git"
+    def _build_repo_url(self) -> str:
+        """Build the plain HTTPS URL for the repository.
+
+        Authentication is supplied per-request by the system git credential
+        helper, so the remote URL itself never carries a secret.
+        """
         return f"https://{self.vcs_host}/{self.repo_owner}/{self.repo_name}.git"
 
     def _redact_git_stderr(self, stderr_text: str) -> str:
-        """Redact credential-bearing URLs from git stderr."""
-        redacted_stderr = stderr_text
-        if self.vcs_clone_token:
-            redacted_stderr = redacted_stderr.replace(
-                self._build_repo_url(),
-                self._build_repo_url(authenticated=False),
-            )
-            redacted_stderr = redacted_stderr.replace(self.vcs_clone_token, "***")
+        """Redact credential-bearing URLs from git stderr.
 
-        return re.sub(r"(https?://)([^/\s@]+)@", r"\1***@", redacted_stderr)
+        The credential helper means our own remotes are token-free, but git
+        may surface upstream URLs (e.g. from submodules or HTTP redirects)
+        that still embed credentials.
+        """
+        return re.sub(r"(https?://)([^/\s@]+)@", r"\1***@", stderr_text)
 
     # ------------------------------------------------------------------
     # Git primitives
     # ------------------------------------------------------------------
 
     async def _clone_repo(self) -> bool:
-        """Shallow-clone the repository."""
+        """Shallow-clone the repository.
+
+        The remote URL is unauthenticated — the system-wide git credential
+        helper supplies short-lived credentials per request.
+        """
         self.log.info(
             "git.clone_start",
             repo_owner=self.repo_owner,
             repo_name=self.repo_name,
-            authenticated=bool(self.vcs_clone_token),
         )
 
         result = await asyncio.create_subprocess_exec(
@@ -160,16 +162,23 @@ class SandboxSupervisor:
         self.log.info("git.clone_complete", repo_path=str(self.repo_path))
         return True
 
-    async def _ensure_remote_auth(self) -> None:
-        """Set the remote URL with auth credentials if a clone token is available."""
-        if not self.vcs_clone_token:
-            return
+    async def _ensure_plain_origin(self) -> None:
+        """Rewrite the `origin` remote to a credential-free HTTPS URL.
+
+        Older snapshots (from before the credential-helper migration) embed a
+        stale GitHub App installation token in the `origin` URL. On resume the
+        embedded token may have expired hours ago, so the next `git fetch`
+        would use it and fail before the credential helper ever gets a chance.
+
+        Idempotent — safe to call on every boot.
+        """
+        expected_url = self._build_repo_url()
         proc = await asyncio.create_subprocess_exec(
             "git",
             "remote",
             "set-url",
             "origin",
-            self._build_repo_url(),
+            expected_url,
             cwd=self.repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -245,7 +254,7 @@ class SandboxSupervisor:
             return False
 
         try:
-            await self._ensure_remote_auth()
+            await self._ensure_plain_origin()
             branch = self.base_branch
             if not await self._fetch_branch(branch):
                 return False
@@ -285,7 +294,6 @@ class SandboxSupervisor:
             repo_owner=self.repo_owner,
             repo_name=self.repo_name,
             repo_path=str(self.repo_path),
-            has_clone_token=bool(self.vcs_clone_token),
         )
 
         if not self.repo_path.exists():

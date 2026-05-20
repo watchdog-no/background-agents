@@ -148,6 +148,7 @@ const PUBLIC_ROUTES: RegExp[] = [
 const SANDBOX_AUTH_ROUTES: RegExp[] = [
   /^\/sessions\/[^/]+\/pr$/, // PR creation from sandbox
   /^\/sessions\/[^/]+\/openai-token-refresh$/, // OpenAI token refresh from sandbox
+  /^\/sessions\/[^/]+\/scm-credentials$/, // SCM credential broker for git credential helper
   /^\/sessions\/[^/]+\/media$/, // Media upload from sandbox
   /^\/sessions\/[^/]+\/children$/, // POST spawn, GET list
   /^\/sessions\/[^/]+\/children\/[^/]+$/, // GET child detail
@@ -440,6 +441,11 @@ const routes: Route[] = [
     method: "POST",
     pattern: parsePattern("/sessions/:id/openai-token-refresh"),
     handler: handleOpenAITokenRefresh,
+  },
+  {
+    method: "POST",
+    pattern: parsePattern("/sessions/:id/scm-credentials"),
+    handler: handleScmCredentials,
   },
   {
     method: "POST",
@@ -1864,6 +1870,24 @@ async function handleOpenAITokenRefresh(
   return stub.fetch(
     internalRequest(
       buildSessionInternalUrl(SessionInternalPaths.openaiTokenRefresh),
+      { method: "POST" },
+      ctx
+    )
+  );
+}
+
+async function handleScmCredentials(
+  _request: Request,
+  env: Env,
+  match: RegExpMatchArray,
+  ctx: RequestContext
+): Promise<Response> {
+  const stub = getSessionStub(env, match);
+  if (!stub) return error("Session ID required");
+
+  return stub.fetch(
+    internalRequest(
+      buildSessionInternalUrl(SessionInternalPaths.scmCredentials),
       { method: "POST" },
       ctx
     )
