@@ -162,13 +162,65 @@ class SandboxSupervisor:
         self.log.info("git.clone_complete", repo_path=str(self.repo_path))
         return True
 
-    async def _ensure_plain_origin(self) -> None:
+    async def _ensure_credential_helper_configured(self) -> None:
+        """Make sure git knows about our credential helper, even on old images.
+
+        New base images install the helper system-wide
+        (``git config --system credential.helper /usr/local/bin/oi-git-credentials``),
+        but a sandbox booting from a snapshot or repo image built *before*
+        this migration won't have that config. We re-apply the equivalent at
+        the global level on every boot so the flow is robust regardless of
+        image age.
+
+        Writing the shim itself is also idempotent: each boot ensures the
+        script is present at ``/usr/local/bin/oi-git-credentials`` and
+        executable, so old images that lack it get patched in place.
+
+        Failures here are logged but not fatal — if git already has the
+        helper configured (the common case on new images), this is a no-op.
+        """
+        shim_path = Path("/usr/local/bin/oi-git-credentials")
+        shim_body = (
+            "#!/bin/sh\n"
+            'exec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
+        )
+        try:
+            if not shim_path.exists() or shim_path.read_text() != shim_body:
+                shim_path.write_text(shim_body)
+                shim_path.chmod(0o755)
+        except OSError as e:
+            # /usr/local/bin not writable in some sandboxed runs; the system
+            # config baked into the image is the primary path anyway.
+            self.log.debug("credential_helper.shim_write_failed", error=str(e))
+
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "config",
+            "--global",
+            "credential.helper",
+            str(shim_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            self.log.warn(
+                "credential_helper.config_failed",
+                exit_code=proc.returncode,
+                stderr=stderr.decode(errors="replace"),
+            )
+
+    async def _ensure_plain_origin(self) -> bool:
         """Rewrite the `origin` remote to a credential-free HTTPS URL.
 
         Older snapshots (from before the credential-helper migration) embed a
         stale GitHub App installation token in the `origin` URL. On resume the
         embedded token may have expired hours ago, so the next `git fetch`
         would use it and fail before the credential helper ever gets a chance.
+
+        Returns False on failure — callers must short-circuit, since the stale
+        URL would silently produce an opaque 401 from upstream rather than
+        routing through the helper.
 
         Idempotent — safe to call on every boot.
         """
@@ -185,11 +237,13 @@ class SandboxSupervisor:
         )
         _stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            self.log.warn(
+            self.log.error(
                 "git.set_url_failed",
                 exit_code=proc.returncode,
                 stderr=self._redact_git_stderr(stderr.decode()),
             )
+            return False
+        return True
 
     async def _fetch_branch(self, branch: str) -> bool:
         """Fetch a branch with an explicit refspec.
@@ -254,7 +308,8 @@ class SandboxSupervisor:
             return False
 
         try:
-            await self._ensure_plain_origin()
+            if not await self._ensure_plain_origin():
+                return False
             branch = self.base_branch
             if not await self._fetch_branch(branch):
                 return False
@@ -1190,6 +1245,11 @@ class SandboxSupervisor:
         git_sync_success = False
         opencode_ready = False
         try:
+            # Phase 0: Make sure the git credential helper is configured
+            # before any git operation. New images do this in /etc/gitconfig,
+            # but snapshots/repo-images built before this migration won't.
+            await self._ensure_credential_helper_configured()
+
             # Phase 1: Git sync
             if restored_from_snapshot:
                 await self._update_existing_repo()  # best-effort

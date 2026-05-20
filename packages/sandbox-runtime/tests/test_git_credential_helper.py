@@ -33,6 +33,7 @@ def env_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTROL_PLANE_URL", "https://cp.example.com")
     monkeypatch.setenv("SANDBOX_AUTH_TOKEN", "sandbox-token-xyz")
     monkeypatch.setenv("SESSION_CONFIG", json.dumps({"sessionId": "sess-123"}))
+    monkeypatch.setenv("VCS_HOST", "github.com")
 
 
 def _run(stdin_text: str, action: str = "get") -> tuple[int, str, str]:
@@ -194,6 +195,7 @@ def test_falls_back_to_env_var_token_in_image_build_mode(
     # Deliberately omit CONTROL_PLANE_URL / SANDBOX_AUTH_TOKEN / SESSION_CONFIG.
     monkeypatch.setenv("VCS_CLONE_TOKEN", "ghs_build_token")
     monkeypatch.setenv("VCS_CLONE_USERNAME", "x-access-token")
+    monkeypatch.setenv("VCS_HOST", "github.com")
 
     transport = _mock_response({"should": "not be called"}, status=500)
     calls = [0]
@@ -204,6 +206,111 @@ def test_falls_back_to_env_var_token_in_image_build_mode(
     assert "username=x-access-token" in out
     assert "password=ghs_build_token" in out
     assert calls[0] == 0  # No control-plane call attempted.
+
+
+def test_refuses_to_serve_credentials_for_foreign_host(
+    cache_dir: Path, env_set: None
+) -> None:
+    """A submodule or ls-remote pointing at a different host must NOT receive our token."""
+    transport = _mock_response({"should": "not be called"}, status=500)
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run("protocol=https\nhost=attacker.example\n\n")
+
+    # Empty stdout + exit 0 = "I have nothing", which is how git's
+    # credential protocol expresses "fall through to the next helper".
+    assert code == 0
+    assert "password=" not in out
+    assert "username=" not in out
+    assert calls[0] == 0
+    assert "refusing to serve credentials" in err
+
+
+def test_refuses_when_no_host_provided(cache_dir: Path, env_set: None) -> None:
+    transport = _mock_response({"should": "not be called"})
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("protocol=https\n\n")
+
+    assert code == 0
+    assert out == "" or "password=" not in out
+    assert calls[0] == 0
+
+
+def test_5xx_from_control_plane_exits_nonzero(cache_dir: Path, env_set: None) -> None:
+    """Transient upstream failures must not silently use a stale cache."""
+    transport = _mock_response({"error": "internal"}, status=500)
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run("protocol=https\nhost=github.com\n\n")
+
+    assert code != 0
+    assert "password=" not in out
+    assert "500" in err
+
+
+def test_malformed_cache_json_triggers_refresh(cache_dir: Path, env_set: None) -> None:
+    """Garbage in the cache file should be treated as a miss, not crash the helper."""
+    helper.CACHE_FILE.write_text("{ not json")
+
+    transport = _mock_response(
+        {
+            "username": "x-access-token",
+            "password": "ghs_recovered",
+            "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            "scm_provider": "github",
+        }
+    )
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+
+    assert code == 0
+    assert "password=ghs_recovered" in out
+    assert calls[0] == 1
+
+
+def test_cache_missing_password_triggers_refresh(cache_dir: Path, env_set: None) -> None:
+    """A partial cache entry (no password) should not be served — refresh instead."""
+    helper.CACHE_FILE.write_text(
+        json.dumps(
+            {
+                "username": "x-access-token",
+                "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            }
+        )
+    )
+
+    transport = _mock_response(
+        {
+            "username": "x-access-token",
+            "password": "ghs_recovered",
+            "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            "scm_provider": "github",
+        }
+    )
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+
+    assert code == 0
+    assert "password=ghs_recovered" in out
+    assert calls[0] == 1
+
+
+def test_control_plane_response_missing_password_is_fatal(
+    cache_dir: Path, env_set: None
+) -> None:
+    """Bad upstream payload must not write a half-formed cache."""
+    transport = _mock_response({"username": "x-access-token"})
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run("protocol=https\nhost=github.com\n\n")
+
+    assert code != 0
+    assert "password=" not in out
+    assert "missing username/password" in err
+    assert not helper.CACHE_FILE.exists()
 
 
 def test_store_and_erase_are_noops(

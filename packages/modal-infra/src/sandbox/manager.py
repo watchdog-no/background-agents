@@ -211,9 +211,9 @@ class SandboxManager:
 
         For interactive sandboxes ``clone_token`` should be ``None``. Git
         authenticates per-request via the system git credential helper, which
-        fetches a fresh token from the control plane — embedding a 1h-TTL
-        token in env would silently 401 after expiry, which is strictly
-        worse than its absence.
+        fetches a fresh token from the control plane — embedding a token in
+        env would silently fail once it expires (or immediately, for
+        providers with short-lived tokens like GitHub Apps).
 
         For image-build sandboxes (one-shot, no control-plane access)
         ``clone_token`` is required: the helper falls back to the env-var
@@ -607,8 +607,12 @@ class SandboxManager:
             }
         )
 
-        # Interactive sandbox: rely on the in-sandbox git credential helper.
-        self._inject_vcs_env_vars(env_vars, clone_token=None)
+        # Snapshot restore still passes the clone token through. Snapshots
+        # taken before the credential-helper migration ship an entrypoint
+        # that reads VCS_CLONE_TOKEN from env and embeds it in the origin
+        # URL — without it, those legacy snapshots can't fetch. New
+        # entrypoints ignore the env var and route through the helper.
+        self._inject_vcs_env_vars(env_vars, clone_token=clone_token)
 
         code_server_password: str | None = None
         if code_server_enabled:

@@ -38,7 +38,10 @@ export class ScmCredentialsService {
       };
     } catch (e) {
       if (e instanceof SourceControlProviderError) {
-        const status = e.errorType === "permanent" ? 503 : 502;
+        // Permanent → 500 (config error, retrying won't help).
+        // Transient → 502 (upstream/network blip, the helper exits 1 and
+        // the next git op will retry).
+        const status = e.errorType === "permanent" ? 500 : 502;
         this.log.warn("SCM credential helper auth failed", {
           scm_provider: this.provider.name,
           error_type: e.errorType,

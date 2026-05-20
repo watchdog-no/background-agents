@@ -47,7 +47,7 @@ describe("ScmCredentialsService", () => {
     });
   });
 
-  it("maps permanent provider errors to 503", async () => {
+  it("maps permanent provider errors to 500", async () => {
     const log = createTestLogger();
     const provider = makeProvider({
       name: "github",
@@ -60,10 +60,17 @@ describe("ScmCredentialsService", () => {
 
     expect(result).toEqual({
       ok: false,
-      status: 503,
+      status: 500,
       error: "App not configured",
     });
-    expect(log.warn).toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      "SCM credential helper auth failed",
+      expect.objectContaining({
+        scm_provider: "github",
+        error_type: "permanent",
+        error: "App not configured",
+      })
+    );
   });
 
   it("maps transient provider errors to 502", async () => {

@@ -64,7 +64,7 @@ describe("POST /sessions/:id/scm-credentials", () => {
     });
   });
 
-  it("reaches the service and returns 503 when no SCM provider is configured", async () => {
+  it("reaches the service and returns 500 when no SCM provider is configured", async () => {
     const { sessionName, sandboxToken } = await setupSession();
 
     const res = await SELF.fetch(`https://test.local/sessions/${sessionName}/scm-credentials`, {
@@ -73,11 +73,11 @@ describe("POST /sessions/:id/scm-credentials", () => {
     });
 
     // The test env has no GITHUB_APP_* bindings, so the provider raises
-    // a permanent error which the service maps to 503. The important
-    // thing here is that we *get* a 503 from the service (not e.g. a 404
-    // from a missing route or 500 from the DO crashing) — that proves
-    // the entire chain is wired up correctly.
-    expect(res.status).toBe(503);
+    // a permanent error which the service maps to 500. The important
+    // thing here is that we *get* a 500 (not e.g. a 404 from a missing
+    // route or an opaque DO crash) — that proves the entire chain is
+    // wired up correctly.
+    expect(res.status).toBe(500);
     const body = await res.json<{ error: string }>();
     expect(body.error).toMatch(/GitHub App not configured/i);
   });

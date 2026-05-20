@@ -652,7 +652,10 @@ class TestPerformGitSync:
         ("method_name", "args", "log_method_name", "event_name"),
         [
             ("_clone_repo", (), "error", "git.clone_error"),
-            ("_ensure_plain_origin", (), "warn", "git.set_url_failed"),
+            # `_ensure_plain_origin` logs at error level because a failure
+            # here means we'd fall back to the stale embedded-token URL,
+            # which surfaces as an opaque 401 — bad.
+            ("_ensure_plain_origin", (), "error", "git.set_url_failed"),
             ("_fetch_branch", ("feature/test",), "error", "git.fetch_error"),
             ("_checkout_branch", ("feature/test",), "warn", "git.checkout_error"),
         ],

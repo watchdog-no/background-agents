@@ -400,8 +400,16 @@ async def test_vcs_env_vars_bitbucket(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_restore_vcs_env_vars(monkeypatch):
-    """restore_from_snapshot injects provider metadata but no token."""
+async def test_restore_preserves_vcs_clone_token_for_legacy_snapshots(monkeypatch):
+    """Snapshot restore still injects VCS_CLONE_TOKEN.
+
+    Snapshots taken before the credential-helper migration ship an old
+    entrypoint that reads the env var and embeds it in the origin URL.
+    Without it those snapshots can't fetch. The new entrypoint ignores it
+    and routes through the helper, so the var is harmless on fresh
+    images. GITHUB_TOKEN / GITHUB_APP_TOKEN aliases are NOT restored —
+    those existed solely for the gh CLI, which is out of scope here.
+    """
     captured = {}
 
     class FakeImage:
@@ -427,6 +435,6 @@ async def test_restore_vcs_env_vars(monkeypatch):
     env = captured["env"]
     assert env["VCS_HOST"] == "bitbucket.org"
     assert env["VCS_CLONE_USERNAME"] == "x-token-auth"
-    assert "VCS_CLONE_TOKEN" not in env
+    assert env["VCS_CLONE_TOKEN"] == "bb_token_xyz"
     assert "GITHUB_APP_TOKEN" not in env
     assert "GITHUB_TOKEN" not in env

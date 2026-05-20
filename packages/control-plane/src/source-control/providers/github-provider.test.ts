@@ -5,15 +5,21 @@ import { SourceControlProviderError } from "../errors";
 // Mock the upstream GitHub App auth functions
 vi.mock("../../auth/github-app", () => ({
   getCachedInstallationToken: vi.fn(),
+  getCachedInstallationTokenWithExpiry: vi.fn(),
   getInstallationRepository: vi.fn(),
   listInstallationRepositories: vi.fn(),
   fetchWithTimeout: vi.fn(),
 }));
 
-import { getInstallationRepository, listInstallationRepositories } from "../../auth/github-app";
+import {
+  getCachedInstallationTokenWithExpiry,
+  getInstallationRepository,
+  listInstallationRepositories,
+} from "../../auth/github-app";
 
 const mockGetInstallationRepository = vi.mocked(getInstallationRepository);
 const mockListInstallationRepositories = vi.mocked(listInstallationRepositories);
+const mockGetCachedInstallationTokenWithExpiry = vi.mocked(getCachedInstallationTokenWithExpiry);
 
 const fakeAppConfig = {
   appId: "123",
@@ -225,6 +231,48 @@ describe("GitHubSourceControlProvider", () => {
         "web",
         expect.objectContaining({ userAgent: "Open-Inspect" })
       );
+    });
+  });
+
+  describe("generateCredentialHelperAuth", () => {
+    it("throws a permanent error when the App is not configured", async () => {
+      const provider = new GitHubSourceControlProvider();
+      const err = await provider.generateCredentialHelperAuth().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(SourceControlProviderError);
+      expect((err as SourceControlProviderError).errorType).toBe("permanent");
+      expect((err as SourceControlProviderError).message).toMatch(/not configured/i);
+    });
+
+    it("forwards a fresh installation token with its expiry and x-access-token username", async () => {
+      const expiresAtEpochMs = Date.now() + 60 * 60 * 1000;
+      mockGetCachedInstallationTokenWithExpiry.mockResolvedValueOnce({
+        token: "ghs_fresh",
+        expiresAtEpochMs,
+      });
+
+      const provider = new GitHubSourceControlProvider({ appConfig: fakeAppConfig });
+      const auth = await provider.generateCredentialHelperAuth();
+
+      expect(auth).toEqual({
+        username: "x-access-token",
+        password: "ghs_fresh",
+        expiresAtEpochMs,
+      });
+      expect(mockGetCachedInstallationTokenWithExpiry).toHaveBeenCalledWith(
+        fakeAppConfig,
+        expect.objectContaining({ userAgent: expect.any(String) })
+      );
+    });
+
+    it("wraps upstream errors as SourceControlProviderError", async () => {
+      mockGetCachedInstallationTokenWithExpiry.mockRejectedValueOnce(new Error("GitHub 500"));
+
+      const provider = new GitHubSourceControlProvider({ appConfig: fakeAppConfig });
+      const err = await provider.generateCredentialHelperAuth().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(SourceControlProviderError);
+      expect((err as SourceControlProviderError).message).toContain("GitHub 500");
     });
   });
 });

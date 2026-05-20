@@ -234,7 +234,8 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     // Note: no VCS_CLONE_TOKEN / GITHUB_TOKEN / GITHUB_APP_TOKEN. Git
     // operations in the sandbox authenticate per-request via the system git
     // credential helper, which hits /sessions/:id/scm-credentials. Embedding
-    // a 1h-TTL token in env would silently 401 after expiry.
+    // a token in env would silently fail once the token expires (or
+    // immediately, for providers like GitHub Apps with short-lived tokens).
 
     return envVars;
   }
