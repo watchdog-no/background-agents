@@ -75,8 +75,8 @@ def build_base_image(repo_root: Path) -> Image:
             "mkdir -p /workspace /app /tmp/opencode",
             # Install the SCM credential-helper shim and configure git
             # system-wide. The shim delegates to the Python helper module
-            # under sandbox_runtime, which is mounted at /app on boot.
-            # Mirror packages/modal-infra/src/images/base.py.
+            # under sandbox_runtime, baked in at build time via add_local_dir
+            # below. Mirror packages/modal-infra/src/images/base.py.
             "printf '%s\\n'"
             " '#!/bin/sh'"
             ' \'exec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\''

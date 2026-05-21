@@ -105,7 +105,6 @@ def _credentials_from_env() -> dict[str, object] | None:
         "username": username,
         "password": token,
         "expires_at_epoch_ms": int((time.time() + BUILD_MODE_TOKEN_TTL_SECONDS) * 1000),
-        "scm_provider": "env",
     }
 
 
@@ -223,6 +222,11 @@ def _fetch_from_control_plane(endpoint: tuple[str, str, str]) -> dict[str, objec
     data = response.json()
     if not isinstance(data, dict) or not data.get("username") or not data.get("password"):
         raise RuntimeError("control plane response missing username/password")
+    expires_at = data.get("expires_at_epoch_ms")
+    if not isinstance(expires_at, (int, float)) or expires_at <= 0:
+        # Fail loud rather than cache a credential that _read_cached would
+        # immediately reject, which would silently refetch on every git op.
+        raise RuntimeError("control plane response has invalid expires_at_epoch_ms")
     return data
 
 

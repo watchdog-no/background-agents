@@ -57,8 +57,9 @@ GH_WRAPPER_BODY = (
     '{ [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ]; }; then\n'
     '  exec "$REAL_GH" "$@"\n'
     "fi\n"
-    "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token "
-    "2>/dev/null || true)\n"
+    # stderr is left attached so the helper's diagnostic surfaces when a
+    # refresh fails — otherwise the user just sees an opaque gh 401.
+    "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token || true)\n"
     'if [ -n "$token" ]; then\n'
     '  exec env GH_TOKEN="$token" "$REAL_GH" "$@"\n'
     "fi\n"

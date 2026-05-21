@@ -341,7 +341,8 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     } catch (error) {
       throw SourceControlProviderError.fromFetchError(
         `Failed to generate GitHub credential helper auth: ${error instanceof Error ? error.message : String(error)}`,
-        error
+        error,
+        extractHttpStatus(error)
       );
     }
   }

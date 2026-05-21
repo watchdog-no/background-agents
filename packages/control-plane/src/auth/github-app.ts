@@ -243,7 +243,12 @@ async function getInstallationTokenWithMetadata(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to get installation token: ${response.status} ${error}`);
+    // Attach the HTTP status so callers can classify transient (5xx/429)
+    // vs permanent failures rather than substring-matching the message.
+    throw Object.assign(
+      new Error(`Failed to get installation token: ${response.status} ${error}`),
+      { status: response.status }
+    );
   }
 
   return (await response.json()) as InstallationTokenResponse;

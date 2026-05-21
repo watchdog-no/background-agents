@@ -717,3 +717,43 @@ class TestBaseBranchProperty:
         env = {**base_env, "SESSION_CONFIG": '{"branch": "develop"}'}
         supervisor = _make_supervisor(env)
         assert supervisor.base_branch == "develop"
+
+
+class TestEnsureCredentialHelperConfigured:
+    """Phase-0 git credential helper configuration."""
+
+    @pytest.mark.asyncio
+    async def test_configures_helper_and_usehttppath(self, base_env):
+        """Must set both credential.helper and credential.useHttpPath.
+
+        useHttpPath is load-bearing: the helper fails closed without a path,
+        so a regression dropping it would break every credential request in
+        prod while the helper's own tests (which pass path= manually) stayed
+        green. This pins it at the boot-config layer.
+        """
+        supervisor = _make_supervisor(base_env)
+        supervisor.log = MagicMock()
+
+        git_config_calls = []
+
+        async def fake_subprocess(*args, **kwargs):
+            if "config" in args:
+                git_config_calls.append(args)
+            proc = MagicMock()
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            proc.returncode = 0
+            return proc
+
+        with patch(
+            "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ), patch("sandbox_runtime.entrypoint.Path.write_text"), patch(
+            "sandbox_runtime.entrypoint.Path.chmod"
+        ), patch(
+            "sandbox_runtime.entrypoint.Path.exists", return_value=False
+        ):
+            await supervisor._ensure_credential_helper_configured()
+
+        pairs = {(c[3], c[4]) for c in git_config_calls}
+        assert ("credential.helper", "/usr/local/bin/oi-git-credentials") in pairs
+        assert ("credential.useHttpPath", "true") in pairs

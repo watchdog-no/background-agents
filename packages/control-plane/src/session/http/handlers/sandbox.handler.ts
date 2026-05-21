@@ -207,7 +207,6 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
           username: result.username,
           password: result.password,
           expires_at_epoch_ms: result.expiresAtEpochMs,
-          scm_provider: result.scmProvider,
         },
         { status: 200 }
       );

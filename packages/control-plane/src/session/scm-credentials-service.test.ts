@@ -25,7 +25,7 @@ function makeProvider(
 }
 
 describe("ScmCredentialsService", () => {
-  it("returns credentials and provider name on success", async () => {
+  it("returns credentials on success", async () => {
     const expiresAtEpochMs = Date.now() + 60 * 60 * 1000;
     const provider = makeProvider({
       name: "github",
@@ -43,7 +43,6 @@ describe("ScmCredentialsService", () => {
       username: "x-access-token",
       password: "ghs_token",
       expiresAtEpochMs,
-      scmProvider: "github",
     });
   });
 

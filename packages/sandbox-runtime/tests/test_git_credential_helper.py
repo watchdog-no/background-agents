@@ -372,6 +372,23 @@ def test_control_plane_response_missing_password_is_fatal(
     assert not helper.CACHE_FILE.exists()
 
 
+def test_control_plane_response_invalid_expiry_is_fatal(
+    cache_dir: Path, env_set: None
+) -> None:
+    """A missing/zero expiry must fail loud, not get cached and refetched forever."""
+    transport = _mock_response(
+        {"username": "x-access-token", "password": "ghs_x", "expires_at_epoch_ms": 0}
+    )
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run(SESSION_REPO_REQUEST)
+
+    assert code != 0
+    assert "password=" not in out
+    assert "invalid expires_at_epoch_ms" in err
+    assert not helper.CACHE_FILE.exists()
+
+
 def test_token_action_prints_bare_token(cache_dir: Path, env_set: None) -> None:
     """The gh wrapper uses `token` to get a raw token, no protocol framing."""
     transport = _mock_response(

@@ -431,7 +431,6 @@ describe("createSandboxHandler", () => {
       username: "x-access-token",
       password: "ghs_secret",
       expiresAtEpochMs: expiresAt,
-      scmProvider: "github",
     });
 
     const response = await handler.scmCredentials();
@@ -441,7 +440,6 @@ describe("createSandboxHandler", () => {
       username: "x-access-token",
       password: "ghs_secret",
       expires_at_epoch_ms: expiresAt,
-      scm_provider: "github",
     });
   });
 });

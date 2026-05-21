@@ -8,7 +8,6 @@ export type ScmCredentialsResult =
       username: string;
       password: string;
       expiresAtEpochMs: number;
-      scmProvider: string;
     }
   | { ok: false; status: number; error: string };
 
@@ -34,7 +33,6 @@ export class ScmCredentialsService {
         username: auth.username,
         password: auth.password,
         expiresAtEpochMs: auth.expiresAtEpochMs,
-        scmProvider: this.provider.name,
       };
     } catch (e) {
       if (e instanceof SourceControlProviderError) {
