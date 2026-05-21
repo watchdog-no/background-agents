@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 REAL_GH_DECISION = (
-    '#!/bin/sh\necho "GH_TOKEN=${GH_TOKEN}"\necho "GITHUB_TOKEN=${GITHUB_TOKEN}"\necho "ARGS=$*"\n'
+    '#!/bin/sh\necho "GH_TOKEN=${GH_TOKEN}"\necho "GITHUB_TOKEN=${GITHUB_TOKEN}"\n'
+    'echo "GITHUB_APP_TOKEN=${GITHUB_APP_TOKEN}"\necho "ARGS=$*"\n'
 )
 
 
@@ -72,6 +73,15 @@ def test_respects_explicit_user_token(tmp_path: Path) -> None:
     # Wrapper did not call the token command nor set GH_TOKEN.
     assert "GH_TOKEN=\n" in out or "GH_TOKEN=" in out.split("\n")[0]
     assert "GITHUB_TOKEN=user_token" in out
+
+
+def test_respects_explicit_user_app_token(tmp_path: Path) -> None:
+    """A user-set GITHUB_APP_TOKEN (no fallback marker) is passed through untouched."""
+    wrapper = _build_wrapper(tmp_path, fresh_token="ghs_fresh")
+    out = _run(wrapper, {"VCS_HOST": "github.com", "GITHUB_APP_TOKEN": "user_app_token"})
+    # Wrapper did not call the token command nor set GH_TOKEN.
+    assert "GH_TOKEN=\n" in out or "GH_TOKEN=" in out.split("\n")[0]
+    assert "GITHUB_APP_TOKEN=user_app_token" in out
 
 
 def test_refreshes_past_marked_fallback_token(tmp_path: Path) -> None:

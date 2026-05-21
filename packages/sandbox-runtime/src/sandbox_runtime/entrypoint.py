@@ -44,7 +44,8 @@ AGENT_TOOLS_GATED_ON_ENV: dict[str, str] = {
 #     token is marked with OI_GITHUB_TOKEN_IS_FALLBACK=1 and is NOT treated
 #     as user-provided, so a helper-capable restored snapshot still refreshes
 #     rather than reusing the soon-expired restore token. gh prefers GH_TOKEN
-#     over GITHUB_TOKEN, so the fresh token we set wins over the stale one.
+#     over GITHUB_TOKEN/GITHUB_APP_TOKEN, so the fresh token we set wins over
+#     the stale one.
 GH_WRAPPER_REAL_PATH = "/usr/bin/gh"
 GH_WRAPPER_BODY = (
     "#!/bin/sh\n"
@@ -54,7 +55,7 @@ GH_WRAPPER_BODY = (
     "fi\n"
     "# A real user token wins; a marked fallback token does not.\n"
     'if [ "$OI_GITHUB_TOKEN_IS_FALLBACK" != "1" ] && '
-    '{ [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ]; }; then\n'
+    '{ [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ] || [ -n "$GITHUB_APP_TOKEN" ]; }; then\n'
     '  exec "$REAL_GH" "$@"\n'
     "fi\n"
     # stderr is left attached so the helper's diagnostic surfaces when a
@@ -238,6 +239,7 @@ class SandboxSupervisor:
                 "git",
                 "config",
                 "--global",
+                "--replace-all",
                 key,
                 value,
                 stdout=asyncio.subprocess.PIPE,

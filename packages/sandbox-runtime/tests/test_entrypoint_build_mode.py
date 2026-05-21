@@ -755,6 +755,7 @@ class TestEnsureCredentialHelperConfigured:
         ):
             await supervisor._ensure_credential_helper_configured()
 
-        pairs = {(c[3], c[4]) for c in git_config_calls}
+        assert all("--replace-all" in c for c in git_config_calls)
+        pairs = {(c[4], c[5]) for c in git_config_calls}
         assert ("credential.helper", "/usr/local/bin/oi-git-credentials") in pairs
         assert ("credential.useHttpPath", "true") in pairs

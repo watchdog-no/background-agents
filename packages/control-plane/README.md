@@ -97,9 +97,9 @@ credential helper. It returns fresh SCM credentials for git operations in this s
 ```
 
 Common failures are `401` for a missing or invalid sandbox token, `404` when the session no longer
-exists, and `5xx` when provider configuration or upstream token minting fails. Credential-helper
-auth is currently implemented for GitHub; additional source-control providers must implement
-`generateCredentialHelperAuth` before helper-backed sandbox git auth works for that provider.
+exists, and `5xx` when provider configuration or upstream token minting fails. Source-control
+providers must implement `generateCredentialHelperAuth` before helper-backed sandbox git auth works
+for that provider.
 
 ### Repositories
 

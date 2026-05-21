@@ -476,13 +476,22 @@ describe("GitLabSourceControlProvider", () => {
   });
 
   describe("generateCredentialHelperAuth", () => {
-    it("throws a permanent not-implemented error", async () => {
-      const provider = new GitLabSourceControlProvider(fakeConfig);
-      const err = await provider.generateCredentialHelperAuth().catch((e: unknown) => e);
+    it("returns oauth2 PAT credentials with a cache expiry", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      try {
+        const provider = new GitLabSourceControlProvider({ accessToken: "glpat-abc123" });
 
-      expect(err).toBeInstanceOf(SourceControlProviderError);
-      expect((err as SourceControlProviderError).errorType).toBe("permanent");
-      expect((err as SourceControlProviderError).message).toMatch(/not implemented/i);
+        const auth = await provider.generateCredentialHelperAuth();
+
+        expect(auth).toEqual({
+          username: "oauth2",
+          password: "glpat-abc123",
+          expiresAtEpochMs: Date.now() + 60 * 60 * 1000,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

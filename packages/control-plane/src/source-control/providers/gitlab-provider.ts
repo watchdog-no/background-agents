@@ -33,6 +33,9 @@ const PER_PAGE = 100;
 /** Timeout for GitLab API requests in milliseconds. */
 const GITLAB_FETCH_TIMEOUT_MS = 15_000;
 
+/** GitLab PATs do not expose an expiry, so refresh the helper cache hourly. */
+const GITLAB_CREDENTIAL_HELPER_TTL_MS = 60 * 60 * 1000;
+
 function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GITLAB_FETCH_TIMEOUT_MS);
@@ -345,10 +348,11 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
   }
 
   async generateCredentialHelperAuth(): Promise<CredentialHelperAuth> {
-    throw new SourceControlProviderError(
-      "GitLab credential helper auth is not implemented.",
-      "permanent"
-    );
+    return {
+      username: "oauth2",
+      password: this.accessToken,
+      expiresAtEpochMs: Date.now() + GITLAB_CREDENTIAL_HELPER_TTL_MS,
+    };
   }
 
   buildManualPullRequestUrl(config: BuildManualPullRequestUrlConfig): string {
