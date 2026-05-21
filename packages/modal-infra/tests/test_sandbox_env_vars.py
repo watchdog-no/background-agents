@@ -472,3 +472,6 @@ async def test_restore_github_includes_gh_cli_aliases(monkeypatch):
     assert env["VCS_CLONE_TOKEN"] == "ghs_restore_token"
     assert env["GITHUB_TOKEN"] == "ghs_restore_token"
     assert env["GITHUB_APP_TOKEN"] == "ghs_restore_token"
+    # Marked so the gh wrapper on helper-capable snapshots refreshes past it
+    # instead of reusing the soon-expired restore token.
+    assert env["OI_GITHUB_TOKEN_IS_FALLBACK"] == "1"

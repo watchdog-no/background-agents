@@ -32,6 +32,40 @@ AGENT_TOOLS_GATED_ON_ENV: dict[str, str] = {
     "slack-notify.js": "AGENT_SLACK_NOTIFY_ENABLED",
 }
 
+# Wrapper installed at /usr/local/bin/gh (ahead of the real /usr/bin/gh in
+# PATH). The git credential helper can't authenticate the GitHub CLI — gh
+# reads GH_TOKEN/GITHUB_TOKEN from the environment, not git's protocol — so
+# instead of baking a short-lived token into env at boot (which goes stale
+# after ~1h), this mints a fresh token per invocation.
+#
+# Skip rules (exec real gh untouched):
+#   * non-github.com deployments — never touch gh's auth;
+#   * a genuine user-provided token. The manager's legacy-snapshot fallback
+#     token is marked with OI_GITHUB_TOKEN_IS_FALLBACK=1 and is NOT treated
+#     as user-provided, so a helper-capable restored snapshot still refreshes
+#     rather than reusing the soon-expired restore token. gh prefers GH_TOKEN
+#     over GITHUB_TOKEN, so the fresh token we set wins over the stale one.
+GH_WRAPPER_REAL_PATH = "/usr/bin/gh"
+GH_WRAPPER_BODY = (
+    "#!/bin/sh\n"
+    f'REAL_GH="{GH_WRAPPER_REAL_PATH}"\n'
+    'if [ "${VCS_HOST:-github.com}" != "github.com" ]; then\n'
+    '  exec "$REAL_GH" "$@"\n'
+    "fi\n"
+    "# A real user token wins; a marked fallback token does not.\n"
+    'if [ "$OI_GITHUB_TOKEN_IS_FALLBACK" != "1" ] && '
+    '{ [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ]; }; then\n'
+    '  exec "$REAL_GH" "$@"\n'
+    "fi\n"
+    "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token "
+    "2>/dev/null || true)\n"
+    'if [ -n "$token" ]; then\n'
+    '  exec env GH_TOKEN="$token" "$REAL_GH" "$@"\n'
+    "fi\n"
+    "# Refresh unavailable — fall back to whatever was in env (may be stale).\n"
+    'exec "$REAL_GH" "$@"\n'
+)
+
 
 class SandboxSupervisor:
     """
@@ -221,44 +255,20 @@ class SandboxSupervisor:
         self._install_gh_wrapper()
 
     def _install_gh_wrapper(self) -> None:
-        """Shadow the real ``gh`` with a wrapper that injects a fresh token.
+        """Install the gh CLI wrapper at /usr/local/bin/gh.
 
-        The git credential helper can't authenticate the GitHub CLI — gh reads
-        ``GH_TOKEN``/``GITHUB_TOKEN`` from the environment, not git's protocol.
-        Rather than baking a short-lived token into env at boot (which goes
-        stale after ~1h), we install ``/usr/local/bin/gh`` ahead of the real
-        ``/usr/bin/gh`` in PATH. It mints a fresh token per invocation via the
-        same credential helper, but only when:
-
-          * the user hasn't already set GH_TOKEN/GITHUB_TOKEN, and
-          * the deployment's SCM host is github.com.
-
-        Otherwise it execs the real gh untouched.
+        See ``GH_WRAPPER_BODY`` for the wrapper's behaviour. Installed at boot
+        (rather than baked into the image) so it also patches snapshots and
+        repo images built before this migration.
         """
         wrapper_path = Path("/usr/local/bin/gh")
-        real_gh = "/usr/bin/gh"
-        wrapper_body = (
-            "#!/bin/sh\n"
-            f'REAL_GH="{real_gh}"\n'
-            "# Respect an explicit user token and non-GitHub deployments.\n"
-            'if [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ] || '
-            '[ "${VCS_HOST:-github.com}" != "github.com" ]; then\n'
-            '  exec "$REAL_GH" "$@"\n'
-            "fi\n"
-            "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token "
-            "2>/dev/null || true)\n"
-            'if [ -n "$token" ]; then\n'
-            '  exec env GH_TOKEN="$token" "$REAL_GH" "$@"\n'
-            "fi\n"
-            'exec "$REAL_GH" "$@"\n'
-        )
         try:
             # Only install if the real gh exists and we're not about to shadow
             # ourselves (defensive against a previous wrapper at /usr/bin/gh).
-            if Path(real_gh).exists() and (
-                not wrapper_path.exists() or wrapper_path.read_text() != wrapper_body
+            if Path(GH_WRAPPER_REAL_PATH).exists() and (
+                not wrapper_path.exists() or wrapper_path.read_text() != GH_WRAPPER_BODY
             ):
-                wrapper_path.write_text(wrapper_body)
+                wrapper_path.write_text(GH_WRAPPER_BODY)
                 wrapper_path.chmod(0o755)
         except OSError as e:
             self.log.debug("gh_wrapper.install_failed", error=str(e))

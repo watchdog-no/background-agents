@@ -226,8 +226,11 @@ class SandboxManager:
 
         ``include_github_cli_aliases`` adds ``GITHUB_TOKEN`` / ``GITHUB_APP_TOKEN``
         for the gh CLI. Only set on snapshot restore: snapshots taken before
-        this migration lack the gh wrapper, so gh needs the token in env.
-        Fresh images use the wrapper and ignore these.
+        this migration lack the gh wrapper, so gh needs the token in env. The
+        injection is marked with ``OI_GITHUB_TOKEN_IS_FALLBACK=1`` so the gh
+        wrapper on *helper-capable* restored snapshots refreshes past it rather
+        than using the static (and soon-expired) restore token, while a genuine
+        user-provided token (no marker) is still respected.
         """
         scm_provider = os.environ.get("SCM_PROVIDER", "github")
         if scm_provider == "bitbucket":
@@ -245,6 +248,7 @@ class SandboxManager:
             if include_github_cli_aliases and scm_provider == "github":
                 env_vars["GITHUB_TOKEN"] = clone_token
                 env_vars["GITHUB_APP_TOKEN"] = clone_token
+                env_vars["OI_GITHUB_TOKEN_IS_FALLBACK"] = "1"
 
     async def create_sandbox(
         self,
