@@ -43,9 +43,9 @@ AGENT_TOOLS_GATED_ON_ENV: dict[str, str] = {
 #   * a genuine user-provided token. The manager's legacy-snapshot fallback
 #     token is marked with OI_GITHUB_TOKEN_IS_FALLBACK=1 and is NOT treated
 #     as user-provided, so a helper-capable restored snapshot still refreshes
-#     rather than reusing the soon-expired restore token. gh prefers GH_TOKEN
-#     over GITHUB_TOKEN/GITHUB_APP_TOKEN, so the fresh token we set wins over
-#     the stale one.
+#     rather than reusing the soon-expired restore token. gh reads GH_TOKEN
+#     before GITHUB_TOKEN; GITHUB_APP_TOKEN is checked only as a
+#     user-provided-token sentinel.
 GH_WRAPPER_REAL_PATH = "/usr/bin/gh"
 GH_WRAPPER_BODY = (
     "#!/bin/sh\n"
@@ -226,7 +226,7 @@ class SandboxSupervisor:
         except OSError as e:
             # /usr/local/bin not writable in some sandboxed runs; the system
             # config baked into the image is the primary path anyway.
-            self.log.debug("credential_helper.shim_write_failed", error=str(e))
+            self.log.warn("credential_helper.shim_write_failed", error=str(e))
 
         # credential.useHttpPath makes git pass the repo path to the helper,
         # which it needs to scope credentials to the session repo (not just
@@ -1317,8 +1317,12 @@ class SandboxSupervisor:
 
             # Phase 1: Git sync
             if restored_from_snapshot:
-                await self._update_existing_repo()  # best-effort
-                git_sync_success = True
+                git_sync_success = await self._update_existing_repo()
+                if not git_sync_success:
+                    self.log.warn(
+                        "git.snapshot_resync_failed",
+                        reason="origin rewrite or fetch failed; repo may be stale",
+                    )
             elif from_repo_image:
                 git_sync_success = await self._update_existing_repo()
             else:

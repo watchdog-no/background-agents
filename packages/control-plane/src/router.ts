@@ -214,6 +214,11 @@ function isScmAgnosticRoute(path: string): boolean {
   return /^\/analytics\/(summary|timeseries|breakdown)$/.test(path);
 }
 
+function isProviderImplementedRoute(provider: SourceControlProviderName, path: string): boolean {
+  if (provider === "github") return true;
+  return provider === "gitlab" && /^\/sessions\/[^/]+\/scm-credentials$/.test(path);
+}
+
 function enforceImplementedScmProvider(
   path: string,
   env: Env,
@@ -221,7 +226,11 @@ function enforceImplementedScmProvider(
 ): Response | null {
   try {
     const provider = resolveDeploymentScmProvider(env);
-    if (provider !== "github" && !isPublicRoute(path) && !isScmAgnosticRoute(path)) {
+    if (
+      !isProviderImplementedRoute(provider, path) &&
+      !isPublicRoute(path) &&
+      !isScmAgnosticRoute(path)
+    ) {
       logger.warn("SCM provider not implemented", {
         event: "scm.provider_not_implemented",
         scm_provider: provider,

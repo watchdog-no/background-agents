@@ -62,7 +62,11 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
   private readonly userAgent: string;
 
   constructor(config: GitLabProviderConfig) {
-    this.accessToken = config.accessToken;
+    const accessToken = config.accessToken.trim();
+    if (!accessToken) {
+      throw new SourceControlProviderError("GitLab access token not configured.", "permanent");
+    }
+    this.accessToken = accessToken;
     this.namespace = config.namespace;
     this.userAgent = config.userAgent || USER_AGENT;
   }

@@ -22,6 +22,13 @@ describe("GitLabSourceControlProvider", () => {
     vi.resetAllMocks();
   });
 
+  it("throws a permanent provider error when the access token is blank", () => {
+    const createProvider = () => new GitLabSourceControlProvider({ accessToken: "   " });
+
+    expect(createProvider).toThrow(SourceControlProviderError);
+    expect(createProvider).toThrow("GitLab access token not configured.");
+  });
+
   describe("getRepository", () => {
     it("maps GitLab project response to RepositoryInfo using path not display name", async () => {
       mockFetch.mockResolvedValueOnce(

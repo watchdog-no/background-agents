@@ -83,7 +83,8 @@ def _resolve_endpoint() -> tuple[str, str, str] | None:
         try:
             config = json.loads(raw_session_config)
             session_id = config.get("sessionId") or config.get("session_id") or ""
-        except (json.JSONDecodeError, AttributeError):
+        except (json.JSONDecodeError, AttributeError) as e:
+            _log(f"invalid SESSION_CONFIG; cannot resolve broker session id: {e}")
             session_id = ""
 
     if not (control_plane_url and auth_token and session_id):

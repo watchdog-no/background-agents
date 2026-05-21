@@ -396,6 +396,34 @@ class TestSnapshotRestoreMode:
         supervisor._report_fatal_error.assert_called_once()
         supervisor.start_opencode.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_resync_failure_is_reported_but_not_fatal(self, base_env):
+        supervisor = _make_supervisor({**base_env, "RESTORED_FROM_SNAPSHOT": "true"})
+        supervisor.log = MagicMock()
+
+        supervisor._update_existing_repo = AsyncMock(return_value=False)
+        supervisor.run_setup_script = AsyncMock(return_value=True)
+        supervisor.run_start_script = AsyncMock(return_value=True)
+        supervisor.start_opencode = AsyncMock()
+        supervisor.start_bridge = AsyncMock()
+        supervisor.monitor_processes = AsyncMock()
+        supervisor.shutdown = AsyncMock()
+
+        with patch.dict(os.environ, {"RESTORED_FROM_SNAPSHOT": "true"}, clear=False):
+            await supervisor.run()
+
+        supervisor.log.warn.assert_any_call(
+            "git.snapshot_resync_failed",
+            reason="origin rewrite or fetch failed; repo may be stale",
+        )
+        startup_call = next(
+            c
+            for c in supervisor.log.info.call_args_list
+            if c.args and c.args[0] == "sandbox.startup"
+        )
+        assert startup_call.kwargs["git_sync_success"] is False
+        supervisor.start_opencode.assert_called_once()
+
 
 class TestUpdateExistingRepo:
     """Test _update_existing_repo() — shared by snapshot-restore and repo-image paths."""
@@ -759,3 +787,29 @@ class TestEnsureCredentialHelperConfigured:
         pairs = {(c[4], c[5]) for c in git_config_calls}
         assert ("credential.helper", "/usr/local/bin/oi-git-credentials") in pairs
         assert ("credential.useHttpPath", "true") in pairs
+
+    @pytest.mark.asyncio
+    async def test_warns_when_credential_helper_shim_cannot_be_written(self, base_env):
+        supervisor = _make_supervisor(base_env)
+        supervisor.log = MagicMock()
+
+        async def fake_subprocess(*args, **kwargs):
+            proc = MagicMock()
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            proc.returncode = 0
+            return proc
+
+        with (
+            patch(
+                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+                side_effect=fake_subprocess,
+            ),
+            patch("sandbox_runtime.entrypoint.Path.write_text", side_effect=OSError("read-only")),
+            patch("sandbox_runtime.entrypoint.Path.exists", return_value=False),
+        ):
+            await supervisor._ensure_credential_helper_configured()
+
+        supervisor.log.warn.assert_any_call(
+            "credential_helper.shim_write_failed",
+            error="read-only",
+        )

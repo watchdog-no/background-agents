@@ -12,7 +12,6 @@ import { initSchema } from "./schema";
 import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
-import { getGitHubAppConfig } from "../auth/github-app";
 import { buildModalSandboxUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
 import { createModalProvider } from "../sandbox/providers/modal-provider";
@@ -38,7 +37,7 @@ import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integratio
 import { SessionIndexStore } from "../db/session-index";
 import { DEFAULT_EXECUTION_TIMEOUT_MS } from "../sandbox/lifecycle/decisions";
 import {
-  createSourceControlProvider as createSourceControlProviderImpl,
+  createSourceControlProviderFromEnv,
   resolveScmProviderFromEnv,
   type SourceControlProvider,
   type GitPushSpec,
@@ -56,7 +55,6 @@ import type {
 } from "../types";
 import type { SessionRow, ArtifactRow, SandboxRow } from "./types";
 import { SessionRepository } from "./repository";
-import { createKvCacheStore } from "@open-inspect/shared";
 import { SessionWebSocketManagerImpl, type SessionWebSocketManager } from "./websocket-manager";
 import { SessionPullRequestService } from "./pull-request-service";
 import { RepoSecretsStore } from "../db/repo-secrets";
@@ -537,16 +535,7 @@ export class SessionDO extends DurableObject<Env> {
    * Create the source control provider.
    */
   private createSourceControlProvider(): SourceControlProvider {
-    const appConfig = getGitHubAppConfig(this.env);
-    const provider = resolveScmProviderFromEnv(this.env.SCM_PROVIDER);
-
-    return createSourceControlProviderImpl({
-      provider,
-      github: {
-        appConfig: appConfig ?? undefined,
-        cacheStore: createKvCacheStore(this.env.REPOS_CACHE),
-      },
-    });
+    return createSourceControlProviderFromEnv(this.env);
   }
 
   /**

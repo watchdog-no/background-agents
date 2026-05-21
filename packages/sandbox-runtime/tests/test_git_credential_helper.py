@@ -281,6 +281,28 @@ def test_falls_back_to_env_var_token_in_image_build_mode(
     assert calls[0] == 0  # No control-plane call attempted.
 
 
+def test_malformed_session_config_logs_before_env_fallback(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONTROL_PLANE_URL", "https://cp.example.com")
+    monkeypatch.setenv("SANDBOX_AUTH_TOKEN", "sandbox-token-xyz")
+    monkeypatch.setenv("SESSION_CONFIG", "{not-json")
+    monkeypatch.setenv("VCS_CLONE_TOKEN", "ghs_fallback")
+    monkeypatch.setenv("VCS_HOST", "github.com")
+    monkeypatch.setenv("REPO_OWNER", "acme")
+    monkeypatch.setenv("REPO_NAME", "web")
+
+    transport = _mock_response({"should": "not be called"}, status=500)
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run(SESSION_REPO_REQUEST)
+
+    assert code == 0
+    assert "password=ghs_fallback" in out
+    assert "invalid SESSION_CONFIG" in err
+    assert calls[0] == 0
+
+
 def test_refuses_to_serve_credentials_for_foreign_host(cache_dir: Path, env_set: None) -> None:
     """A submodule or ls-remote pointing at a different host must NOT receive our token."""
     transport = _mock_response({"should": "not be called"}, status=500)

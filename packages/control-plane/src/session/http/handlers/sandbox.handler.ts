@@ -208,7 +208,10 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
           password: result.password,
           expires_at_epoch_ms: result.expiresAtEpochMs,
         },
-        { status: 200 }
+        {
+          status: 200,
+          headers: { "Cache-Control": "no-store" },
+        }
       );
     },
   };

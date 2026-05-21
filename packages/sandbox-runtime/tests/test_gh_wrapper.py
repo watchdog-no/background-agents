@@ -72,6 +72,7 @@ def test_respects_explicit_user_token(tmp_path: Path) -> None:
     out = _run(wrapper, {"VCS_HOST": "github.com", "GITHUB_TOKEN": "user_token"})
     # Wrapper did not call the token command nor set GH_TOKEN.
     assert "GH_TOKEN=\n" in out or "GH_TOKEN=" in out.split("\n")[0]
+    assert "GH_TOKEN=ghs_fresh" not in out
     assert "GITHUB_TOKEN=user_token" in out
 
 
@@ -81,6 +82,7 @@ def test_respects_explicit_user_app_token(tmp_path: Path) -> None:
     out = _run(wrapper, {"VCS_HOST": "github.com", "GITHUB_APP_TOKEN": "user_app_token"})
     # Wrapper did not call the token command nor set GH_TOKEN.
     assert "GH_TOKEN=\n" in out or "GH_TOKEN=" in out.split("\n")[0]
+    assert "GH_TOKEN=ghs_fresh" not in out
     assert "GITHUB_APP_TOKEN=user_app_token" in out
 
 
