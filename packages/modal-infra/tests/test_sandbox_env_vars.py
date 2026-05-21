@@ -406,9 +406,8 @@ async def test_restore_preserves_vcs_clone_token_for_legacy_snapshots(monkeypatc
     Snapshots taken before the credential-helper migration ship an old
     entrypoint that reads the env var and embeds it in the origin URL.
     Without it those snapshots can't fetch. The new entrypoint ignores it
-    and routes through the helper, so the var is harmless on fresh
-    images. GITHUB_TOKEN / GITHUB_APP_TOKEN aliases are NOT restored —
-    those existed solely for the gh CLI, which is out of scope here.
+    and routes through the helper, so the var is harmless on fresh images.
+    For a non-GitHub provider, the GitHub CLI aliases stay absent.
     """
     captured = {}
 
@@ -438,3 +437,38 @@ async def test_restore_preserves_vcs_clone_token_for_legacy_snapshots(monkeypatc
     assert env["VCS_CLONE_TOKEN"] == "bb_token_xyz"
     assert "GITHUB_APP_TOKEN" not in env
     assert "GITHUB_TOKEN" not in env
+
+
+@pytest.mark.asyncio
+async def test_restore_github_includes_gh_cli_aliases(monkeypatch):
+    """On GitHub, snapshot restore also sets GITHUB_TOKEN/GITHUB_APP_TOKEN.
+
+    Legacy snapshots lack the gh wrapper, so the CLI needs the token in env.
+    """
+    captured = {}
+
+    class FakeImage:
+        object_id = "img-123"
+
+    monkeypatch.setattr("src.sandbox.manager.modal.Image.from_id", lambda *a, **kw: FakeImage())
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+    monkeypatch.delenv("SCM_PROVIDER", raising=False)
+
+    manager = SandboxManager()
+    await manager.restore_from_snapshot(
+        snapshot_image_id="img-abc",
+        session_config={
+            "repo_owner": "acme",
+            "repo_name": "repo",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "session_id": "sess-1",
+        },
+        clone_token="ghs_restore_token",
+    )
+
+    env = captured["env"]
+    assert env["VCS_HOST"] == "github.com"
+    assert env["VCS_CLONE_TOKEN"] == "ghs_restore_token"
+    assert env["GITHUB_TOKEN"] == "ghs_restore_token"
+    assert env["GITHUB_APP_TOKEN"] == "ghs_restore_token"

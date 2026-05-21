@@ -193,22 +193,75 @@ class SandboxSupervisor:
             # config baked into the image is the primary path anyway.
             self.log.debug("credential_helper.shim_write_failed", error=str(e))
 
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "config",
-            "--global",
-            "credential.helper",
-            str(shim_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            self.log.warn(
-                "credential_helper.config_failed",
-                exit_code=proc.returncode,
-                stderr=stderr.decode(errors="replace"),
+        # credential.useHttpPath makes git pass the repo path to the helper,
+        # which it needs to scope credentials to the session repo (not just
+        # the host).
+        for key, value in (
+            ("credential.helper", str(shim_path)),
+            ("credential.useHttpPath", "true"),
+        ):
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "config",
+                "--global",
+                key,
+                value,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                self.log.warn(
+                    "credential_helper.config_failed",
+                    config_key=key,
+                    exit_code=proc.returncode,
+                    stderr=stderr.decode(errors="replace"),
+                )
+
+        self._install_gh_wrapper()
+
+    def _install_gh_wrapper(self) -> None:
+        """Shadow the real ``gh`` with a wrapper that injects a fresh token.
+
+        The git credential helper can't authenticate the GitHub CLI — gh reads
+        ``GH_TOKEN``/``GITHUB_TOKEN`` from the environment, not git's protocol.
+        Rather than baking a short-lived token into env at boot (which goes
+        stale after ~1h), we install ``/usr/local/bin/gh`` ahead of the real
+        ``/usr/bin/gh`` in PATH. It mints a fresh token per invocation via the
+        same credential helper, but only when:
+
+          * the user hasn't already set GH_TOKEN/GITHUB_TOKEN, and
+          * the deployment's SCM host is github.com.
+
+        Otherwise it execs the real gh untouched.
+        """
+        wrapper_path = Path("/usr/local/bin/gh")
+        real_gh = "/usr/bin/gh"
+        wrapper_body = (
+            "#!/bin/sh\n"
+            f'REAL_GH="{real_gh}"\n'
+            "# Respect an explicit user token and non-GitHub deployments.\n"
+            'if [ -n "$GH_TOKEN" ] || [ -n "$GITHUB_TOKEN" ] || '
+            '[ "${VCS_HOST:-github.com}" != "github.com" ]; then\n'
+            '  exec "$REAL_GH" "$@"\n'
+            "fi\n"
+            "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token "
+            "2>/dev/null || true)\n"
+            'if [ -n "$token" ]; then\n'
+            '  exec env GH_TOKEN="$token" "$REAL_GH" "$@"\n'
+            "fi\n"
+            'exec "$REAL_GH" "$@"\n'
+        )
+        try:
+            # Only install if the real gh exists and we're not about to shadow
+            # ourselves (defensive against a previous wrapper at /usr/bin/gh).
+            if Path(real_gh).exists() and (
+                not wrapper_path.exists() or wrapper_path.read_text() != wrapper_body
+            ):
+                wrapper_path.write_text(wrapper_body)
+                wrapper_path.chmod(0o755)
+        except OSError as e:
+            self.log.debug("gh_wrapper.install_failed", error=str(e))
 
     async def _ensure_plain_origin(self) -> bool:
         """Rewrite the `origin` remote to a credential-free HTTPS URL.

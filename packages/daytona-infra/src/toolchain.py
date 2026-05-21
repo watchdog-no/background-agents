@@ -83,6 +83,9 @@ def build_base_image(repo_root: Path) -> Image:
             " > /usr/local/bin/oi-git-credentials",
             "chmod 0755 /usr/local/bin/oi-git-credentials",
             "git config --system credential.helper /usr/local/bin/oi-git-credentials",
+            # Pass the repo path to the helper so it can scope credentials to
+            # the session repo, not just the host.
+            "git config --system credential.useHttpPath true",
         )
         .env(
             {

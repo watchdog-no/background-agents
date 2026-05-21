@@ -34,6 +34,12 @@ def env_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SANDBOX_AUTH_TOKEN", "sandbox-token-xyz")
     monkeypatch.setenv("SESSION_CONFIG", json.dumps({"sessionId": "sess-123"}))
     monkeypatch.setenv("VCS_HOST", "github.com")
+    monkeypatch.setenv("REPO_OWNER", "acme")
+    monkeypatch.setenv("REPO_NAME", "web")
+
+
+# A credential request as git emits it with credential.useHttpPath=true.
+SESSION_REPO_REQUEST = "protocol=https\nhost=github.com\npath=acme/web.git\n\n"
 
 
 def _run(stdin_text: str, action: str = "get") -> tuple[int, str, str]:
@@ -87,7 +93,7 @@ def test_get_returns_credentials_on_success(
     )
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "username=x-access-token" in out
@@ -96,6 +102,51 @@ def test_get_returns_credentials_on_success(
     assert "host=github.com" in out
     assert out.endswith("\n\n")  # blank line terminates
     assert calls[0] == 1
+
+
+def test_refuses_same_host_but_different_repo(cache_dir: Path, env_set: None) -> None:
+    """A malicious submodule on the same host but a different repo gets nothing."""
+    transport = _mock_response({"should": "not be called"}, status=500)
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run("protocol=https\nhost=github.com\npath=victim/private.git\n\n")
+
+    assert code == 0
+    assert "password=" not in out
+    assert calls[0] == 0
+    assert "refusing to serve credentials" in err
+
+
+def test_refuses_non_https_protocol(cache_dir: Path, env_set: None) -> None:
+    transport = _mock_response({"should": "not be called"}, status=500)
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, err = _run("protocol=http\nhost=github.com\npath=acme/web.git\n\n")
+
+    assert code == 0
+    assert "password=" not in out
+    assert calls[0] == 0
+    assert "not https" in err
+
+
+def test_matches_repo_path_case_insensitively_and_without_dotgit(
+    cache_dir: Path, env_set: None
+) -> None:
+    transport = _mock_response(
+        {
+            "username": "x-access-token",
+            "password": "ghs_ok",
+            "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            "scm_provider": "github",
+        }
+    )
+    calls = [0]
+    # Mixed case, no .git suffix, leading slash — all should normalize to acme/web.
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("protocol=https\nhost=github.com\npath=/Acme/Web\n\n")
+
+    assert code == 0
+    assert "password=ghs_ok" in out
 
 
 def test_uses_cache_within_buffer(cache_dir: Path, env_set: None) -> None:
@@ -114,7 +165,7 @@ def test_uses_cache_within_buffer(cache_dir: Path, env_set: None) -> None:
     transport = _mock_response({"username": "fresh", "password": "fresh"})
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "password=ghs_cached" in out
@@ -146,7 +197,7 @@ def test_refreshes_when_cache_within_expiry_buffer(
     )
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "password=ghs_new" in out
@@ -174,15 +225,21 @@ def test_failure_does_not_fall_back_to_stale_cache(
     transport = _mock_response({"error": "unauthorized"}, status=401)
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, err = _run(SESSION_REPO_REQUEST)
 
     assert code != 0
     assert "password=" not in out
     assert "401" in err
 
 
-def test_missing_env_exits_nonzero(cache_dir: Path) -> None:
-    code, out, err = _run("protocol=https\nhost=github.com\n\n")
+def test_missing_env_exits_nonzero(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Request passes scoping (host + path), but no control-plane env and no
+    # VCS_CLONE_TOKEN fallback → the credential fetch fails.
+    monkeypatch.setenv("VCS_HOST", "github.com")
+    monkeypatch.setenv("REPO_OWNER", "acme")
+    monkeypatch.setenv("REPO_NAME", "web")
+
+    code, out, err = _run(SESSION_REPO_REQUEST)
     assert code != 0
     assert "Missing required environment" in err
     assert out == ""
@@ -196,11 +253,13 @@ def test_falls_back_to_env_var_token_in_image_build_mode(
     monkeypatch.setenv("VCS_CLONE_TOKEN", "ghs_build_token")
     monkeypatch.setenv("VCS_CLONE_USERNAME", "x-access-token")
     monkeypatch.setenv("VCS_HOST", "github.com")
+    monkeypatch.setenv("REPO_OWNER", "acme")
+    monkeypatch.setenv("REPO_NAME", "web")
 
     transport = _mock_response({"should": "not be called"}, status=500)
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "username=x-access-token" in out
@@ -242,7 +301,7 @@ def test_5xx_from_control_plane_exits_nonzero(cache_dir: Path, env_set: None) ->
     transport = _mock_response({"error": "internal"}, status=500)
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, err = _run(SESSION_REPO_REQUEST)
 
     assert code != 0
     assert "password=" not in out
@@ -263,7 +322,7 @@ def test_malformed_cache_json_triggers_refresh(cache_dir: Path, env_set: None) -
     )
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "password=ghs_recovered" in out
@@ -291,7 +350,7 @@ def test_cache_missing_password_triggers_refresh(cache_dir: Path, env_set: None)
     )
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, _err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, _err = _run(SESSION_REPO_REQUEST)
 
     assert code == 0
     assert "password=ghs_recovered" in out
@@ -305,12 +364,39 @@ def test_control_plane_response_missing_password_is_fatal(
     transport = _mock_response({"username": "x-access-token"})
     calls = [0]
     with _patch_httpx(transport, calls):
-        code, out, err = _run("protocol=https\nhost=github.com\n\n")
+        code, out, err = _run(SESSION_REPO_REQUEST)
 
     assert code != 0
     assert "password=" not in out
     assert "missing username/password" in err
     assert not helper.CACHE_FILE.exists()
+
+
+def test_token_action_prints_bare_token(cache_dir: Path, env_set: None) -> None:
+    """The gh wrapper uses `token` to get a raw token, no protocol framing."""
+    transport = _mock_response(
+        {
+            "username": "x-access-token",
+            "password": "ghs_for_gh",
+            "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            "scm_provider": "github",
+        }
+    )
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("", action="token")
+
+    assert code == 0
+    assert out == "ghs_for_gh"  # bare token, no key=value framing
+    assert calls[0] == 1
+
+
+def test_token_action_exits_nonzero_when_unavailable(cache_dir: Path) -> None:
+    """No control plane and no env token → token action fails, prints nothing."""
+    code, out, err = _run("", action="token")
+    assert code != 0
+    assert out == ""
+    assert "failed to obtain token" in err
 
 
 def test_store_and_erase_are_noops(
@@ -360,7 +446,7 @@ def test_concurrent_invocations_share_one_refresh(
     results: list[int] = []
 
     def run_one() -> None:
-        stdin = io.StringIO("protocol=https\nhost=github.com\n\n")
+        stdin = io.StringIO(SESSION_REPO_REQUEST)
         stdout = io.StringIO()
         stderr = io.StringIO()
         with patch.object(helper.sys, "stdin", stdin), patch.object(
@@ -393,7 +479,7 @@ def test_cache_file_is_mode_0600(cache_dir: Path, env_set: None) -> None:
     )
     calls = [0]
     with _patch_httpx(transport, calls):
-        _run("protocol=https\nhost=github.com\n\n")
+        _run(SESSION_REPO_REQUEST)
 
     mode = helper.CACHE_FILE.stat().st_mode & 0o777
     assert mode == 0o600

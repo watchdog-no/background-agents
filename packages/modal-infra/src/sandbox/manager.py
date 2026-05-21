@@ -206,7 +206,12 @@ class SandboxManager:
         return code_server_url, ttyd_url, extra_urls
 
     @staticmethod
-    def _inject_vcs_env_vars(env_vars: dict[str, str], clone_token: str | None) -> None:
+    def _inject_vcs_env_vars(
+        env_vars: dict[str, str],
+        clone_token: str | None,
+        *,
+        include_github_cli_aliases: bool = False,
+    ) -> None:
         """Inject SCM provider metadata into the sandbox environment.
 
         For interactive sandboxes ``clone_token`` should be ``None``. Git
@@ -218,6 +223,11 @@ class SandboxManager:
         For image-build sandboxes (one-shot, no control-plane access)
         ``clone_token`` is required: the helper falls back to the env-var
         token when ``CONTROL_PLANE_URL`` / ``SANDBOX_AUTH_TOKEN`` are unset.
+
+        ``include_github_cli_aliases`` adds ``GITHUB_TOKEN`` / ``GITHUB_APP_TOKEN``
+        for the gh CLI. Only set on snapshot restore: snapshots taken before
+        this migration lack the gh wrapper, so gh needs the token in env.
+        Fresh images use the wrapper and ignore these.
         """
         scm_provider = os.environ.get("SCM_PROVIDER", "github")
         if scm_provider == "bitbucket":
@@ -232,6 +242,9 @@ class SandboxManager:
 
         if clone_token:
             env_vars["VCS_CLONE_TOKEN"] = clone_token
+            if include_github_cli_aliases and scm_provider == "github":
+                env_vars["GITHUB_TOKEN"] = clone_token
+                env_vars["GITHUB_APP_TOKEN"] = clone_token
 
     async def create_sandbox(
         self,
@@ -612,7 +625,11 @@ class SandboxManager:
         # that reads VCS_CLONE_TOKEN from env and embeds it in the origin
         # URL — without it, those legacy snapshots can't fetch. New
         # entrypoints ignore the env var and route through the helper.
-        self._inject_vcs_env_vars(env_vars, clone_token=clone_token)
+        # GITHUB_TOKEN/GITHUB_APP_TOKEN aliases are restored too so the gh
+        # CLI keeps working on snapshots predating the gh wrapper.
+        self._inject_vcs_env_vars(
+            env_vars, clone_token=clone_token, include_github_cli_aliases=True
+        )
 
         code_server_password: str | None = None
         if code_server_enabled:
