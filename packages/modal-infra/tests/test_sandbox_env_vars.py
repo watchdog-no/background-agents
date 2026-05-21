@@ -400,6 +400,63 @@ async def test_vcs_env_vars_bitbucket(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_repo_image_boot_preserves_clone_token(monkeypatch):
+    """A repo-image boot may run a pre-migration entrypoint with no helper.
+
+    Repo images are selected by SHA and aren't rebuilt by a CACHE_BUSTER
+    bump, so the old entrypoint may still be in use — it needs VCS_CLONE_TOKEN
+    in env (plus the gh aliases + fallback marker). A helper-capable repo
+    image ignores the env token and refreshes via the helper / gh wrapper.
+    """
+    captured = {}
+
+    class FakeImage:
+        object_id = "repo-img-1"
+
+    monkeypatch.setattr("src.sandbox.manager.modal.Image.from_id", lambda *a, **kw: FakeImage())
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+    monkeypatch.delenv("SCM_PROVIDER", raising=False)
+
+    manager = SandboxManager()
+    config = SandboxConfig(
+        repo_owner="acme",
+        repo_name="repo",
+        clone_token="ghs_repo_image_token",
+        repo_image_id="repo-img-1",
+    )
+    await manager.create_sandbox(config)
+
+    env = captured["env"]
+    assert env["FROM_REPO_IMAGE"] == "true"
+    assert env["VCS_CLONE_TOKEN"] == "ghs_repo_image_token"
+    assert env["GITHUB_TOKEN"] == "ghs_repo_image_token"
+    assert env["OI_GITHUB_TOKEN_IS_FALLBACK"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_session_snapshot_boot_preserves_clone_token(monkeypatch):
+    """A session-snapshot boot has the same legacy-compat need as repo images."""
+    captured = {}
+
+    monkeypatch.setattr("src.sandbox.manager.modal.Image.from_registry", lambda *a, **kw: object())
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+    monkeypatch.delenv("SCM_PROVIDER", raising=False)
+
+    manager = SandboxManager()
+    config = SandboxConfig(
+        repo_owner="acme",
+        repo_name="repo",
+        clone_token="ghs_snapshot_token",
+        snapshot_id="snap-1",
+    )
+    await manager.create_sandbox(config)
+
+    env = captured["env"]
+    assert env["VCS_CLONE_TOKEN"] == "ghs_snapshot_token"
+    assert env["OI_GITHUB_TOKEN_IS_FALLBACK"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_restore_preserves_vcs_clone_token_for_legacy_snapshots(monkeypatch):
     """Snapshot restore still injects VCS_CLONE_TOKEN.
 

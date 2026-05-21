@@ -291,8 +291,21 @@ class SandboxManager:
             }
         )
 
-        # Interactive sandbox: rely on the in-sandbox git credential helper.
-        self._inject_vcs_env_vars(env_vars, clone_token=None)
+        # A boot from a pre-built image (session snapshot or repo image) may
+        # run an entrypoint built before the credential-helper migration: no
+        # helper, and the old entrypoint expects VCS_CLONE_TOKEN in env to
+        # rewrite origin. Pass the fresh token through for those (with the
+        # gh-CLI aliases + fallback marker, so helper-capable images refresh
+        # past it). Fresh base-image boots rely on the in-sandbox credential
+        # helper and need no token in env. Repo images are selected by SHA and
+        # aren't rebuilt by a CACHE_BUSTER bump, so we can't assume they're
+        # current.
+        boots_from_prebuilt_image = bool(config.snapshot_id or config.repo_image_id)
+        self._inject_vcs_env_vars(
+            env_vars,
+            clone_token=config.clone_token if boots_from_prebuilt_image else None,
+            include_github_cli_aliases=boots_from_prebuilt_image,
+        )
 
         code_server_password: str | None = None
         if config.code_server_enabled:

@@ -136,10 +136,10 @@ def _is_authorized_request(input_lines: dict[str, str]) -> tuple[bool, str]:
 
     * protocol must be ``https`` (never hand a token to a plaintext remote);
     * host must equal the configured ``VCS_HOST``;
-    * path, when git provides it (``credential.useHttpPath=true``), must be
-      the session repo. If git doesn't pass a path we fall back to host-only
-      scoping and flag it — that only happens on a misconfigured image where
-      ``useHttpPath`` wasn't applied.
+    * path must be the session repo. We set ``credential.useHttpPath=true``
+      wherever the helper is installed, so git always passes a path; a
+      missing path means a misconfigured image and we fail closed rather
+      than degrade to host-only scoping (which would re-open the leak).
 
     Returns ``(authorized, reason)`` so the caller can log the rejection.
     """
