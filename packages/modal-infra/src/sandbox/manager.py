@@ -224,13 +224,13 @@ class SandboxManager:
         ``clone_token`` is required: the helper falls back to the env-var
         token when ``CONTROL_PLANE_URL`` / ``SANDBOX_AUTH_TOKEN`` are unset.
 
-        ``include_github_cli_aliases`` adds ``GITHUB_TOKEN`` / ``GITHUB_APP_TOKEN``
-        for the gh CLI. Only set on snapshot restore: snapshots taken before
-        this migration lack the gh wrapper, so gh needs the token in env. The
-        injection is marked with ``OI_GITHUB_TOKEN_IS_FALLBACK=1`` so the gh
-        wrapper on *helper-capable* restored snapshots refreshes past it rather
-        than using the static (and soon-expired) restore token, while a genuine
-        user-provided token (no marker) is still respected.
+        ``include_github_cli_aliases`` adds fallback ``GITHUB_TOKEN`` /
+        ``GITHUB_APP_TOKEN`` for legacy snapshots/repo images that predate the
+        gh wrapper. These aliases are only injected when the user has not
+        provided a GitHub CLI token. Fallback injection is marked with
+        ``OI_GITHUB_TOKEN_IS_FALLBACK=1`` so helper-capable boots refresh past
+        the static restore token, while genuine user-provided tokens remain
+        authoritative.
         """
         scm_provider = os.environ.get("SCM_PROVIDER", "github")
         if scm_provider == "bitbucket":
@@ -246,9 +246,13 @@ class SandboxManager:
         if clone_token:
             env_vars["VCS_CLONE_TOKEN"] = clone_token
             if include_github_cli_aliases and scm_provider == "github":
-                env_vars["GITHUB_TOKEN"] = clone_token
-                env_vars["GITHUB_APP_TOKEN"] = clone_token
-                env_vars["OI_GITHUB_TOKEN_IS_FALLBACK"] = "1"
+                has_user_github_cli_token = any(
+                    env_vars.get(key) for key in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_APP_TOKEN")
+                )
+                if not has_user_github_cli_token:
+                    env_vars["GITHUB_TOKEN"] = clone_token
+                    env_vars["GITHUB_APP_TOKEN"] = clone_token
+                    env_vars["OI_GITHUB_TOKEN_IS_FALLBACK"] = "1"
 
     async def create_sandbox(
         self,

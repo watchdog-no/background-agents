@@ -64,7 +64,7 @@ export interface GitPushAuthContext {
 export interface CredentialHelperAuth {
   /** Username component for HTTPS Basic auth (provider-specific). */
   username: string;
-  /** Password component (a short-lived token for GitHub Apps, a PAT for GitLab). */
+  /** Password component, typically a short-lived provider token. */
   password: string;
   /** Absolute epoch milliseconds when the password stops being valid. */
   expiresAtEpochMs: number;
@@ -308,10 +308,6 @@ export interface SourceControlProvider {
    * provider-specific basic-auth username (e.g. `x-access-token` for GitHub),
    * and `password` is a freshly minted token. `expiresAtEpochMs` lets the
    * client side cache the credentials until shortly before they expire.
-   *
-   * For providers whose tokens don't expire (e.g. GitLab PATs), return an
-   * expiry far enough in the future that the client still refreshes
-   * occasionally — that surfaces revocations without hammering the API.
    *
    * @throws SourceControlProviderError on configuration or upstream errors
    */

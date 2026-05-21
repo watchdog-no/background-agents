@@ -475,6 +475,17 @@ describe("GitLabSourceControlProvider", () => {
     });
   });
 
+  describe("generateCredentialHelperAuth", () => {
+    it("throws a permanent not-implemented error", async () => {
+      const provider = new GitLabSourceControlProvider(fakeConfig);
+      const err = await provider.generateCredentialHelperAuth().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(SourceControlProviderError);
+      expect((err as SourceControlProviderError).errorType).toBe("permanent");
+      expect((err as SourceControlProviderError).message).toMatch(/not implemented/i);
+    });
+  });
+
   describe("buildManualPullRequestUrl", () => {
     it("builds correct GitLab MR creation URL", () => {
       const provider = new GitLabSourceControlProvider(fakeConfig);

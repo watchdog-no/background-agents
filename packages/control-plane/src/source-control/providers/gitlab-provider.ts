@@ -344,25 +344,11 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
     };
   }
 
-  /**
-   * GitLab PATs don't carry server-issued expiries, so we surface a synthetic
-   * 1-hour expiry. The helper's "fail loud on refresh error" promise then
-   * propagates a revoked PAT within an hour instead of letting a poisoned
-   * cache linger.
-   */
   async generateCredentialHelperAuth(): Promise<CredentialHelperAuth> {
-    if (!this.accessToken) {
-      throw new SourceControlProviderError(
-        "GitLab access token not configured - cannot generate credential helper auth",
-        "permanent"
-      );
-    }
-    const PAT_SYNTHETIC_TTL_MS = 60 * 60 * 1000;
-    return {
-      username: "oauth2",
-      password: this.accessToken,
-      expiresAtEpochMs: Date.now() + PAT_SYNTHETIC_TTL_MS,
-    };
+    throw new SourceControlProviderError(
+      "GitLab credential helper auth is not implemented.",
+      "permanent"
+    );
   }
 
   buildManualPullRequestUrl(config: BuildManualPullRequestUrlConfig): string {

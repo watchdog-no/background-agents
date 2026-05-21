@@ -328,10 +328,10 @@ def _fake_sandbox_create(captured):
     return fake_create_aio
 
 
-# Note: SCM tokens are never injected into the sandbox environment. Git
-# operations authenticate via the credential helper installed in the base
-# image, which fetches fresh tokens from the control plane per call.
-# These tests pin that contract.
+# Note: fresh sandboxes never receive SCM tokens in the environment. Legacy
+# snapshot/repo-image and image-build paths still receive VCS_CLONE_TOKEN as a
+# fallback because they may run code built before the credential-helper
+# migration. These tests pin that split contract.
 
 
 @pytest.mark.asyncio
@@ -431,6 +431,38 @@ async def test_repo_image_boot_preserves_clone_token(monkeypatch):
     assert env["VCS_CLONE_TOKEN"] == "ghs_repo_image_token"
     assert env["GITHUB_TOKEN"] == "ghs_repo_image_token"
     assert env["OI_GITHUB_TOKEN_IS_FALLBACK"] == "1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_key", ["GH_TOKEN", "GITHUB_TOKEN", "GITHUB_APP_TOKEN"])
+async def test_repo_image_boot_preserves_user_github_cli_token(monkeypatch, token_key):
+    """User-provided GitHub CLI tokens must win over fallback restore tokens."""
+    captured = {}
+
+    class FakeImage:
+        object_id = "repo-img-1"
+
+    monkeypatch.setattr("src.sandbox.manager.modal.Image.from_id", lambda *a, **kw: FakeImage())
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+    monkeypatch.delenv("SCM_PROVIDER", raising=False)
+
+    manager = SandboxManager()
+    await manager.create_sandbox(
+        SandboxConfig(
+            repo_owner="acme",
+            repo_name="repo",
+            clone_token="ghs_repo_image_token",
+            repo_image_id="repo-img-1",
+            user_env_vars={token_key: "user_token"},
+        )
+    )
+
+    env = captured["env"]
+    assert env["VCS_CLONE_TOKEN"] == "ghs_repo_image_token"
+    assert env[token_key] == "user_token"
+    assert env.get("GITHUB_TOKEN") != "ghs_repo_image_token"
+    assert env.get("GITHUB_APP_TOKEN") != "ghs_repo_image_token"
+    assert "OI_GITHUB_TOKEN_IS_FALLBACK" not in env
 
 
 @pytest.mark.asyncio
