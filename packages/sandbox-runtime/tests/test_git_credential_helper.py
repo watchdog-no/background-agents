@@ -47,9 +47,11 @@ def _run(stdin_text: str, action: str = "get") -> tuple[int, str, str]:
     stdin = io.StringIO(stdin_text)
     stdout = io.StringIO()
     stderr = io.StringIO()
-    with patch.object(helper.sys, "stdin", stdin), patch.object(
-        helper.sys, "stdout", stdout
-    ), patch.object(helper.sys, "stderr", stderr):
+    with (
+        patch.object(helper.sys, "stdin", stdin),
+        patch.object(helper.sys, "stdout", stdout),
+        patch.object(helper.sys, "stderr", stderr),
+    ):
         code = helper.main([action])
     return code, stdout.getvalue(), stderr.getvalue()
 
@@ -80,9 +82,7 @@ def _patch_httpx(transport: httpx.MockTransport, call_count: list[int]) -> Any:
     return patch.object(helper.httpx, "Client", factory)
 
 
-def test_get_returns_credentials_on_success(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_get_returns_credentials_on_success(cache_dir: Path, env_set: None) -> None:
     transport = _mock_response(
         {
             "username": "x-access-token",
@@ -149,6 +149,24 @@ def test_matches_repo_path_case_insensitively_and_without_dotgit(
     assert "password=ghs_ok" in out
 
 
+def test_allows_same_repo_git_lfs_endpoint(cache_dir: Path, env_set: None) -> None:
+    transport = _mock_response(
+        {
+            "username": "x-access-token",
+            "password": "ghs_lfs",
+            "expires_at_epoch_ms": int((time.time() + 3600) * 1000),
+            "scm_provider": "github",
+        }
+    )
+    calls = [0]
+    with _patch_httpx(transport, calls):
+        code, out, _err = _run("protocol=https\nhost=github.com\npath=acme/web.git/info/lfs\n\n")
+
+    assert code == 0
+    assert "password=ghs_lfs" in out
+    assert calls[0] == 1
+
+
 def test_uses_cache_within_buffer(cache_dir: Path, env_set: None) -> None:
     """A cached entry well within its TTL should be returned without an HTTP call."""
     helper.CACHE_FILE.write_text(
@@ -172,9 +190,7 @@ def test_uses_cache_within_buffer(cache_dir: Path, env_set: None) -> None:
     assert calls[0] == 0
 
 
-def test_refreshes_when_cache_within_expiry_buffer(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_refreshes_when_cache_within_expiry_buffer(cache_dir: Path, env_set: None) -> None:
     """A near-expiry cache entry should trigger a refresh."""
     helper.CACHE_FILE.write_text(
         json.dumps(
@@ -207,9 +223,7 @@ def test_refreshes_when_cache_within_expiry_buffer(
     assert persisted["password"] == "ghs_new"
 
 
-def test_failure_does_not_fall_back_to_stale_cache(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_failure_does_not_fall_back_to_stale_cache(cache_dir: Path, env_set: None) -> None:
     """If the endpoint fails, we must NOT return stale cached credentials."""
     helper.CACHE_FILE.write_text(
         json.dumps(
@@ -267,9 +281,7 @@ def test_falls_back_to_env_var_token_in_image_build_mode(
     assert calls[0] == 0  # No control-plane call attempted.
 
 
-def test_refuses_to_serve_credentials_for_foreign_host(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_refuses_to_serve_credentials_for_foreign_host(cache_dir: Path, env_set: None) -> None:
     """A submodule or ls-remote pointing at a different host must NOT receive our token."""
     transport = _mock_response({"should": "not be called"}, status=500)
     calls = [0]
@@ -357,9 +369,7 @@ def test_cache_missing_password_triggers_refresh(cache_dir: Path, env_set: None)
     assert calls[0] == 1
 
 
-def test_control_plane_response_missing_password_is_fatal(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_control_plane_response_missing_password_is_fatal(cache_dir: Path, env_set: None) -> None:
     """Bad upstream payload must not write a half-formed cache."""
     transport = _mock_response({"username": "x-access-token"})
     calls = [0]
@@ -372,9 +382,7 @@ def test_control_plane_response_missing_password_is_fatal(
     assert not helper.CACHE_FILE.exists()
 
 
-def test_control_plane_response_invalid_expiry_is_fatal(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_control_plane_response_invalid_expiry_is_fatal(cache_dir: Path, env_set: None) -> None:
     """A missing/zero expiry must fail loud, not get cached and refetched forever."""
     transport = _mock_response(
         {"username": "x-access-token", "password": "ghs_x", "expires_at_epoch_ms": 0}
@@ -416,9 +424,7 @@ def test_token_action_exits_nonzero_when_unavailable(cache_dir: Path) -> None:
     assert "failed to obtain token" in err
 
 
-def test_store_and_erase_are_noops(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_store_and_erase_are_noops(cache_dir: Path, env_set: None) -> None:
     """git may invoke `store` or `erase`; we should ignore them and exit 0."""
     transport = _mock_response({"username": "u", "password": "p"})
     calls = [0]
@@ -433,9 +439,7 @@ def test_store_and_erase_are_noops(
     assert calls[0] == 0
 
 
-def test_concurrent_invocations_share_one_refresh(
-    cache_dir: Path, env_set: None
-) -> None:
+def test_concurrent_invocations_share_one_refresh(cache_dir: Path, env_set: None) -> None:
     """Two helpers racing on first boot should result in a single HTTP call."""
     payload = {
         "username": "x-access-token",
@@ -466,9 +470,11 @@ def test_concurrent_invocations_share_one_refresh(
         stdin = io.StringIO(SESSION_REPO_REQUEST)
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with patch.object(helper.sys, "stdin", stdin), patch.object(
-            helper.sys, "stdout", stdout
-        ), patch.object(helper.sys, "stderr", stderr):
+        with (
+            patch.object(helper.sys, "stdin", stdin),
+            patch.object(helper.sys, "stdout", stdout),
+            patch.object(helper.sys, "stderr", stderr),
+        ):
             results.append(helper.main(["get"]))
 
     with patch.object(helper.httpx, "Client", factory):

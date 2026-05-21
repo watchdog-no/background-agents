@@ -111,6 +111,8 @@ def _credentials_from_env() -> dict[str, object] | None:
 def _normalize_repo_path(path: str) -> str:
     """Normalize a git credential `path=` value to ``owner/repo`` form."""
     normalized = path.strip().strip("/").lower()
+    if normalized.endswith(".git/info/lfs"):
+        normalized = normalized[: -len(".git/info/lfs")]
     if normalized.endswith(".git"):
         normalized = normalized[: -len(".git")]
     return normalized
@@ -215,9 +217,7 @@ def _fetch_from_control_plane(endpoint: tuple[str, str, str]) -> dict[str, objec
 
     if response.status_code != 200:
         body = response.text[:200]
-        raise RuntimeError(
-            f"control plane returned {response.status_code}: {body}"
-        )
+        raise RuntimeError(f"control plane returned {response.status_code}: {body}")
 
     data = response.json()
     if not isinstance(data, dict) or not data.get("username") or not data.get("password"):

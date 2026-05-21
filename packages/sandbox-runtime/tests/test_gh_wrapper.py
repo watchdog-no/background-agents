@@ -17,10 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 REAL_GH_DECISION = (
-    "#!/bin/sh\n"
-    'echo "GH_TOKEN=${GH_TOKEN}"\n'
-    'echo "GITHUB_TOKEN=${GITHUB_TOKEN}"\n'
-    'echo "ARGS=$*"\n'
+    '#!/bin/sh\necho "GH_TOKEN=${GH_TOKEN}"\necho "GITHUB_TOKEN=${GITHUB_TOKEN}"\necho "ARGS=$*"\n'
 )
 
 

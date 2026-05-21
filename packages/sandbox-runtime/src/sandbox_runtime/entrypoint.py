@@ -216,8 +216,7 @@ class SandboxSupervisor:
         """
         shim_path = Path("/usr/local/bin/oi-git-credentials")
         shim_body = (
-            "#!/bin/sh\n"
-            'exec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
+            '#!/bin/sh\nexec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
         )
         try:
             if not shim_path.exists() or shim_path.read_text() != shim_body:

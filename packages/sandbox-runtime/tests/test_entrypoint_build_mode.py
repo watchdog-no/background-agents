@@ -744,13 +744,14 @@ class TestEnsureCredentialHelperConfigured:
             proc.returncode = 0
             return proc
 
-        with patch(
-            "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
-            side_effect=fake_subprocess,
-        ), patch("sandbox_runtime.entrypoint.Path.write_text"), patch(
-            "sandbox_runtime.entrypoint.Path.chmod"
-        ), patch(
-            "sandbox_runtime.entrypoint.Path.exists", return_value=False
+        with (
+            patch(
+                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+                side_effect=fake_subprocess,
+            ),
+            patch("sandbox_runtime.entrypoint.Path.write_text"),
+            patch("sandbox_runtime.entrypoint.Path.chmod"),
+            patch("sandbox_runtime.entrypoint.Path.exists", return_value=False),
         ):
             await supervisor._ensure_credential_helper_configured()
 
