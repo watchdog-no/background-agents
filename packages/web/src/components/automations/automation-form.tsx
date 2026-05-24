@@ -31,7 +31,6 @@ import { RepoIcon, BranchIcon, ModelIcon, ChevronDownIcon } from "@/components/u
 import { CronPicker } from "./cron-picker";
 import { TriggerTypeSelector } from "./trigger-type-selector";
 import { ConditionBuilder } from "./condition-builder";
-import { cn } from "@/lib/utils";
 
 const COMMON_TIMEZONES = [
   "UTC",
@@ -65,18 +64,6 @@ const TIMEZONE_GROUPS: ComboboxGroup[] = [
     options: ALL_TIMEZONES.filter((tz) => !COMMON_SET.has(tz)).map(toOption),
   },
 ];
-
-function FieldDescription({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <p className={cn("text-xs text-muted-foreground mt-1 leading-normal", className)}>{children}</p>
-  );
-}
 
 export interface AutomationFormValues {
   name: string;
@@ -195,9 +182,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
       delete (values as Partial<AutomationFormValues>).scheduleTz;
 
       if (eventType) values.eventType = eventType;
-      // Always send triggerConfig so clearing all conditions persists (PUT skips
-      // trigger_config when triggerConfig is omitted).
-      values.triggerConfig = { conditions };
+      if (conditions.length > 0) values.triggerConfig = { conditions };
       if (triggerType === "sentry" && mode === "create" && sentryClientSecret.trim()) {
         values.sentryClientSecret = sentryClientSecret.trim();
       }
@@ -224,10 +209,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
       {mode === "create" ? (
         <div>
           <label className="block text-sm font-medium text-foreground mb-1.5">Trigger Type</label>
-          <FieldDescription className="my-1">
-            Scheduled automations run on a repeating timer. Other types run when the connected
-            service sends an event (for example a GitHub webhook or Sentry alert).
-          </FieldDescription>
           <TriggerTypeSelector value={triggerType} onChange={setTriggerType} />
         </div>
       ) : (
@@ -243,10 +224,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             }[triggerType] || triggerType}
             <span className="text-xs ml-2">(cannot be changed)</span>
           </div>
-          <FieldDescription>
-            Trigger type is fixed after the automation is created. Create a new automation to use a
-            different trigger.
-          </FieldDescription>
         </div>
       )}
 
@@ -291,10 +268,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
           </span>
           <ChevronDownIcon className="w-3 h-3 text-muted-foreground" />
         </Combobox>
-        <FieldDescription>
-          Runs clone and execute against this repository.
-          {mode === "edit" ? " The repository cannot be changed after creation." : ""}
-        </FieldDescription>
       </div>
 
       {/* Branch */}
@@ -320,11 +293,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
           </span>
           <ChevronDownIcon className="w-3 h-3 text-muted-foreground" />
         </Combobox>
-        <FieldDescription>
-          Default branch checked out when a session run starts. Selecting a repository resets this
-          to that repo&apos;s default branch. To filter pull requests by merge target, add a Target
-          branch condition below; Head branch matches the PR source branch.
-        </FieldDescription>
       </div>
 
       {/* Model */}
@@ -355,9 +323,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
           <span className="truncate flex-1 text-left">{formatModelNameLower(model)}</span>
           <ChevronDownIcon className="w-3 h-3 text-muted-foreground" />
         </Combobox>
-        <FieldDescription>
-          Model used for the agent on each run of this automation.
-        </FieldDescription>
       </div>
 
       <div>
@@ -383,10 +348,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             ))}
           </SelectContent>
         </Select>
-        <FieldDescription>
-          For models that support it, overrides how much chain-of-thought style reasoning is
-          allowed. &quot;Use model default&quot; leaves the choice to the model.
-        </FieldDescription>
       </div>
 
       {/* Schedule fields (only for schedule type) */}
@@ -395,10 +356,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">Schedule</label>
             <CronPicker value={scheduleCron} onChange={setScheduleCron} timezone={scheduleTz} />
-            <FieldDescription>
-              How often this automation runs. Use a preset or a five-field cron expression (minute,
-              hour, day of month, month, day of week).
-            </FieldDescription>
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">Timezone</label>
@@ -419,10 +376,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
               <span className="truncate flex-1 text-left">{scheduleTz.replace(/_/g, " ")}</span>
               <ChevronDownIcon className="w-3 h-3 text-muted-foreground" />
             </Combobox>
-            <FieldDescription>
-              The schedule is evaluated in this time zone (for example, &quot;9:00&quot; is 9:00
-              local time here).
-            </FieldDescription>
           </div>
         </>
       )}
@@ -450,9 +403,6 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
               ))}
             </SelectContent>
           </Select>
-          <FieldDescription>
-            Only events of this type on the selected repository can start a run for this automation.
-          </FieldDescription>
           {eventTypeError && <p className="mt-1 text-xs text-destructive">{eventTypeError}</p>}
         </div>
       )}
@@ -489,20 +439,12 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             onChange={setConditions}
             triggerSource={TRIGGER_TYPE_TO_SOURCE[triggerType] as AutomationEventSource}
           />
-          <FieldDescription>
-            Optional filters on incoming events. When you add conditions, every condition must pass
-            before a run starts.
-          </FieldDescription>
         </div>
       )}
 
       {/* Instructions */}
       <div>
         <label className="block text-sm font-medium text-foreground mb-1.5">Instructions</label>
-        <FieldDescription className="mb-1.5">
-          Main prompt for the agent when a run starts. For event-based triggers, a short summary of
-          the event is inserted above this text.
-        </FieldDescription>
         <Textarea
           value={instructions}
           onChange={(e) => setInstructions(e.target.value)}

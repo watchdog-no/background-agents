@@ -225,70 +225,6 @@ class TestSSEStreaming:
         assert token_events[1]["content"] == "Hello world"  # Cumulative
 
     @pytest.mark.asyncio
-    async def test_text_streaming_with_part_delta_event(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Should handle OpenCode's message.part.delta text stream events."""
-        http_client = bridge.http_client
-        http_client.sse_events = [
-            create_sse_event("server.connected", {}),
-            create_sse_event(
-                "message.updated",
-                {
-                    "info": {
-                        "id": "oc-msg-1",
-                        "role": "assistant",
-                        "sessionID": "oc-session-123",
-                        "parentID": opencode_message_id,
-                    }
-                },
-            ),
-            create_sse_event(
-                "message.part.updated",
-                {
-                    "part": {
-                        "type": "text",
-                        "id": "part-1",
-                        "sessionID": "oc-session-123",
-                        "messageID": "oc-msg-1",
-                        "text": "",
-                    }
-                },
-            ),
-            create_sse_event(
-                "message.part.delta",
-                {
-                    "sessionID": "oc-session-123",
-                    "messageID": "oc-msg-1",
-                    "partID": "part-1",
-                    "field": "text",
-                    "delta": "Hello",
-                },
-            ),
-            create_sse_event(
-                "message.part.delta",
-                {
-                    "sessionID": "oc-session-123",
-                    "messageID": "oc-msg-1",
-                    "partID": "part-1",
-                    "field": "text",
-                    "delta": " world",
-                },
-            ),
-            create_sse_event("session.idle", {"sessionID": "oc-session-123"}),
-        ]
-
-        events = []
-        async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-            events.append(event)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert token_events == [
-            {"type": "token", "content": "Hello", "messageId": "cp-msg-1"},
-            {"type": "token", "content": "Hello world", "messageId": "cp-msg-1"},
-        ]
-
-    @pytest.mark.asyncio
     async def test_text_streaming_without_delta(
         self, bridge: AgentBridge, opencode_message_id: str
     ):
@@ -541,763 +477,6 @@ class TestSSEStreaming:
         assert events[0]["type"] == "token"
 
     @pytest.mark.asyncio
-    async def test_completion_on_terminal_assistant_finish_without_idle(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal assistant finish should complete even if OpenCode only sends heartbeats."""
-        bridge.sse_inactivity_timeout = 5.0
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Final response",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Final response"}],
-                    }
-                ],
-            )
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert len(token_events) == 1
-        assert token_events[0]["content"] == "Final response"
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_fetches_final_text_when_part_not_streamed(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal finish should fetch final message text missed by SSE ordering."""
-        bridge.sse_inactivity_timeout = 5.0
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Fetched response"}],
-                    }
-                ],
-            )
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert token_events == [
-            {"type": "token", "content": "Fetched response", "messageId": "cp-msg-1"}
-        ]
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_waits_for_late_part_after_empty_final_fetch(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal finish should not complete empty if a late text part is still arriving."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge.TERMINAL_FINISH_GRACE_SECONDS = 0.01
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Late response",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(200, []),
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Late response"}],
-                    }
-                ],
-            ),
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert token_events == [
-            {"type": "token", "content": "Late response", "messageId": "cp-msg-1"}
-        ]
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_waits_for_late_suffix_after_prefix(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal finish should not truncate a response that already streamed a prefix."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge.TERMINAL_FINISH_GRACE_SECONDS = 0.01
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Prefix",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Prefix suffix",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Prefix"}],
-                    }
-                ],
-            ),
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Prefix suffix"}],
-                    }
-                ],
-            ),
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert token_events == [
-            {"type": "token", "content": "Prefix", "messageId": "cp-msg-1"},
-            {"type": "token", "content": "Prefix suffix", "messageId": "cp-msg-1"},
-        ]
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_waits_for_late_step_finish_after_prefix(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal finish should not drop trailing step-finish cost/tokens."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge.TERMINAL_FINISH_GRACE_SECONDS = 0.01
-        step_part = {
-            "type": "step-finish",
-            "id": "step-1",
-            "sessionID": "oc-session-123",
-            "messageID": "oc-msg-1",
-            "reason": "stop",
-            "cost": 0.25,
-            "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-        }
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Done",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-                create_sse_event("message.part.updated", {"part": step_part}),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Done"}],
-                    }
-                ],
-            ),
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Done"}, step_part],
-                    }
-                ],
-            ),
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        step_events = [e for e in events if e["type"] == "step_finish"]
-        assert step_events == [
-            {
-                "type": "step_finish",
-                "cost": 0.25,
-                "tokens": {
-                    "input": 10,
-                    "output": 5,
-                    "reasoning": 0,
-                    "cache": {"read": 0, "write": 0},
-                },
-                "reason": "stop",
-                "messageId": "cp-msg-1",
-            }
-        ]
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_fetches_text_on_grace_second_fetch(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Grace expiry should retry final-state fetch and emit newly available text."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge.TERMINAL_FINISH_GRACE_SECONDS = 0.01
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(200, []),
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Fetched after grace"}],
-                    }
-                ],
-            ),
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        token_events = [e for e in events if e["type"] == "token"]
-        assert token_events == [
-            {"type": "token", "content": "Fetched after grace", "messageId": "cp-msg-1"}
-        ]
-
-    @pytest.mark.asyncio
-    async def test_terminal_finish_without_text_completes_after_grace(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Terminal finish with no available text should not wait forever on heartbeats."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge.TERMINAL_FINISH_GRACE_SECONDS = 0.01
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [MockResponse(200, []), MockResponse(200, [])]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        assert events == []
-
-    @pytest.mark.asyncio
-    async def test_tool_calls_finish_waits_for_idle(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Tool-call finish should not end the stream before OpenCode goes idle."""
-        bridge.sse_inactivity_timeout = 5.0
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "tool-calls",
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "tool-calls",
-                        },
-                        "parts": [
-                            {
-                                "id": "tool-part-1",
-                                "type": "tool",
-                                "tool": "Bash",
-                                "callID": "call-1",
-                                "state": {"status": "running"},
-                            }
-                        ],
-                    }
-                ],
-            )
-        ]
-        bridge.http_client = http_client
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(collect_events(), timeout=0.25)
-
-    @pytest.mark.asyncio
-    async def test_unknown_finish_waits_for_idle(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """OpenCode finish=unknown should not terminate the parent stream."""
-        bridge.sse_inactivity_timeout = 5.0
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "unknown",
-                        }
-                    },
-                ),
-            ],
-        )
-        bridge.http_client = DelayedMockHttpClient(sse_response)
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(collect_events(), timeout=0.25)
-
-    @pytest.mark.asyncio
-    async def test_message_info_error_emits_error(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Assistant message info.error should fail the prompt even without session.error."""
-        bridge.sse_inactivity_timeout = 5.0
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "error",
-                            "error": {
-                                "name": "APIError",
-                                "data": {"message": "provider failed"},
-                            },
-                        }
-                    },
-                ),
-            ],
-        )
-        bridge.http_client = DelayedMockHttpClient(sse_response)
-
-        async def collect_events():
-            events = []
-            async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        assert events == [{"type": "error", "error": "provider failed", "messageId": "cp-msg-1"}]
-
-    @pytest.mark.asyncio
-    async def test_handle_prompt_completes_on_terminal_finish_without_idle(
-        self, bridge: AgentBridge, opencode_message_id: str
-    ):
-        """Prompt handling should emit execution_complete without waiting for idle."""
-        bridge.sse_inactivity_timeout = 5.0
-        bridge._configure_git_identity = AsyncMock()
-        sent_events: list[dict[str, Any]] = []
-        bridge._send_event = AsyncMock(side_effect=sent_events.append)
-
-        sse_response = HeartbeatMockSSEResponse(
-            [
-                create_sse_event("server.connected", {}),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.part.updated",
-                    {
-                        "part": {
-                            "type": "text",
-                            "id": "part-1",
-                            "sessionID": "oc-session-123",
-                            "messageID": "oc-msg-1",
-                            "text": "Final response",
-                        }
-                    },
-                ),
-                create_sse_event(
-                    "message.updated",
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "sessionID": "oc-session-123",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        }
-                    },
-                ),
-            ],
-        )
-        http_client = DelayedMockHttpClient(sse_response)
-        http_client.get_responses = [
-            MockResponse(
-                200,
-                [
-                    {
-                        "info": {
-                            "id": "oc-msg-1",
-                            "role": "assistant",
-                            "parentID": opencode_message_id,
-                            "finish": "stop",
-                            "time": {"completed": 123},
-                        },
-                        "parts": [{"id": "part-1", "type": "text", "text": "Final response"}],
-                    }
-                ],
-            )
-        ]
-        bridge.http_client = http_client
-
-        await asyncio.wait_for(
-            bridge._handle_prompt(
-                {
-                    "messageId": "cp-msg-1",
-                    "content": "Test prompt",
-                    "author": {"scmName": "Test User", "scmEmail": "test@example.com"},
-                }
-            ),
-            timeout=0.5,
-        )
-
-        token_events = [e for e in sent_events if e["type"] == "token"]
-        complete_events = [e for e in sent_events if e["type"] == "execution_complete"]
-        assert token_events == [
-            {"type": "token", "content": "Final response", "messageId": "cp-msg-1"}
-        ]
-        assert complete_events == [
-            {"type": "execution_complete", "messageId": "cp-msg-1", "success": True}
-        ]
-
-    @pytest.mark.asyncio
     async def test_handles_session_error(self, bridge: AgentBridge):
         """Should emit error event on session.error."""
         http_client = bridge.http_client
@@ -1414,11 +593,12 @@ class TestFetchFinalMessageState:
 
         cumulative_text: dict[str, str] = {}
 
+        events = []
         # Pass both control plane ID and OpenCode ID
-        result = await bridge._fetch_final_message_state(
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-2", "msg_0002bbbbbb", cumulative_text
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should only have the second message's text (parentID matches msg_0002bbbbbb)
         assert len(events) == 1
@@ -1442,11 +622,12 @@ class TestFetchFinalMessageState:
 
         cumulative_text: dict[str, str] = {}
 
+        events = []
         # Pass both control plane ID and OpenCode ID (new ID doesn't match old parentID)
-        result = await bridge._fetch_final_message_state(
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-new", "msg_0002newnew", cumulative_text
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should have no events since parentID doesn't match
         assert len(events) == 0
@@ -1468,10 +649,11 @@ class TestFetchFinalMessageState:
         # Already sent this exact text
         cumulative_text = {"part-1": "Same length"}
 
-        result = await bridge._fetch_final_message_state(
+        events = []
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-1", "msg_0001aaaaaa", cumulative_text
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should have no events since text is not longer
         assert len(events) == 0
@@ -1493,56 +675,15 @@ class TestFetchFinalMessageState:
         # Previously sent shorter text
         cumulative_text = {"part-1": "Hello"}
 
-        result = await bridge._fetch_final_message_state(
+        events = []
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-1", "msg_0001aaaaaa", cumulative_text
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should have one event with full text
         assert len(events) == 1
         assert events[0]["content"] == "Hello world!"
-
-    @pytest.mark.asyncio
-    async def test_completion_marker_can_be_limited_to_target_message(
-        self, bridge_with_mock_client: AgentBridge
-    ):
-        """A completed older message should not finalize a newer terminal message."""
-        bridge = bridge_with_mock_client
-
-        all_messages = [
-            {
-                "info": {
-                    "id": "oc-msg-old",
-                    "role": "assistant",
-                    "parentID": "msg_0001aaaaaa",
-                    "time": {"completed": 123},
-                },
-                "parts": [],
-            },
-            {
-                "info": {
-                    "id": "oc-msg-new",
-                    "role": "assistant",
-                    "parentID": "msg_0001aaaaaa",
-                    "finish": "stop",
-                },
-                "parts": [{"id": "part-new", "type": "text", "text": "New response"}],
-            },
-        ]
-
-        bridge.http_client.get = AsyncMock(return_value=MockResponse(200, all_messages))
-
-        result = await bridge._fetch_final_message_state(
-            "cp-msg-1",
-            "msg_0001aaaaaa",
-            {},
-            completion_msg_id="oc-msg-new",
-        )
-
-        assert result.saw_completed_message is False
-        assert result.events == [
-            {"type": "token", "content": "New response", "messageId": "cp-msg-1"}
-        ]
 
     @pytest.mark.asyncio
     async def test_skips_user_messages(self, bridge_with_mock_client: AgentBridge):
@@ -1568,10 +709,11 @@ class TestFetchFinalMessageState:
 
         cumulative_text: dict[str, str] = {}
 
-        result = await bridge._fetch_final_message_state(
+        events = []
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-1", "msg_0001aaaaaa", cumulative_text
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should only have assistant message
         assert len(events) == 1
@@ -1815,34 +957,6 @@ class HangingMockSSEResponse:
             await asyncio.sleep(0)
         # Hang forever (will be interrupted by timeout)
         await asyncio.sleep(3600)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-
-class HeartbeatMockSSEResponse:
-    """Mock SSE response that keeps sending heartbeats after initial events."""
-
-    def __init__(
-        self,
-        initial_events: list[str],
-        heartbeat_interval: float = 0.05,
-        status_code: int = 200,
-    ):
-        self.status_code = status_code
-        self._initial_events = initial_events
-        self._heartbeat_interval = heartbeat_interval
-
-    async def aiter_text(self) -> AsyncIterator[str]:
-        for event in self._initial_events:
-            yield event
-            await asyncio.sleep(0)
-        while True:
-            await asyncio.sleep(self._heartbeat_interval)
-            yield create_sse_event("server.heartbeat", {})
 
     async def __aenter__(self):
         return self
@@ -3058,14 +2172,15 @@ class TestCompactionHandling:
 
         bridge.http_client.get = AsyncMock(return_value=MockResponse(200, messages))
 
-        result = await bridge._fetch_final_message_state(
+        events = []
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-1",
             "msg_original_id",
             {},
             set(),
             compaction_occurred=True,
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         # Should find the post-compaction response but NOT the summary
         assert len(events) == 1
@@ -3099,14 +2214,15 @@ class TestCompactionHandling:
 
         bridge.http_client.get = AsyncMock(return_value=MockResponse(200, messages))
 
-        result = await bridge._fetch_final_message_state(
+        events = []
+        async for event in bridge._fetch_final_message_state(
             "cp-msg-1",
             "msg_original_id",
             {},
             set(),
             compaction_occurred=False,
-        )
-        events = result.events
+        ):
+            events.append(event)
 
         assert len(events) == 0
 

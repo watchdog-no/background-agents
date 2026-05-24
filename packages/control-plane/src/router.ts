@@ -47,8 +47,6 @@ import {
   isValidModel,
   isValidReasoningEffort,
   VALID_MODELS,
-  DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS,
-  DEFAULT_MAX_TOTAL_CHILD_SESSIONS,
   type ScreenshotArtifactMetadata,
   type VideoArtifactMetadata,
   type SessionStatus,
@@ -81,6 +79,8 @@ const logger = createLogger("router");
 
 // Guardrail constants for agent-spawned child sessions
 const MAX_SPAWN_DEPTH = 2;
+const MAX_CONCURRENT_CHILDREN = 5;
+const MAX_TOTAL_CHILDREN = 15;
 
 const SESSION_STATUSES: SessionStatus[] = [
   "created",
@@ -2133,18 +2133,6 @@ async function handleSpawnChild(
 
   const sessionStore = new SessionIndexStore(env.DB);
 
-  // Read parent's canonical session row before guardrails so repo-scoped sandbox settings can
-  // configure child-session limits without waiting on the parent Durable Object.
-  const parentSession = await sessionStore.get(parentId);
-  const parentUserId = parentSession?.userId ?? null;
-  const childSandboxSettings = parentSession
-    ? await resolveSandboxSettings(env.DB, parentSession.repoOwner, parentSession.repoName)
-    : {};
-  const maxConcurrentChildren =
-    childSandboxSettings.maxConcurrentChildSessions ?? DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS;
-  const maxTotalChildren =
-    childSandboxSettings.maxTotalChildSessions ?? DEFAULT_MAX_TOTAL_CHILD_SESSIONS;
-
   // Guardrail: depth
   const parentDepth = await sessionStore.getSpawnDepth(parentId);
   if (parentDepth >= MAX_SPAWN_DEPTH) {
@@ -2153,15 +2141,19 @@ async function handleSpawnChild(
 
   // Guardrail: concurrent children
   const activeCount = await sessionStore.countActiveChildren(parentId);
-  if (activeCount >= maxConcurrentChildren) {
-    return error(`Maximum concurrent children (${maxConcurrentChildren}) reached`, 429);
+  if (activeCount >= MAX_CONCURRENT_CHILDREN) {
+    return error(`Maximum concurrent children (${MAX_CONCURRENT_CHILDREN}) reached`, 429);
   }
 
   // Guardrail: total children
   const totalCount = await sessionStore.countTotalChildren(parentId);
-  if (totalCount >= maxTotalChildren) {
-    return error(`Maximum total children (${maxTotalChildren}) reached`, 429);
+  if (totalCount >= MAX_TOTAL_CHILDREN) {
+    return error(`Maximum total children (${MAX_TOTAL_CHILDREN}) reached`, 429);
   }
+
+  // Read parent's canonical user_id from D1 for inheritance
+  const parentSession = await sessionStore.get(parentId);
+  const parentUserId = parentSession?.userId ?? null;
 
   // Get parent context from parent DO
   const parentDoId = env.SESSION.idFromName(parentId);
@@ -2208,12 +2200,11 @@ async function handleSpawnChild(
     model,
   });
 
-  // Resolve code-server integration setting for child (same repo as parent)
-  const childCodeServerEnabled = await resolveCodeServerEnabled(
-    env.DB,
-    spawnContext.repoOwner,
-    spawnContext.repoName
-  );
+  // Resolve code-server integration setting and sandbox settings for child (same repo as parent)
+  const [childCodeServerEnabled, childSandboxSettings] = await Promise.all([
+    resolveCodeServerEnabled(env.DB, spawnContext.repoOwner, spawnContext.repoName),
+    resolveSandboxSettings(env.DB, spawnContext.repoOwner, spawnContext.repoName),
+  ]);
 
   const input: SessionInitInput = {
     sessionId: childId,

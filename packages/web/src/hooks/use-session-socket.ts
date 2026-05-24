@@ -21,13 +21,6 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8787";
 const WS_CLOSE_AUTH_REQUIRED = 4001;
 const WS_CLOSE_SESSION_EXPIRED = 4002;
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_BASE_DELAY_MS = 1000;
-const MAX_RECONNECT_DELAY_MS = 30000;
-const PROMPT_SUBSCRIPTION_RETRY_DELAY_MS = 500;
-const HISTORY_PAGE_SIZE = 200;
-const PING_INTERVAL_MS = 30000;
-
 interface Message {
   id: string;
   authorId: string;
@@ -625,11 +618,8 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
 
       // Only reconnect if mounted and not a clean close
       if (mountedRef.current && !event.wasClean) {
-        if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
-          const delay = Math.min(
-            RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts.current),
-            MAX_RECONNECT_DELAY_MS
-          );
+        if (reconnectAttempts.current < 5) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
           reconnectAttempts.current++;
           console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
 
@@ -640,7 +630,7 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
           }, delay);
         } else {
           // Exhausted reconnection attempts
-          console.error(`WebSocket reconnection failed after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+          console.error("WebSocket reconnection failed after 5 attempts");
           setConnectionError("Connection lost. Please check your network and try reconnecting.");
         }
       }
@@ -660,10 +650,7 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
     if (!subscribedRef.current) {
       console.error("Not subscribed yet, waiting...");
       // Retry after a short delay
-      setTimeout(
-        () => sendPrompt(content, model, reasoningEffort),
-        PROMPT_SUBSCRIPTION_RETRY_DELAY_MS
-      );
+      setTimeout(() => sendPrompt(content, model, reasoningEffort), 500);
       return;
     }
 
@@ -728,7 +715,7 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       JSON.stringify({
         type: "fetch_history",
         cursor: cursorRef.current,
-        limit: HISTORY_PAGE_SIZE,
+        limit: 200,
       })
     );
   }, [hasMoreHistory, loadingHistory]);
@@ -764,13 +751,13 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
     };
   }, [connect]);
 
-  // Ping periodically to keep connection alive.
+  // Ping every 30 seconds to keep connection alive
   useEffect(() => {
     const pingInterval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: "ping" }));
       }
-    }, PING_INTERVAL_MS);
+    }, 30000);
 
     return () => clearInterval(pingInterval);
   }, []);
