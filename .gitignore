@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+packages/sandbox-runtime/uv.lock
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
