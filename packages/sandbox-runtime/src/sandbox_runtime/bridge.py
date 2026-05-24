@@ -139,6 +139,7 @@ class AgentBridge:
     GIT_PUSH_TERMINATE_GRACE_SECONDS = 5.0
     PROMPT_MAX_DURATION = 5400.0
     GIT_CONFIG_TIMEOUT_SECONDS = 10.0
+    TERMINAL_FINISH_GRACE_SECONDS = 1.0
     MAX_PENDING_PART_EVENTS = 2000
     MAX_EVENT_BUFFER_SIZE = 1000
     CRITICAL_EVENT_TYPES: ClassVar[set[str]] = {
@@ -903,6 +904,8 @@ class AgentBridge:
         pending_parts: dict[str, list[tuple[dict[str, Any], Any]]] = {}
         pending_parts_total = 0
         pending_drop_logged = False
+        pending_terminal_finish: str | None = None
+        terminal_finish_deadline: float | None = None
 
         # Child session tracking (sub-tasks)
         tracked_child_session_ids: set[str] = set()
@@ -913,6 +916,9 @@ class AgentBridge:
 
         start_time = time.time()
         loop = asyncio.get_running_loop()
+
+        def has_assistant_text() -> bool:
+            return any(cumulative_text.values())
 
         def buffer_part(oc_msg_id: str, part: dict[str, Any], delta: Any) -> None:
             nonlocal pending_parts_total
@@ -993,6 +999,29 @@ class AgentBridge:
                 for ev in events:
                     ev["isSubtask"] = True
             return events
+
+        async def complete_from_final_state(
+            *,
+            log_event: str,
+            finish: str | None = None,
+        ) -> list[dict[str, Any]]:
+            final_events = []
+            async for final_event in self._fetch_final_message_state(
+                message_id,
+                opencode_message_id,
+                cumulative_text,
+                allowed_assistant_msg_ids,
+                compaction_occurred=compaction_occurred,
+            ):
+                final_events.append(final_event)
+            elapsed = time.time() - start_time
+            self.log.debug(
+                log_event,
+                finish=finish,
+                elapsed_s=round(elapsed, 1),
+                tracked_msgs=len(allowed_assistant_msg_ids),
+            )
+            return final_events
 
         try:
             deadline = asyncio.get_running_loop().time() + self.sse_inactivity_timeout
@@ -1092,11 +1121,36 @@ class AgentBridge:
                                                         for part_event in handle_part(part, delta):
                                                             yield part_event
 
+                                        terminal_msg_accepted = (
+                                            oc_msg_id in allowed_assistant_msg_ids
+                                        )
                                         if finish and finish not in ("tool-calls", ""):
                                             self.log.debug(
                                                 "bridge.message_finished",
                                                 finish=finish,
                                             )
+                                            if (
+                                                finish != "unknown"
+                                                and role == "assistant"
+                                                and terminal_msg_accepted
+                                            ):
+                                                final_events = await complete_from_final_state(
+                                                    log_event="bridge.message_finish_terminal",
+                                                    finish=finish,
+                                                )
+                                                for final_event in final_events:
+                                                    yield final_event
+                                                if final_events or has_assistant_text():
+                                                    return
+                                                pending_terminal_finish = finish
+                                                terminal_finish_deadline = (
+                                                    loop.time() + self.TERMINAL_FINISH_GRACE_SECONDS
+                                                )
+                                                self.log.debug(
+                                                    "bridge.message_finish_deferred_for_late_parts",
+                                                    finish=finish,
+                                                    grace_seconds=self.TERMINAL_FINISH_GRACE_SECONDS,
+                                                )
 
                                     elif msg_session_id in tracked_child_session_ids:
                                         # Child session: authorize all assistant messages
@@ -1231,6 +1285,19 @@ class AgentBridge:
                                             message_id=message_id,
                                         )
 
+                        if (
+                            pending_terminal_finish
+                            and terminal_finish_deadline is not None
+                            and loop.time() >= terminal_finish_deadline
+                        ):
+                            final_events = await complete_from_final_state(
+                                log_event="bridge.message_finish_terminal_grace_elapsed",
+                                finish=pending_terminal_finish,
+                            )
+                            for final_event in final_events:
+                                yield final_event
+                            return
+
                         if loop.time() > prompt_start + self.PROMPT_MAX_DURATION:
                             elapsed = time.time() - start_time
                             self.log.error(
@@ -1290,9 +1357,10 @@ class AgentBridge:
     ) -> AsyncIterator[dict[str, Any]]:
         """Fetch final message state from API to ensure complete text.
 
-        This is called after session.idle to capture any text that may have
-        been missed due to SSE event ordering. It fetches the latest message
-        state and emits any text that's longer than what we've already sent.
+        This is called after terminal completion signals to capture any text
+        that may have been missed due to SSE event ordering. It fetches the
+        latest message state and emits any text that's longer than what we've
+        already sent.
 
         Args:
             message_id: Control plane message ID (used in events sent back)
