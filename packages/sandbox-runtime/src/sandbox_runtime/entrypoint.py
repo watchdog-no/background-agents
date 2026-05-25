@@ -440,9 +440,9 @@ class SandboxSupervisor:
         return await self._update_existing_repo()
 
     def _install_tools(self, workdir: Path) -> None:
-        """Copy custom tools into the .opencode/tool directory for OpenCode to discover."""
+        """Copy custom tools into the .opencode/tools directory for OpenCode to discover."""
         opencode_dir = workdir / ".opencode"
-        tool_dest = opencode_dir / "tool"
+        tool_dest = opencode_dir / "tools"
 
         # Legacy tool (inspect-plugin.js → create-pull-request.js)
         legacy_tool = Path("/app/sandbox_runtime/plugins/inspect-plugin.js")
@@ -489,7 +489,7 @@ class SandboxSupervisor:
         """Install standalone CLI scripts into /usr/local/bin.
 
         Scripts in bin/ are standalone CLIs (not OpenCode tool plugins) and must
-        NOT be placed in .opencode/tool/ — OpenCode would import() them during
+        NOT be placed in .opencode/tools/ — OpenCode would import() them during
         tool discovery, executing module-level code with the parent process argv.
         """
         bin_dir = Path("/app/sandbox_runtime/bin")
@@ -812,7 +812,11 @@ class SandboxSupervisor:
         model = self.session_config.get("model", "claude-sonnet-4-6")
         opencode_config: dict = {
             "model": f"{provider}/{model}",
-            "permission": {"*": {"*": "allow"}},
+            "autoupdate": False,
+            "permission": {
+                "*": "allow",
+                "doom_loop": "deny",
+            },
         }
 
         # Inject MCP servers

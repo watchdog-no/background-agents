@@ -1,35 +1,34 @@
 ---
 name: code-review
 description:
-  Codex-style structured code review for local diffs and GitHub pull requests. Use when the user
-  asks for /code-review, a code review, PR review, review comments, or prioritized P1-P3 findings.
-  Dry-runs by default; posts GitHub PR reviews only when explicitly requested.
-user-invocable: true
-allowed-tools: Bash, Read, Grep, Glob
+  Review local diffs and GitHub pull requests for correctness bugs. Use for /code-review, PR
+  reviews, review comments, or prioritized P1-P3 findings.
+compatibility: opencode
+metadata:
+  workflow: github-pr-review
 ---
 
 # Code Review
 
 Use this skill as a local, Codex-style counterpart to native `/review`.
 
-Core contract:
+## Start Here
 
-- Do not edit files.
-- Do not browse the web.
-- Do not post GitHub comments unless the invocation clearly asks to post/submit/leave a PR review or
-  includes `--post`.
-- Produce a structured Codex review result first, then render or post it.
-- Review only bugs introduced by the selected diff.
+Resolve the target first:
 
-## Invocation
+```bash
+SKILL_DIR=.opencode/skills/code-review
+python3 "$SKILL_DIR/scripts/resolve_review_target.py" <args>
+```
 
-Interpret `/code-review <args>` with this CLI-like contract:
+Replace `<args>` with the user's `/code-review` arguments. If the request is natural language,
+translate it once into this CLI-like form:
 
 ```text
 /code-review [--staged | --unstaged | --range <range> | --base <branch> | --pr <number>] [--post | --dry-run] [--post-approve] [instructions...]
 ```
 
-Bare non-flag text is review focus and posting intent, not a diff range. Examples:
+Examples:
 
 - `/code-review focus on auth edge cases`
 - `/code-review --staged`
@@ -38,24 +37,29 @@ Bare non-flag text is review focus and posting intent, not a diff range. Example
 - `/code-review --pr 123 --post focus on data loss`
 - `/code-review --pr 123 post a review on the PR`
 
+Bare non-flag text is review focus and posting intent, not a diff range.
+
 ## Workflow
 
-1. Resolve the target:
+1. Run the resolver command from **Start Here**.
 
-   ```bash
-   SKILL_DIR=.opencode/skills/code-review
-   python3 "$SKILL_DIR/scripts/resolve_review_target.py" <args>
-   ```
+   The resolver prints JSON with:
+   - `diff_command`
+   - `log_command`
+   - PR metadata
+   - posting flags
+   - a Codex-style target prompt
 
-   The resolver prints JSON with the diff command, log command, PR metadata, posting flags, and a
-   Codex-style target prompt. Run the returned `diff_command` and read the patch. If it is empty,
-   stop and say there are no changes to review.
+2. Run the returned `diff_command` with Bash and review the patch.
 
-2. Load the review rubric:
+   If the diff is empty, stop and say there are no changes to review.
+
+3. Load the review rubric:
    - Read `references/codex_review_prompt.md`.
    - Read `references/review_contract.md` only when you need the exact schema or posting rules.
 
-3. Review the diff and output exactly one JSON object matching `ReviewOutputEvent`:
+4. Review only bugs introduced by the selected diff. Output exactly one JSON object matching
+   `ReviewOutputEvent`:
 
    ```json
    {
@@ -69,7 +73,7 @@ Bare non-flag text is review focus and posting intent, not a diff range. Example
    Do not wrap the JSON in markdown. Each finding must include an absolute file path and a line
    range that overlaps the diff.
 
-4. Render the local response:
+5. Render the local response:
 
    ```bash
    python3 "$SKILL_DIR/scripts/render_review.py" < review.json
@@ -77,7 +81,7 @@ Bare non-flag text is review focus and posting intent, not a diff range. Example
 
    Return the rendered Markdown to the user, not the raw JSON.
 
-5. Post only when requested:
+6. Post only when requested:
 
    If and only if the resolved target has `"post": true`, run:
 
@@ -89,6 +93,16 @@ Bare non-flag text is review focus and posting intent, not a diff range. Example
 
    Use the posting script's `--dry-run` first when checking the payload. Never post for `--staged`,
    `--unstaged`, `--range`, or `--base` unless a PR number was also resolved.
+
+## Review Rules
+
+- Use Bash, Read, Grep, and Glob as needed.
+- Do not edit files.
+- Do not browse the web.
+- Do not post GitHub comments unless the invocation clearly asks to post/submit/leave a PR review or
+  includes `--post`.
+- Produce a structured Codex review result first, then render or post it.
+- Review only bugs introduced by the selected diff.
 
 ## Review Target Defaults
 

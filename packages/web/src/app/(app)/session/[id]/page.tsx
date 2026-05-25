@@ -121,12 +121,13 @@ function dedupeAndGroupEvents(events: SandboxEvent[]): EventGroup[] {
 
   for (const event of events) {
     if (event.type === "tool_call" && event.callId) {
-      // Deduplicate tool_call events by callId - keep the latest (most complete) one
-      const existingIdx = seenToolCalls.get(event.callId);
+      // Deduplicate status updates for the same logical tool call.
+      const toolCallKey = `${event.messageId ?? ""}:${event.callId}`;
+      const existingIdx = seenToolCalls.get(toolCallKey);
       if (existingIdx !== undefined) {
         filteredEvents[existingIdx] = event;
       } else {
-        seenToolCalls.set(event.callId, filteredEvents.length);
+        seenToolCalls.set(toolCallKey, filteredEvents.length);
         filteredEvents.push(event);
       }
     } else if (event.type === "execution_complete" && event.messageId) {

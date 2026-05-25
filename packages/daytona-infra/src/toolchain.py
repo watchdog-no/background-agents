@@ -8,18 +8,10 @@ from daytona import CreateSnapshotParams, Daytona, Image
 
 # OpenCode version to install.
 #
-# Pinned to 1.14.41 — the last release before opencode's Hono → Effect Schema
-# migration (landed across v1.14.42+, released 2026-05-09 onward) broke event
-# publishing on the legacy `/event` SSE endpoint. With newer versions the
-# bridge connects, posts the prompt, opencode processes it and records the
-# assistant response in the session store, but no `message.updated` /
-# `message.part.updated` / `session.idle` events are streamed back — so the
-# session shows execution_complete with no reply.
-#
-# Symptom in bridge logs: `prompt.run outcome=success duration_ms=35-367`,
-# which means `_stream_opencode_response_sse` returned with zero yielded
-# events. Tracked in #567.
-OPENCODE_VERSION = "1.14.41"
+# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.10 preserves the
+# legacy `/event` SSE payload shape and restores eager event subscription after
+# the 1.14.42+ HTTP API migration.
+OPENCODE_VERSION = "1.15.10"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
 # Bump when changing image contents to invalidate the Daytona snapshot.
@@ -79,7 +71,7 @@ def build_base_image(repo_root: Path) -> Image:
             # below. Mirror packages/modal-infra/src/images/base.py.
             "printf '%s\\n'"
             " '#!/bin/sh'"
-            ' \'exec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\''
+            " 'exec python3 -m sandbox_runtime.credentials.git_credential_helper \"$@\"'"
             " > /usr/local/bin/oi-git-credentials",
             "chmod 0755 /usr/local/bin/oi-git-credentials",
             "git config --system credential.helper /usr/local/bin/oi-git-credentials",
