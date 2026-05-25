@@ -227,22 +227,28 @@ class SandboxSupervisor:
         shim_body = (
             '#!/bin/sh\nexec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
         )
+        helper_available = False
         try:
             if not shim_path.exists() or shim_path.read_text() != shim_body:
                 shim_path.write_text(shim_body)
                 shim_path.chmod(0o755)
+            helper_available = True
         except OSError as e:
             # /usr/local/bin not writable in some sandboxed runs; the system
             # config baked into the image is the primary path anyway.
             self.log.warn("credential_helper.shim_write_failed", error=str(e))
+            helper_available = shim_path.exists() and os.access(shim_path, os.X_OK)
 
         # credential.useHttpPath makes git pass the repo path to the helper,
         # which it needs to scope credentials to the session repo (not just
         # the host).
-        for key, value in (
-            ("credential.helper", str(shim_path)),
-            ("credential.useHttpPath", "true"),
-        ):
+        git_config: list[tuple[str, str]] = [("credential.useHttpPath", "true")]
+        if helper_available:
+            git_config.insert(0, ("credential.helper", str(shim_path)))
+        else:
+            self.log.warn("credential_helper.unavailable", path=str(shim_path))
+
+        for key, value in git_config:
             proc = await asyncio.create_subprocess_exec(
                 "git",
                 "config",

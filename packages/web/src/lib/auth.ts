@@ -8,17 +8,21 @@ export async function getVerifiedPrimaryGitHubEmail(
 ): Promise<string | null> {
   if (!accessToken) return null;
 
-  const response = await fetch("https://api.github.com/user/emails", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/vnd.github+json",
-    },
-  });
+  try {
+    const response = await fetch("https://api.github.com/user/emails", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+      },
+    });
 
-  if (!response.ok) return null;
+    if (!response.ok) return null;
 
-  const emails = (await response.json()) as GithubEmail[];
-  return emails.find((email) => email.primary && email.verified)?.email ?? null;
+    const emails = (await response.json()) as GithubEmail[];
+    return emails.find((email) => email.primary && email.verified)?.email ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // Extend NextAuth types to include GitHub-specific user info

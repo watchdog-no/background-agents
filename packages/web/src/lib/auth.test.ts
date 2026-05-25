@@ -36,4 +36,10 @@ describe("getVerifiedPrimaryGitHubEmail", () => {
 
     await expect(getVerifiedPrimaryGitHubEmail("token")).resolves.toBeNull();
   });
+
+  it("returns null when GitHub email lookup throws", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network unavailable"));
+
+    await expect(getVerifiedPrimaryGitHubEmail("token")).resolves.toBeNull();
+  });
 });
