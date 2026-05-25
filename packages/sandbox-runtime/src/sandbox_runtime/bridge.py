@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -36,6 +37,13 @@ configure_logging()
 # Fallback git identity when prompt author has no SCM name/email configured.
 # Matches the co-author trailer used in generateCommitMessage (shared/git.ts).
 FALLBACK_GIT_USER = GitUser(name="OpenInspect", email="open-inspect@noreply.github.com")
+
+
+@dataclass
+class FinalMessageState:
+    events: list[dict[str, Any]]
+    saw_completed_message: bool = False
+    fetch_failed: bool = False
 
 
 class OpenCodeIdentifier:
@@ -139,8 +147,12 @@ class AgentBridge:
     GIT_PUSH_TERMINATE_GRACE_SECONDS = 5.0
     PROMPT_MAX_DURATION = 5400.0
     GIT_CONFIG_TIMEOUT_SECONDS = 10.0
+    # OpenCode can emit message-level finish before trailing text/step parts.
+    TERMINAL_FINISH_GRACE_SECONDS = 1.0
     MAX_PENDING_PART_EVENTS = 2000
     MAX_EVENT_BUFFER_SIZE = 1000
+    CLEAN_TERMINAL_FINISH_REASONS: ClassVar[set[str]] = {"stop", "length"}
+    WAIT_FOR_IDLE_FINISH_REASONS: ClassVar[set[str]] = {"", "tool-calls", "unknown"}
     CRITICAL_EVENT_TYPES: ClassVar[set[str]] = {
         "execution_complete",
         "error",
@@ -694,6 +706,11 @@ class AgentBridge:
             return str(message) if message else None
         return str(error) if error else None
 
+    @staticmethod
+    def _opencode_message_completed(info: dict[str, Any]) -> bool:
+        time_info = info.get("time")
+        return isinstance(time_info, dict) and time_info.get("completed") is not None
+
     def _transform_part_to_event(
         self,
         part: dict[str, Any],
@@ -899,10 +916,15 @@ class AgentBridge:
 
         cumulative_text: dict[str, str] = {}
         emitted_tool_states: set[str] = set()
+        emitted_step_finish_part_ids: set[str] = set()
         allowed_assistant_msg_ids: set[str] = set()
         pending_parts: dict[str, list[tuple[dict[str, Any], Any]]] = {}
         pending_parts_total = 0
         pending_drop_logged = False
+        pending_terminal_finish: str | None = None
+        pending_terminal_msg_id: str | None = None
+        terminal_finish_deadline: float | None = None
+        part_types: dict[str, str] = {}
 
         # Child session tracking (sub-tasks)
         tracked_child_session_ids: set[str] = set()
@@ -913,6 +935,12 @@ class AgentBridge:
 
         start_time = time.time()
         loop = asyncio.get_running_loop()
+
+        def has_assistant_text() -> bool:
+            return any(cumulative_text.values())
+
+        def message_has_completed_time(info: dict[str, Any]) -> bool:
+            return self._opencode_message_completed(info)
 
         def buffer_part(oc_msg_id: str, part: dict[str, Any], delta: Any) -> None:
             nonlocal pending_parts_total
@@ -938,21 +966,22 @@ class AgentBridge:
             part_type = part.get("type", "")
             part_id = part.get("id", "")
             events: list[dict[str, Any]] = []
+            if part_id and part_type:
+                part_types[part_id] = part_type
 
             if part_type == "text":
                 if is_subtask:
                     return events  # Don't forward child text tokens
                 text = part.get("text", "")
-                if delta:
-                    cumulative_text[part_id] = cumulative_text.get(part_id, "") + delta
-                else:
-                    cumulative_text[part_id] = text
+                previous_text = cumulative_text.get(part_id, "")
+                next_text = previous_text + delta if delta else text
 
-                if cumulative_text.get(part_id):
+                cumulative_text[part_id] = next_text
+                if next_text and next_text != previous_text:
                     events.append(
                         {
                             "type": "token",
-                            "content": cumulative_text[part_id],
+                            "content": next_text,
                             "messageId": message_id,
                         }
                     )
@@ -978,21 +1007,62 @@ class AgentBridge:
                     }
                 )
 
-            elif part_type == "step-finish":
-                events.append(
-                    {
-                        "type": "step_finish",
-                        "cost": part.get("cost"),
-                        "tokens": part.get("tokens"),
-                        "reason": part.get("reason"),
-                        "messageId": message_id,
-                    }
-                )
+            elif part_type == "step-finish" and part_id not in emitted_step_finish_part_ids:
+                emitted_step_finish_part_ids.add(part_id)
+                event = self._transform_part_to_event(part, message_id)
+                if event:
+                    events.append(event)
 
             if is_subtask:
                 for ev in events:
                     ev["isSubtask"] = True
             return events
+
+        def handle_part_delta(
+            part_id: str,
+            oc_msg_id: str,
+            part_session_id: str,
+            field: str,
+            delta: Any,
+        ) -> list[dict[str, Any]]:
+            if field != "text" or not isinstance(delta, str):
+                return []
+            part_type = part_types.get(part_id)
+            if part_type is None:
+                return []
+            part = {
+                "id": part_id,
+                "messageID": oc_msg_id,
+                "sessionID": part_session_id,
+                "type": part_type,
+            }
+            return handle_part(part, delta, is_subtask=part_session_id in tracked_child_session_ids)
+
+        async def complete_from_final_state(
+            *,
+            log_event: str,
+            finish: str | None = None,
+            completion_msg_id: str | None = None,
+        ) -> FinalMessageState:
+            final_state = await self._fetch_final_message_state(
+                message_id,
+                opencode_message_id,
+                cumulative_text,
+                allowed_assistant_msg_ids,
+                emitted_step_finish_part_ids,
+                compaction_occurred=compaction_occurred,
+                completion_msg_id=completion_msg_id,
+            )
+            elapsed = time.time() - start_time
+            self.log.debug(
+                log_event,
+                finish=finish,
+                elapsed_s=round(elapsed, 1),
+                tracked_msgs=len(allowed_assistant_msg_ids),
+                events=len(final_state.events),
+                finalized=final_state.saw_completed_message,
+            )
+            return final_state
 
         try:
             deadline = asyncio.get_running_loop().time() + self.sse_inactivity_timeout
@@ -1092,11 +1162,71 @@ class AgentBridge:
                                                         for part_event in handle_part(part, delta):
                                                             yield part_event
 
-                                        if finish and finish not in ("tool-calls", ""):
+                                        terminal_msg_accepted = (
+                                            oc_msg_id in allowed_assistant_msg_ids
+                                        )
+                                        if (
+                                            role == "assistant"
+                                            and terminal_msg_accepted
+                                            and info.get("error")
+                                        ):
+                                            error_msg = self._extract_error_message(
+                                                info.get("error")
+                                            )
+                                            self.log.error(
+                                                "bridge.message_error",
+                                                error_msg=error_msg,
+                                            )
+                                            yield {
+                                                "type": "error",
+                                                "error": error_msg or "OpenCode message failed",
+                                                "messageId": message_id,
+                                            }
+                                            return
+
+                                        if (
+                                            finish
+                                            and finish not in self.WAIT_FOR_IDLE_FINISH_REASONS
+                                        ):
                                             self.log.debug(
                                                 "bridge.message_finished",
                                                 finish=finish,
                                             )
+                                            if role == "assistant" and terminal_msg_accepted:
+                                                if finish not in self.CLEAN_TERMINAL_FINISH_REASONS:
+                                                    yield {
+                                                        "type": "error",
+                                                        "error": (
+                                                            f"OpenCode finished with reason: {finish}"
+                                                        ),
+                                                        "messageId": message_id,
+                                                    }
+                                                    return
+
+                                                final_state = await complete_from_final_state(
+                                                    log_event="bridge.message_finish_terminal",
+                                                    finish=finish,
+                                                    completion_msg_id=oc_msg_id,
+                                                )
+                                                for final_event in final_state.events:
+                                                    yield final_event
+                                                if (
+                                                    message_has_completed_time(info)
+                                                    or final_state.saw_completed_message
+                                                ):
+                                                    return
+                                                # OpenCode may publish finish before trailing text or
+                                                # step-finish parts; keep draining briefly.
+                                                pending_terminal_finish = finish
+                                                pending_terminal_msg_id = oc_msg_id
+                                                terminal_finish_deadline = (
+                                                    loop.time() + self.TERMINAL_FINISH_GRACE_SECONDS
+                                                )
+                                                self.log.debug(
+                                                    "bridge.message_finish_deferred_for_late_parts",
+                                                    finish=finish,
+                                                    grace_seconds=self.TERMINAL_FINISH_GRACE_SECONDS,
+                                                )
 
                                     elif msg_session_id in tracked_child_session_ids:
                                         # Child session: authorize all assistant messages
@@ -1118,6 +1248,10 @@ class AgentBridge:
                                     delta = props.get("delta")
                                     oc_msg_id = part.get("messageID", "")
                                     part_session_id = part.get("sessionID", "")
+                                    part_id = part.get("id", "")
+                                    part_type = part.get("type", "")
+                                    if part_id and part_type:
+                                        part_types[part_id] = part_type
 
                                     # Discover child sessions from task tool metadata (covers task_id resume)
                                     if (
@@ -1148,6 +1282,33 @@ class AgentBridge:
                                     elif oc_msg_id:
                                         buffer_part(oc_msg_id, part, delta)
 
+                                elif event_type == "message.part.delta":
+                                    oc_msg_id = props.get("messageID", "")
+                                    part_id = props.get("partID", "")
+                                    part_session_id = props.get("sessionID", "")
+                                    field = props.get("field", "")
+                                    delta = props.get("delta")
+                                    if oc_msg_id in allowed_assistant_msg_ids:
+                                        for part_event in handle_part_delta(
+                                            part_id,
+                                            oc_msg_id,
+                                            part_session_id,
+                                            field,
+                                            delta,
+                                        ):
+                                            yield part_event
+                                    elif oc_msg_id and part_id in part_types:
+                                        buffer_part(
+                                            oc_msg_id,
+                                            {
+                                                "id": part_id,
+                                                "messageID": oc_msg_id,
+                                                "sessionID": part_session_id,
+                                                "type": part_types[part_id],
+                                            },
+                                            delta,
+                                        )
+
                                 elif event_type == "session.idle":
                                     idle_session_id = props.get("sessionID")
                                     # Only parent idle terminates the stream
@@ -1158,13 +1319,10 @@ class AgentBridge:
                                             elapsed_s=round(elapsed, 1),
                                             tracked_msgs=len(allowed_assistant_msg_ids),
                                         )
-                                        async for final_event in self._fetch_final_message_state(
-                                            message_id,
-                                            opencode_message_id,
-                                            cumulative_text,
-                                            allowed_assistant_msg_ids,
-                                            compaction_occurred=compaction_occurred,
-                                        ):
+                                        final_state = await complete_from_final_state(
+                                            log_event="bridge.session_idle_final_state"
+                                        )
+                                        for final_event in final_state.events:
                                             yield final_event
                                         return
 
@@ -1182,13 +1340,10 @@ class AgentBridge:
                                             elapsed_s=round(elapsed, 1),
                                             tracked_msgs=len(allowed_assistant_msg_ids),
                                         )
-                                        async for final_event in self._fetch_final_message_state(
-                                            message_id,
-                                            opencode_message_id,
-                                            cumulative_text,
-                                            allowed_assistant_msg_ids,
-                                            compaction_occurred=compaction_occurred,
-                                        ):
+                                        final_state = await complete_from_final_state(
+                                            log_event="bridge.session_status_idle_final_state"
+                                        )
+                                        for final_event in final_state.events:
                                             yield final_event
                                         return
 
@@ -1231,6 +1386,26 @@ class AgentBridge:
                                             message_id=message_id,
                                         )
 
+                        if (
+                            pending_terminal_finish
+                            and terminal_finish_deadline is not None
+                            and loop.time() >= terminal_finish_deadline
+                        ):
+                            final_state = await complete_from_final_state(
+                                log_event="bridge.message_finish_terminal_grace_elapsed",
+                                finish=pending_terminal_finish,
+                                completion_msg_id=pending_terminal_msg_id,
+                            )
+                            for final_event in final_state.events:
+                                yield final_event
+                            if final_state.fetch_failed and not has_assistant_text():
+                                yield {
+                                    "type": "error",
+                                    "error": "Failed to fetch final OpenCode message state",
+                                    "messageId": message_id,
+                                }
+                            return
+
                         if loop.time() > prompt_start + self.PROMPT_MAX_DURATION:
                             elapsed = time.time() - start_time
                             self.log.error(
@@ -1240,13 +1415,10 @@ class AgentBridge:
                                 message_id=message_id,
                             )
                             await self._request_opencode_stop(reason="prompt_max_duration_timeout")
-                            async for final_event in self._fetch_final_message_state(
-                                message_id,
-                                opencode_message_id,
-                                cumulative_text,
-                                allowed_assistant_msg_ids,
-                                compaction_occurred=compaction_occurred,
-                            ):
+                            final_state = await complete_from_final_state(
+                                log_event="bridge.prompt_max_duration_final_state"
+                            )
+                            for final_event in final_state.events:
                                 yield final_event
                             raise RuntimeError(
                                 f"Prompt exceeded max duration of {self.PROMPT_MAX_DURATION:.0f}s."
@@ -1263,13 +1435,10 @@ class AgentBridge:
                 message_id=message_id,
             )
             await self._request_opencode_stop(reason="inactivity_timeout")
-            async for final_event in self._fetch_final_message_state(
-                message_id,
-                opencode_message_id,
-                cumulative_text,
-                allowed_assistant_msg_ids,
-                compaction_occurred=compaction_occurred,
-            ):
+            final_state = await complete_from_final_state(
+                log_event="bridge.inactivity_timeout_final_state"
+            )
+            for final_event in final_state.events:
                 yield final_event
             raise RuntimeError(
                 f"SSE stream inactive for {self.sse_inactivity_timeout:.0f}s "
@@ -1286,28 +1455,34 @@ class AgentBridge:
         opencode_message_id: str,
         cumulative_text: dict[str, str],
         tracked_msg_ids: set[str] | None = None,
+        emitted_step_finish_part_ids: set[str] | None = None,
         compaction_occurred: bool = False,
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Fetch final message state from API to ensure complete text.
+        completion_msg_id: str | None = None,
+    ) -> FinalMessageState:
+        """Fetch message state from API and flush missed terminal parts.
 
-        This is called after session.idle to capture any text that may have
-        been missed due to SSE event ordering. It fetches the latest message
-        state and emits any text that's longer than what we've already sent.
+        This is used before ending a prompt on completion and abort paths. It
+        fetches the latest message state and emits text or step-finish parts
+        that are newer than what the SSE stream has already delivered.
 
         Args:
             message_id: Control plane message ID (used in events sent back)
             opencode_message_id: OpenCode ascending ID (used for parentID correlation)
             cumulative_text: Text already sent, keyed by part ID
             tracked_msg_ids: Assistant message IDs tracked during SSE streaming
+            emitted_step_finish_part_ids: step-finish parts already sent
             compaction_occurred: Whether session compaction happened during this prompt.
                 When True, accepts non-summary assistant messages even if parentID
                 doesn't match, since compaction changes the message chain.
+            completion_msg_id: If provided, only this assistant message can mark
+                the returned state as completed.
 
         Uses parentID-based correlation if available, falling back to
         tracked_msg_ids from SSE streaming if parentID doesn't match.
         """
+        result = FinalMessageState(events=[])
         if not self.http_client or not self.opencode_session_id:
-            return
+            return result
 
         messages_url = f"{self.opencode_base_url}/session/{self.opencode_session_id}/message"
 
@@ -1321,7 +1496,8 @@ class AgentBridge:
                     "bridge.final_state_fetch_error",
                     status_code=response.status_code,
                 )
-                return
+                result.fetch_failed = True
+                return result
 
             messages = response.json()
 
@@ -1335,7 +1511,7 @@ class AgentBridge:
                     continue
 
                 parent_matches = parent_id == opencode_message_id
-                in_tracked_set = tracked_msg_ids and msg_id in tracked_msg_ids
+                in_tracked_set = bool(tracked_msg_ids and msg_id in tracked_msg_ids)
                 is_compaction_summary = info.get("summary") is True
 
                 # Accept if: parentID matches, was tracked during SSE, or
@@ -1347,6 +1523,11 @@ class AgentBridge:
                 )
                 if not should_accept:
                     continue
+
+                if self._opencode_message_completed(info) and (
+                    completion_msg_id is None or msg_id == completion_msg_id
+                ):
+                    result.saw_completed_message = True
 
                 parts = msg.get("parts", [])
                 for part in parts:
@@ -1363,14 +1544,28 @@ class AgentBridge:
                                 new_len=len(text),
                             )
                             cumulative_text[part_id] = text
-                            yield {
-                                "type": "token",
-                                "content": text,
-                                "messageId": message_id,
-                            }
+                            result.events.append(
+                                {
+                                    "type": "token",
+                                    "content": text,
+                                    "messageId": message_id,
+                                }
+                            )
+                    elif (
+                        part_type == "step-finish"
+                        and emitted_step_finish_part_ids is not None
+                        and part_id not in emitted_step_finish_part_ids
+                    ):
+                        event = self._transform_part_to_event(part, message_id)
+                        if event:
+                            emitted_step_finish_part_ids.add(part_id)
+                            result.events.append(event)
 
         except Exception as e:
             self.log.error("bridge.final_state_error", exc=e)
+            result.fetch_failed = True
+
+        return result
 
     async def _handle_stop(self) -> None:
         """Handle stop command - cancel prompt task and request OpenCode stop."""
