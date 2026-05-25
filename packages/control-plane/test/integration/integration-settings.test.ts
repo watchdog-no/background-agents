@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SELF, env } from "cloudflare:test";
-import {
-  DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS,
-  DEFAULT_MAX_TOTAL_CHILD_SESSIONS,
-} from "@open-inspect/shared";
 import { generateInternalToken } from "../../src/auth/internal";
 import { cleanD1Tables } from "./cleanup";
 
@@ -585,14 +581,10 @@ describe("Integration settings API", () => {
       const body = await res.json<{
         config: {
           tunnelPorts: number[];
-          maxConcurrentChildSessions: number;
-          maxTotalChildSessions: number;
           enabledRepos: string[] | null;
         };
       }>();
       expect(body.config.tunnelPorts).toEqual([]);
-      expect(body.config.maxConcurrentChildSessions).toBe(DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS);
-      expect(body.config.maxTotalChildSessions).toBe(DEFAULT_MAX_TOTAL_CHILD_SESSIONS);
       expect(body.config.enabledRepos).toBeNull();
     });
   });
