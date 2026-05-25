@@ -18,7 +18,6 @@ import type {
   BuildGitPushSpecConfig,
   GitPushSpec,
   GitPushAuthContext,
-  CredentialHelperAuth,
 } from "../types";
 import { SourceControlProviderError } from "../errors";
 import type { GitLabProviderConfig } from "./types";
@@ -32,9 +31,6 @@ const PER_PAGE = 100;
 
 /** Timeout for GitLab API requests in milliseconds. */
 const GITLAB_FETCH_TIMEOUT_MS = 15_000;
-
-/** GitLab PATs do not expose an expiry, so refresh the helper cache hourly. */
-const GITLAB_CREDENTIAL_HELPER_TTL_MS = 60 * 60 * 1000;
 
 function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
@@ -62,11 +58,7 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
   private readonly userAgent: string;
 
   constructor(config: GitLabProviderConfig) {
-    const accessToken = config.accessToken.trim();
-    if (!accessToken) {
-      throw new SourceControlProviderError("GitLab access token not configured.", "permanent");
-    }
-    this.accessToken = accessToken;
+    this.accessToken = config.accessToken;
     this.namespace = config.namespace;
     this.userAgent = config.userAgent || USER_AGENT;
   }
@@ -348,14 +340,6 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
     return {
       authType: "pat",
       token: this.accessToken,
-    };
-  }
-
-  async generateCredentialHelperAuth(): Promise<CredentialHelperAuth> {
-    return {
-      username: "oauth2",
-      password: this.accessToken,
-      expiresAtEpochMs: Date.now() + GITLAB_CREDENTIAL_HELPER_TTL_MS,
     };
   }
 
