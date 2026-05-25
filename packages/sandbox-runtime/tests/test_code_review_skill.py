@@ -14,6 +14,7 @@ SCRIPTS_DIR = (
     / "code-review"
     / "scripts"
 )
+SKILL_FILE = SCRIPTS_DIR.parent / "SKILL.md"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import post_github_review  # noqa: E402
@@ -39,6 +40,24 @@ def sample_output(path: str = "/repo/src/app.ts", *, priority: int = 1) -> dict:
         "overall_explanation": "The patch introduces a token refresh regression.",
         "overall_confidence_score": 0.86,
     }
+
+
+class SkillDocumentTests(unittest.TestCase):
+    def test_skill_uses_opencode_frontmatter(self) -> None:
+        text = SKILL_FILE.read_text()
+        frontmatter = text.split("---", 2)[1]
+
+        self.assertIn("name: code-review", frontmatter)
+        self.assertIn("compatibility: opencode", frontmatter)
+        self.assertIn("workflow: github-pr-review", frontmatter)
+        self.assertNotIn("allowed-tools:", frontmatter)
+        self.assertNotIn("user-invocable:", frontmatter)
+
+    def test_skill_starts_with_resolver_workflow(self) -> None:
+        text = SKILL_FILE.read_text()
+
+        self.assertLess(text.index("## Start Here"), text.index("## Workflow"))
+        self.assertLess(text.index("resolve_review_target.py"), text.index("## Review Rules"))
 
 
 class ResolveReviewTargetTests(unittest.TestCase):

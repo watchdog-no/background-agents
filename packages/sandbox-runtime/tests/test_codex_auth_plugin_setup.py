@@ -117,3 +117,41 @@ class TestCodexAuthPluginSetup:
             plugin_source,
             sup.workspace_path / ".opencode" / "plugins" / "codex-auth-plugin.js",
         )
+
+    async def test_start_opencode_denies_doom_loop_permission(self, tmp_path):
+        """Repeated identical tool calls should not be auto-approved in headless sessions."""
+        sup = _make_supervisor()
+        sup.workspace_path = tmp_path / "workspace"
+        sup.workspace_path.mkdir()
+        sup.repo_path = sup.workspace_path / "app"
+
+        fake_proc = MagicMock()
+        fake_proc.stdout = None
+        create_proc = AsyncMock(return_value=fake_proc)
+
+        with (
+            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": ""}, clear=False),
+            patch(
+                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+                create_proc,
+            ),
+            patch(
+                "sandbox_runtime.entrypoint.asyncio.create_task",
+                side_effect=lambda coro: coro.close(),
+            ),
+        ):
+            sup._setup_openai_oauth = MagicMock()
+            sup._install_tools = MagicMock()
+            sup._install_skills = MagicMock()
+            sup._install_bin_scripts = MagicMock()
+            sup._wait_for_health = AsyncMock()
+
+            await sup.start_opencode()
+
+        env = create_proc.call_args.kwargs["env"]
+        config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+        assert config["autoupdate"] is False
+        assert config["permission"] == {
+            "*": "allow",
+            "doom_loop": "deny",
+        }

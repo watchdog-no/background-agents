@@ -74,7 +74,9 @@ function createSessionState(overrides: Partial<SessionState> = {}): SessionState
   };
 }
 
-function createSubscribedMessage(artifacts: SessionArtifact[] = []): ServerMessage {
+function createSubscribedMessage(
+  artifacts: SessionArtifact[] = []
+): Extract<ServerMessage, { type: "subscribed" }> {
   return {
     type: "subscribed",
     sessionId: "session-1",
@@ -391,6 +393,139 @@ describe("useSessionSocket", () => {
       expect(result.current.sessionState?.branchName).toBe("feature/live-update");
     });
     expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("collapses replayed accumulated token snapshots to the final assistant text", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive({
+        ...createSubscribedMessage(),
+        replay: {
+          events: [
+            {
+              type: "token",
+              content: "Hel",
+              messageId: "msg-1",
+              sandboxId: "sandbox-1",
+              timestamp: 10,
+            },
+            {
+              type: "token",
+              content: "Hello",
+              messageId: "msg-1",
+              sandboxId: "sandbox-1",
+              timestamp: 11,
+            },
+            {
+              type: "execution_complete",
+              messageId: "msg-1",
+              success: true,
+              sandboxId: "sandbox-1",
+              timestamp: 12,
+            },
+          ],
+          hasMore: false,
+          cursor: null,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.events).toEqual([
+        {
+          type: "token",
+          content: "Hello",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+        },
+        {
+          type: "execution_complete",
+          messageId: "msg-1",
+          success: true,
+          sandboxId: "sandbox-1",
+          timestamp: 12,
+        },
+      ]);
+    });
+  });
+
+  it("keeps live accumulated token snapshots hidden until execution completes", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "token",
+          content: "Hel",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+        },
+      });
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "token",
+          content: "Hello",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+        },
+      });
+    });
+
+    expect(result.current.events).toEqual([]);
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "execution_complete",
+          messageId: "msg-1",
+          success: true,
+          sandboxId: "sandbox-1",
+          timestamp: 12,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.events).toEqual([
+        {
+          type: "token",
+          content: "Hello",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+        },
+        {
+          type: "execution_complete",
+          messageId: "msg-1",
+          success: true,
+          sandboxId: "sandbox-1",
+          timestamp: 12,
+        },
+      ]);
+    });
   });
 
   it("prepends new artifacts and replaces duplicates by id", async () => {

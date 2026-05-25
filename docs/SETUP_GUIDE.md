@@ -191,6 +191,12 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+### Local sandbox/OpenCode smoke workflow
+
+For sandbox-runtime issues that need a real OpenCode server and a real repository checkout, use
+[LOCAL_SANDBOX_SMOKE.md](./LOCAL_SANDBOX_SMOKE.md). This is the quickest local loop for reproducing
+runtime behavior such as repeated skill-tool calls without deploying Modal.
+
 ## Path C: Full Self-Hosted Deployment
 
 For full infrastructure setup, use:

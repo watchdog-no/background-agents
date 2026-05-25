@@ -247,22 +247,24 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
         timestamp: event.timestamp,
       };
     } else if (event.type === "execution_complete") {
-      // On completion: Add final text to events using the token's original timestamp
-      if (pendingTextRef.current) {
-        const pending = pendingTextRef.current;
-        pendingTextRef.current = null;
-        setEvents((prev) => [
-          ...prev,
-          {
-            type: "token",
-            content: pending.content,
-            messageId: pending.messageId,
-            sandboxId: pending.sandboxId,
-            timestamp: pending.timestamp,
-          },
-        ]);
-      }
-      setEvents((prev) => [...prev, event]);
+      // On completion: add final text immediately before completion in one update.
+      const pending = pendingTextRef.current;
+      pendingTextRef.current = null;
+      setEvents((prev) => [
+        ...prev,
+        ...(pending
+          ? [
+              {
+                type: "token" as const,
+                content: pending.content,
+                messageId: pending.messageId,
+                sandboxId: pending.sandboxId,
+                timestamp: pending.timestamp,
+              },
+            ]
+          : []),
+        event,
+      ]);
     } else {
       // Other events (tool_call, user_message, git_sync, etc.) - add normally
       setEvents((prev) => [...prev, event]);

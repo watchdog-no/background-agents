@@ -164,6 +164,7 @@ class TestBuildPromptRequestBody:
         body = bridge._build_prompt_request_body("Hello", None)
 
         assert body["parts"] == [{"type": "text", "text": "Hello"}]
+        assert "tools" not in body
         assert "model" not in body
         assert "messageID" not in body
 

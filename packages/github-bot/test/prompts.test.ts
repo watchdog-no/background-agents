@@ -31,6 +31,8 @@ describe("buildCodeReviewPrompt", () => {
     expect(prompt).toContain("Use the $code-review skill");
     expect(prompt).toContain("/code-review --pr 42 --post");
     expect(prompt).toContain("Do not stop after a local dry-run review");
+    expect(prompt).not.toContain("Do not call OpenCode's native `skill` tool");
+    expect(prompt).not.toContain("resolve_review_target.py");
   });
 
   it("handles null body gracefully", () => {

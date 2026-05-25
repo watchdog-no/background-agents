@@ -62,7 +62,7 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tmp_path / "no-tools"):
             sup._install_tools(workdir)
 
-        dest = workdir / ".opencode" / "tool" / "create-pull-request.js"
+        dest = workdir / ".opencode" / "tools" / "create-pull-request.js"
         assert dest.exists()
         assert dest.read_text() == "// legacy tool"
 
@@ -82,7 +82,7 @@ class TestInstallTools:
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "_bridge-client.js").exists()
         assert (tool_dest / "spawn-task.js").exists()
         assert (tool_dest / "get-task-status.js").exists()
@@ -104,7 +104,7 @@ class TestInstallTools:
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "spawn-task.js").exists()
         assert not (tool_dest / "README.md").exists()
         assert not (tool_dest / "helper.py").exists()
@@ -122,7 +122,7 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tmp_path / "no-tools"):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "create-pull-request.js").exists()
         js_files = list(tool_dest.glob("*.js"))
         assert len(js_files) == 1
@@ -192,7 +192,7 @@ class TestInstallTools:
         (deps_cache / "node_modules").mkdir()
 
         # Pre-create .opencode/ with existing files (e.g. from snapshot restore)
-        opencode_dir = workdir / ".opencode" / "tool"
+        opencode_dir = workdir / ".opencode" / "tools"
         opencode_dir.mkdir(parents=True)
         existing_pkg = workdir / ".opencode" / "package.json"
         existing_pkg.write_text('{"name": "existing"}')
@@ -221,7 +221,7 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "create-pull-request.js").exists()
         assert (tool_dest / "spawn-task.js").exists()
         assert (tool_dest / "_bridge-client.js").exists()
@@ -245,7 +245,7 @@ class TestInstallTools:
         ):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "slack-notify.js").exists()
         assert (tool_dest / "spawn-task.js").exists()
 
