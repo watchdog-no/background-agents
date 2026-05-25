@@ -243,12 +243,7 @@ async function getInstallationTokenWithMetadata(
 
   if (!response.ok) {
     const error = await response.text();
-    // Attach the HTTP status so callers can classify transient (5xx/429)
-    // vs permanent failures rather than substring-matching the message.
-    throw Object.assign(
-      new Error(`Failed to get installation token: ${response.status} ${error}`),
-      { status: response.status }
-    );
+    throw new Error(`Failed to get installation token: ${response.status} ${error}`);
   }
 
   return (await response.json()) as InstallationTokenResponse;
@@ -354,40 +349,6 @@ async function refreshInstallationToken(
   return cached;
 }
 
-async function getOrRefreshCachedInstallationToken(
-  config: GitHubAppConfig,
-  env?: InstallationTokenCacheBindings,
-  options?: { forceRefresh?: boolean }
-): Promise<CachedInstallationToken> {
-  const cacheKey = getInstallationTokenCacheKey(config);
-  const forceRefresh = options?.forceRefresh ?? false;
-
-  if (!forceRefresh) {
-    const memoryCached = installationTokenMemoryCache.get(cacheKey);
-    if (memoryCached && isTokenUsable(memoryCached)) {
-      return memoryCached;
-    }
-
-    const persistentCached = await readInstallationTokenFromCache(env, cacheKey);
-    if (persistentCached && isTokenUsable(persistentCached)) {
-      installationTokenMemoryCache.set(cacheKey, persistentCached);
-      return persistentCached;
-    }
-
-    const inFlight = installationTokenRefreshInFlight.get(cacheKey);
-    if (inFlight) {
-      return inFlight;
-    }
-  }
-
-  const refreshPromise = refreshInstallationToken(config, env, cacheKey).finally(() => {
-    installationTokenRefreshInFlight.delete(cacheKey);
-  });
-  installationTokenRefreshInFlight.set(cacheKey, refreshPromise);
-
-  return refreshPromise;
-}
-
 /**
  * Get installation token with in-memory + KV caching.
  */
@@ -396,23 +357,35 @@ export async function getCachedInstallationToken(
   env?: InstallationTokenCacheBindings,
   options?: { forceRefresh?: boolean }
 ): Promise<string> {
-  const cached = await getOrRefreshCachedInstallationToken(config, env, options);
-  return cached.token;
-}
+  const cacheKey = getInstallationTokenCacheKey(config);
+  const forceRefresh = options?.forceRefresh ?? false;
 
-/**
- * Like {@link getCachedInstallationToken}, but also returns the absolute epoch
- * milliseconds at which the token expires. Used by callers that need to
- * forward the token's lifetime to a client (e.g. the sandbox credential
- * helper, which caches its own copy until shortly before expiry).
- */
-export async function getCachedInstallationTokenWithExpiry(
-  config: GitHubAppConfig,
-  env?: InstallationTokenCacheBindings,
-  options?: { forceRefresh?: boolean }
-): Promise<{ token: string; expiresAtEpochMs: number }> {
-  const cached = await getOrRefreshCachedInstallationToken(config, env, options);
-  return { token: cached.token, expiresAtEpochMs: cached.expiresAtEpochMs };
+  if (!forceRefresh) {
+    const memoryCached = installationTokenMemoryCache.get(cacheKey);
+    if (memoryCached && isTokenUsable(memoryCached)) {
+      return memoryCached.token;
+    }
+
+    const persistentCached = await readInstallationTokenFromCache(env, cacheKey);
+    if (persistentCached && isTokenUsable(persistentCached)) {
+      installationTokenMemoryCache.set(cacheKey, persistentCached);
+      return persistentCached.token;
+    }
+
+    const inFlight = installationTokenRefreshInFlight.get(cacheKey);
+    if (inFlight) {
+      const shared = await inFlight;
+      return shared.token;
+    }
+  }
+
+  const refreshPromise = refreshInstallationToken(config, env, cacheKey).finally(() => {
+    installationTokenRefreshInFlight.delete(cacheKey);
+  });
+  installationTokenRefreshInFlight.set(cacheKey, refreshPromise);
+
+  const refreshed = await refreshPromise;
+  return refreshed.token;
 }
 
 // Re-export from shared for backward compatibility
