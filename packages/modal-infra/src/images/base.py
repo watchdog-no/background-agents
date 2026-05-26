@@ -37,10 +37,17 @@ AGENT_BROWSER_VERSION = "0.21.2"
 TTYD_VERSION = "1.7.7"
 TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
+# linear-cli version to install (pinned for reproducible images).
+# Gives the agent read/write access to Linear via the `linear` CLI, paired with
+# the linear-cli Skill. Authenticates from the LINEAR_API_KEY env var injected
+# as a user secret — no CLI tool schemas in the agent's request context.
+LINEAR_CLI_VERSION = "2.0.0"
+
 # Cache buster - change this to force Modal image rebuild
 # v52: git credential helper backed by control plane; remove embedded VCS tokens
 # v53: upgrade OpenCode to 1.15.10 after the SSE event subscription fix
-CACHE_BUSTER = "v53-opencode-1-15-10"
+# v54: install schpet/linear-cli for agent-side Linear access
+CACHE_BUSTER = "v54-linear-cli"
 
 # Base image with all development tools
 base_image = (
@@ -157,6 +164,15 @@ base_image = (
         f"npm install -g agent-browser@{AGENT_BROWSER_VERSION}",
         "agent-browser install",
         "agent-browser --version",
+    )
+    # Install linear-cli (schpet/linear-cli) for agent-side Linear access.
+    # The npm package fetches a platform-native binary at install time and
+    # exposes it on PATH as `linear`. The agent authenticates via the
+    # LINEAR_API_KEY env var (no `linear auth login` needed); see the
+    # linear-cli Skill for usage.
+    .run_commands(
+        f"npm install -g @schpet/linear-cli@{LINEAR_CLI_VERSION}",
+        "linear --version",
     )
     # Create working directories
     .run_commands(
