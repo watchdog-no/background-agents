@@ -216,6 +216,9 @@ export type SandboxEvent =
       type: "reasoning";
       content: string;
       messageId: string;
+      // Identifies the reasoning block within a message so multiple blocks are
+      // kept distinct (persisted and rendered separately) rather than coalesced.
+      blockId?: string;
       sandboxId: string;
       timestamp: number;
     }

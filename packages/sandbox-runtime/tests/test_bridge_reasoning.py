@@ -28,10 +28,12 @@ def test_transform_reasoning_part_emits_reasoning_event(bridge: AgentBridge) -> 
 
     event = bridge._transform_part_to_event(part, "msg-1")
 
+    # blockId carries the part id so multiple reasoning blocks stay distinct.
     assert event == {
         "type": "reasoning",
         "content": "Let me check the schema first.",
         "messageId": "msg-1",
+        "blockId": "prt-1",
     }
 
 

@@ -247,13 +247,18 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
         timestamp: event.timestamp,
       };
     } else if (event.type === "reasoning" && event.content && event.messageId) {
-      // Show reasoning live. Each event carries the full cumulative text for the
-      // current reasoning block, so replace the trailing reasoning event in place
-      // rather than appending duplicates; a new block (after a tool call or step)
-      // starts a fresh entry.
+      // Show reasoning live. Each event carries the full cumulative text for one
+      // reasoning block, so replace the trailing event in place only when it's
+      // the same block (matched by messageId + blockId); a distinct block starts
+      // a fresh entry instead of overwriting the previous one.
       setEvents((prev) => {
         const last = prev[prev.length - 1];
-        if (last && last.type === "reasoning" && last.messageId === event.messageId) {
+        if (
+          last &&
+          last.type === "reasoning" &&
+          last.messageId === event.messageId &&
+          last.blockId === event.blockId
+        ) {
           return [...prev.slice(0, -1), event];
         }
         return [...prev, event];
