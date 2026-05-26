@@ -69,7 +69,13 @@ export function createChildSessionsHandler(deps: ChildSessionsHandlerDeps): Chil
       const allEvents = deps.repository.listEvents({ limit: 50 });
 
       // Filter out noisy event types and keep the most recent five.
-      const filteredTypes = new Set(["token", "heartbeat", "step_start", "step_finish"]);
+      const filteredTypes = new Set([
+        "token",
+        "reasoning",
+        "heartbeat",
+        "step_start",
+        "step_finish",
+      ]);
       const recentEvents = allEvents.filter((event) => !filteredTypes.has(event.type)).slice(0, 5);
 
       return Response.json({

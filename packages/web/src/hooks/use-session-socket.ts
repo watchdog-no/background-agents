@@ -248,20 +248,29 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       };
     } else if (event.type === "reasoning" && event.content && event.messageId) {
       // Show reasoning live. Each event carries the full cumulative text for one
-      // reasoning block, so replace the trailing event in place only when it's
-      // the same block (matched by messageId + blockId); a distinct block starts
-      // a fresh entry instead of overwriting the previous one.
+      // reasoning block, so replace any existing event for the same block
+      // (matched by messageId + blockId); a distinct block starts a fresh entry.
       setEvents((prev) => {
-        const last = prev[prev.length - 1];
-        if (
-          last &&
-          last.type === "reasoning" &&
-          last.messageId === event.messageId &&
-          last.blockId === event.blockId
-        ) {
-          return [...prev.slice(0, -1), event];
+        const existingIndex = prev.findIndex(
+          (prevEvent) =>
+            prevEvent.type === "reasoning" &&
+            prevEvent.messageId === event.messageId &&
+            prevEvent.blockId === event.blockId
+        );
+        if (existingIndex === -1) {
+          return [...prev, event];
         }
-        return [...prev, event];
+
+        return prev.flatMap((prevEvent, index) => {
+          if (
+            prevEvent.type !== "reasoning" ||
+            prevEvent.messageId !== event.messageId ||
+            prevEvent.blockId !== event.blockId
+          ) {
+            return [prevEvent];
+          }
+          return index === existingIndex ? [event] : [];
+        });
       });
     } else if (event.type === "execution_complete") {
       // On completion: add final text immediately before completion in one update.
