@@ -1,4 +1,5 @@
 import type { SessionArtifact } from "@open-inspect/shared";
+import { contextTokensFromUsage } from "@open-inspect/shared";
 import { generateId } from "../auth/crypto";
 import type { Logger } from "../logger";
 import type { GitPushSpec } from "../source-control";
@@ -121,6 +122,10 @@ export class SessionSandboxEventProcessor {
         messageId,
         createdAt: now,
       });
+      // Compaction shrinks the context, but the new size isn't known until the
+      // next step. Clear the stored usage (keep the limit) so the gauge doesn't
+      // show a stale pre-compaction count on reload until the next step_finish.
+      this.deps.repository.setSessionContextUsage(0, null, now);
       this.deps.broadcast({ type: "sandbox_event", event });
       return;
     }
@@ -137,13 +142,15 @@ export class SessionSandboxEventProcessor {
       }
       // Persist current context-window usage from the parent session's steps.
       // Subtask steps belong to a child session's context, so ignore them.
+      // Use the full input context (incl. cached prompt tokens), not just the
+      // non-cached `input`, so cached sessions don't show false headroom.
       if (
         event.type === "step_finish" &&
         !event.isSubtask &&
         typeof event.tokens?.input === "number"
       ) {
         this.deps.repository.setSessionContextUsage(
-          event.tokens.input,
+          contextTokensFromUsage(event.tokens),
           typeof event.contextLimit === "number" ? event.contextLimit : null,
           now
         );

@@ -524,6 +524,48 @@ describe("useSessionSocket", () => {
     });
   });
 
+  it("sums cached prompt tokens and clears the gauge on compaction", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 760, output: 100, reasoning: 0, cache: { read: 231424, write: 0 } },
+        },
+      });
+    });
+    // Cached prompt tokens are included: 760 + 231424, not the 760 delta.
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(232184);
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: { type: "compaction", messageId: "msg-1", sandboxId: "sandbox-1", timestamp: 11 },
+      });
+    });
+    // Compaction clears the gauge until the next step reports the new size.
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBeUndefined();
+    });
+  });
+
   it("collapses replayed accumulated token snapshots to the final assistant text", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 

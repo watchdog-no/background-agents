@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { mutate } from "swr";
+import { contextTokensFromUsage } from "@open-inspect/shared";
 import { SIDEBAR_SESSIONS_KEY } from "@/lib/session-list";
 import type { Artifact, SandboxEvent } from "@/types/session";
 import type {
@@ -287,20 +288,27 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       );
     }
 
-    // Track current context-window usage from each step's input tokens.
-    // This is the full prompt size for the call, not a per-turn delta, so
-    // replace (don't accumulate); it drops after a compaction. Ignore subtask
-    // (child-session) steps so a sub-agent can't overwrite the parent's count.
+    // Track current context-window usage from each step. Use the full input
+    // context (incl. cached prompt tokens), not just the non-cached `input`,
+    // or cached sessions show false headroom. Replace (don't accumulate); it
+    // drops after a compaction. Ignore subtask (child-session) steps so a
+    // sub-agent can't overwrite the parent's count.
     if (
       event.type === "step_finish" &&
       !event.isSubtask &&
       typeof event.tokens?.input === "number"
     ) {
-      const contextTokens = event.tokens.input;
+      const contextTokens = contextTokensFromUsage(event.tokens);
       const contextLimit = typeof event.contextLimit === "number" ? event.contextLimit : undefined;
       setSessionState((prev) =>
         prev ? { ...prev, contextTokens, ...(contextLimit ? { contextLimit } : {}) } : prev
       );
+    }
+
+    // Compaction shrinks the context; the new size isn't known until the next
+    // step. Clear the gauge so it doesn't show a stale pre-compaction count.
+    if (event.type === "compaction") {
+      setSessionState((prev) => (prev ? { ...prev, contextTokens: undefined } : prev));
     }
   }, []);
 

@@ -200,17 +200,28 @@ export interface PullRequest {
 
 /**
  * Token usage reported by the agent runtime for a single step. `input` is the
- * full prompt size for that LLM call (system + tools + the whole conversation
- * so far), so the latest step's `input` reflects current context-window usage.
+ * *non-cached* prompt tokens; with prompt caching the cached portion is reported
+ * separately under `cache`. Use {@link contextTokensFromUsage} to get the true
+ * context-window occupancy.
  */
 export interface TokenUsage {
   input: number;
   // The runtime forwards provider usage verbatim and omits fields the provider
-  // doesn't report, so only `input` (used for context-window tracking) is
-  // guaranteed.
+  // doesn't report, so only `input` is guaranteed.
   output?: number;
   reasoning?: number;
   cache?: { read: number; write: number };
+}
+
+/**
+ * True input context size for a step = non-cached input + cached (read) +
+ * newly-cached (write) prompt tokens. Providers report cached prompt tokens
+ * separately from `input`, so summing reflects what the runtime actually
+ * compacts against; using `input` alone undercounts cached sessions and shows
+ * false headroom.
+ */
+export function contextTokensFromUsage(tokens: TokenUsage): number {
+  return tokens.input + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0);
 }
 
 // Sandbox events (from Modal / control-plane synthesized)

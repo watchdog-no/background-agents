@@ -244,6 +244,41 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.repository.setSessionContextUsage).not.toHaveBeenCalled();
   });
 
+  it("sums cached prompt tokens into context usage", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      tokens: { input: 760, output: 100, reasoning: 0, cache: { read: 231424, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    // 760 (non-cached) + 231424 (cached) = 232184, not the tiny 760 delta.
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
+      232184,
+      400000,
+      expect.any(Number)
+    );
+  });
+
+  it("clears context usage on compaction", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "compaction",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(0, null, expect.any(Number));
+  });
+
   it("does not add session cost for step_finish with NaN cost", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
