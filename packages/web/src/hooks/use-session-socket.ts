@@ -246,6 +246,18 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
         sandboxId: event.sandboxId,
         timestamp: event.timestamp,
       };
+    } else if (event.type === "reasoning" && event.content && event.messageId) {
+      // Show reasoning live. Each event carries the full cumulative text for the
+      // current reasoning block, so replace the trailing reasoning event in place
+      // rather than appending duplicates; a new block (after a tool call or step)
+      // starts a fresh entry.
+      setEvents((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.type === "reasoning" && last.messageId === event.messageId) {
+          return [...prev.slice(0, -1), event];
+        }
+        return [...prev, event];
+      });
     } else if (event.type === "execution_complete") {
       // On completion: add final text immediately before completion in one update.
       const pending = pendingTextRef.current;

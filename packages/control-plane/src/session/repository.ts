@@ -26,8 +26,12 @@ import type {
 } from "../types";
 
 type TokenEvent = Extract<SandboxEvent, { type: "token" }>;
+type ReasoningEvent = Extract<SandboxEvent, { type: "reasoning" }>;
 type ExecutionCompleteEvent = Extract<SandboxEvent, { type: "execution_complete" }>;
-type UpsertableEventType = TokenEvent["type"] | ExecutionCompleteEvent["type"];
+type UpsertableEventType =
+  | TokenEvent["type"]
+  | ReasoningEvent["type"]
+  | ExecutionCompleteEvent["type"];
 
 /**
  * WS client mapping result for hibernation recovery.
@@ -728,6 +732,10 @@ export class SessionRepository {
 
   upsertTokenEvent(messageId: string, event: TokenEvent, createdAt: number): void {
     this.upsertEventByMessageId("token", messageId, event, createdAt);
+  }
+
+  upsertReasoningEvent(messageId: string, event: ReasoningEvent, createdAt: number): void {
+    this.upsertEventByMessageId("reasoning", messageId, event, createdAt);
   }
 
   upsertExecutionCompleteEvent(

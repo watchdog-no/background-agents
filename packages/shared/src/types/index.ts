@@ -29,6 +29,7 @@ export type ArtifactType = "pr" | "screenshot" | "video" | "preview" | "branch";
 export type EventType =
   | "heartbeat"
   | "token"
+  | "reasoning"
   | "tool_call"
   | "step_start"
   | "step_finish"
@@ -202,6 +203,17 @@ export type SandboxEvent =
   | { type: "heartbeat"; sandboxId: string; status: string; timestamp: number }
   | {
       type: "token";
+      content: string;
+      messageId: string;
+      sandboxId: string;
+      timestamp: number;
+    }
+  | {
+      // Model reasoning / "thinking" content. For Anthropic thinking models this
+      // is the full thinking text; for OpenAI/Codex models it is the reasoning
+      // summary. Streams cumulatively like "token" (content is the full text so
+      // far for the current reasoning block).
+      type: "reasoning";
       content: string;
       messageId: string;
       sandboxId: string;
