@@ -297,7 +297,10 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       typeof event.tokens?.input === "number"
     ) {
       const contextTokens = event.tokens.input;
-      setSessionState((prev) => (prev ? { ...prev, contextTokens } : prev));
+      const contextLimit = typeof event.contextLimit === "number" ? event.contextLimit : undefined;
+      setSessionState((prev) =>
+        prev ? { ...prev, contextTokens, ...(contextLimit ? { contextLimit } : {}) } : prev
+      );
     }
   }, []);
 

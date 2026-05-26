@@ -10,6 +10,7 @@ function createProcessor() {
     createArtifact: vi.fn(),
     createEvent: vi.fn(),
     addSessionCost: vi.fn(),
+    setSessionContextUsage: vi.fn(),
     upsertExecutionCompleteEvent: vi.fn(),
     updateMessageCompletion: vi.fn(),
     getMessageTimestamps: vi.fn(
@@ -204,6 +205,43 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.repository.addSessionCost).toHaveBeenCalledWith(0.0123, expect.any(Number));
     expect(h.repository.createEvent).not.toHaveBeenCalled();
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
+  });
+
+  it("persists context usage from a non-subtask step_finish", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      tokens: { input: 14000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
+      14000,
+      400000,
+      expect.any(Number)
+    );
+  });
+
+  it("ignores subtask step_finish for context usage", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      isSubtask: true,
+      tokens: { input: 50000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).not.toHaveBeenCalled();
   });
 
   it("does not add session cost for step_finish with NaN cost", async () => {

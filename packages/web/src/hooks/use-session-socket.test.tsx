@@ -417,6 +417,7 @@ describe("useSessionSocket", () => {
           sandboxId: "sandbox-1",
           timestamp: 10,
           tokens: { input: 14000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+          contextLimit: 400000,
         },
       });
     });
@@ -424,6 +425,8 @@ describe("useSessionSocket", () => {
     await waitFor(() => {
       expect(result.current.sessionState?.contextTokens).toBe(14000);
     });
+    // The limit is captured as the gauge denominator.
+    expect(result.current.sessionState?.contextLimit).toBe(400000);
 
     act(() => {
       socket.receive({
@@ -442,6 +445,8 @@ describe("useSessionSocket", () => {
     await waitFor(() => {
       expect(result.current.sessionState?.contextTokens).toBe(18000);
     });
+    // A step without contextLimit preserves the previously captured limit.
+    expect(result.current.sessionState?.contextLimit).toBe(400000);
   });
 
   it("ignores subtask and token-less steps, and reflects the post-compaction drop", async () => {

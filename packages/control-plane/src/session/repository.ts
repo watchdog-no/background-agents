@@ -302,6 +302,26 @@ export class SessionRepository {
     );
   }
 
+  /**
+   * Record current context-window usage. `contextTokens` replaces (it's the
+   * latest step's full input, not a delta); `contextLimit` is constant per
+   * session, so a null leaves the stored value untouched.
+   */
+  setSessionContextUsage(
+    contextTokens: number,
+    contextLimit: number | null,
+    updatedAt: number
+  ): void {
+    this.sql.exec(
+      `UPDATE session
+       SET context_tokens = ?, context_limit = COALESCE(?, context_limit), updated_at = ?
+       WHERE id = (SELECT id FROM session LIMIT 1)`,
+      contextTokens,
+      contextLimit,
+      updatedAt
+    );
+  }
+
   // === SANDBOX ===
   // Note: Each session DO has exactly one sandbox row, so update methods use
   // a subquery `WHERE id = (SELECT id FROM sandbox LIMIT 1)` to find it.

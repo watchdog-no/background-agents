@@ -10,7 +10,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { initSchema } from "./schema";
 import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
-import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
+import { buildInternalAuthHeaders, resolveAppName, timingSafeEqual } from "@open-inspect/shared";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
 import { buildModalSandboxUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
@@ -1654,6 +1654,8 @@ export class SessionDO extends DurableObject<Env> {
       isProcessing,
       parentSessionId: session?.parent_session_id ?? null,
       totalCost: session?.total_cost ?? 0,
+      contextTokens: session?.context_tokens || undefined,
+      contextLimit: session?.context_limit || undefined,
       codeServerUrl: sandbox?.code_server_url ?? null,
       codeServerPassword,
       tunnelUrls: sandbox?.tunnel_urls ? this.safeParseTunnelUrls(sandbox.tunnel_urls) : null,
@@ -1749,7 +1751,53 @@ export class SessionDO extends DurableObject<Env> {
       });
     }
 
-    return mergedCount === 0 ? undefined : merged;
+    // Inject a fresh Linear app-actor token so the agent can read/write Linear
+    // as the app. A user-provided LINEAR_API_KEY secret (handled in the merge
+    // above) always wins.
+    await this.injectLinearAppToken(merged);
+
+    return Object.keys(merged).length === 0 ? undefined : merged;
+  }
+
+  /**
+   * Best-effort: set `LINEAR_API_KEY="Bearer <token>"` from the linear-bot's
+   * app-actor OAuth token, so `linear-cli` in the sandbox acts as the Linear
+   * app rather than a human user.
+   *
+   * App-actor tokens expire (~24h) and are refreshed server-side by the
+   * linear-bot, so they're fetched per spawn rather than stored as a static
+   * secret. This is an optional enhancement: if the linear-bot isn't deployed,
+   * no workspace has authorized the app, or the fetch fails, the sandbox simply
+   * spawns without Linear access (the linear-cli skill detects the missing
+   * credential and tells the user). It must not block or fail the spawn.
+   */
+  private async injectLinearAppToken(envVars: Record<string, string>): Promise<void> {
+    if (!this.env.LINEAR_BOT || !this.env.INTERNAL_CALLBACK_SECRET) return;
+    // A user-provided key takes precedence over the app-actor identity.
+    if (envVars.LINEAR_API_KEY) return;
+
+    try {
+      const headers = await buildInternalAuthHeaders(this.env.INTERNAL_CALLBACK_SECRET);
+      const res = await this.env.LINEAR_BOT.fetch("https://internal/internal/app-token", {
+        headers,
+      });
+      if (!res.ok) {
+        // 404 = no workspace has completed the OAuth install yet. Not an error.
+        this.log.debug("Linear app token unavailable, skipping injection", {
+          status: res.status,
+        });
+        return;
+      }
+      const { accessToken } = (await res.json()) as { accessToken?: string };
+      if (accessToken) {
+        envVars.LINEAR_API_KEY = `Bearer ${accessToken}`;
+        this.log.info("Injected Linear app-actor token into sandbox env");
+      }
+    } catch (err) {
+      this.log.warn("Failed to fetch Linear app token", {
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
   }
 
   /**

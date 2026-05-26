@@ -155,6 +155,18 @@ class TestTransformPartToEvent:
         assert event["tokens"] == tokens
         assert event["reason"] == "end_turn"
         assert event["messageId"] == "cp-message-123"
+        # No context limit resolved -> no denominator attached.
+        assert "contextLimit" not in event
+
+    def test_step_finish_includes_context_limit_when_known(self, bridge: AgentBridge):
+        """step_finish carries the resolved context limit as the gauge denominator."""
+        bridge._current_context_limit = 400000
+        part = {"type": "step-finish", "id": "step-1", "tokens": {"input": 120}}
+
+        event = bridge._transform_part_to_event(part, "cp-message-123")
+
+        assert event is not None
+        assert event["contextLimit"] == 400000
 
 
 class TestBuildPromptRequestBody:

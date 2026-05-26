@@ -135,6 +135,19 @@ export class SessionSandboxEventProcessor {
       ) {
         this.deps.repository.addSessionCost(event.cost, now);
       }
+      // Persist current context-window usage from the parent session's steps.
+      // Subtask steps belong to a child session's context, so ignore them.
+      if (
+        event.type === "step_finish" &&
+        !event.isSubtask &&
+        typeof event.tokens?.input === "number"
+      ) {
+        this.deps.repository.setSessionContextUsage(
+          event.tokens.input,
+          typeof event.contextLimit === "number" ? event.contextLimit : null,
+          now
+        );
+      }
       this.deps.broadcast({ type: "sandbox_event", event });
       return;
     }

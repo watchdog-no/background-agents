@@ -246,6 +246,10 @@ export type SandboxEvent =
       cost?: number;
       tokens?: TokenUsage;
       reason?: string;
+      // The model's effective context window as the runtime sees it (used as
+      // the denominator for the context-usage gauge / "distance to compaction").
+      // Constant for a session; the runtime may attach it to every step.
+      contextLimit?: number;
       messageId: string;
       sandboxId: string;
       timestamp: number;
@@ -412,12 +416,17 @@ export interface SessionState {
   parentSessionId?: string | null;
   totalCost?: number;
   /**
-   * Current context-window usage in tokens (latest step's input tokens).
-   * Derived live on the client from `step_finish` events; not persisted
-   * server-side. Grows as the conversation fills the window and drops after
-   * a compaction.
+   * Current context-window usage in tokens (latest non-subtask step's input
+   * tokens). Grows as the conversation fills the window and drops after a
+   * compaction. Updated live from `step_finish` and persisted so it survives
+   * reload.
    */
   contextTokens?: number;
+  /**
+   * The model's effective context window (denominator for the usage gauge),
+   * as reported by the runtime. Constant for a session.
+   */
+  contextLimit?: number;
   codeServerUrl?: string | null;
   codeServerPassword?: string | null;
   tunnelUrls?: Record<string, string> | null;

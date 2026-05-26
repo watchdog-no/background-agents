@@ -213,6 +213,12 @@ class AgentBridge:
         # Keyed by ackId, re-sent on reconnect until the DO confirms receipt.
         self._pending_acks: dict[str, dict[str, Any]] = {}
 
+        # Effective model context window, fetched from OpenCode's provider config
+        # and attached to step_finish events as the context-usage gauge denominator.
+        # Cached per model id; `_current_context_limit` holds the active prompt's value.
+        self._context_limit_cache: dict[str, int] = {}
+        self._current_context_limit: int | None = None
+
     @property
     def ws_url(self) -> str:
         """WebSocket URL for control plane connection."""
@@ -711,6 +717,44 @@ class AgentBridge:
         time_info = info.get("time")
         return isinstance(time_info, dict) and time_info.get("completed") is not None
 
+    async def _resolve_context_limit(self, model: str | None) -> int | None:
+        """Fetch the model's context window from OpenCode's provider config.
+
+        Used as the denominator for the context-usage gauge ("distance to
+        compaction"). This is intentionally the limit OpenCode itself compacts
+        against, not the model's headline window. Cached per model id; returns
+        None on any failure, in which case the UI shows usage without a cap.
+        """
+        if not model or not self.http_client:
+            return None
+        provider_id, _, model_id = model.partition("/")
+        if not model_id:
+            provider_id, model_id = "anthropic", model
+        if model_id in self._context_limit_cache:
+            return self._context_limit_cache[model_id]
+        try:
+            resp = await self.http_client.get(
+                f"{self.opencode_base_url}/config/providers",
+                timeout=self.OPENCODE_REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            providers = data.get("providers") if isinstance(data, dict) else data
+            if isinstance(providers, dict):
+                providers = list(providers.values())
+            for provider in providers or []:
+                if provider.get("id") != provider_id:
+                    continue
+                model_def = (provider.get("models") or {}).get(model_id) or {}
+                limit = (model_def.get("limit") or {}).get("context")
+                if isinstance(limit, int) and limit > 0:
+                    self._context_limit_cache[model_id] = limit
+                    return limit
+        except Exception as e:
+            self.log.debug("bridge.context_limit_fetch_failed", exc=e)
+        return None
+
     def _transform_part_to_event(
         self,
         part: dict[str, Any],
@@ -751,13 +795,16 @@ class AgentBridge:
                 "messageId": message_id,
             }
         elif part_type == "step-finish":
-            return {
+            event: dict[str, Any] = {
                 "type": "step_finish",
                 "cost": part.get("cost"),
                 "tokens": part.get("tokens"),
                 "reason": part.get("reason"),
                 "messageId": message_id,
             }
+            if self._current_context_limit is not None:
+                event["contextLimit"] = self._current_context_limit
+            return event
         elif part_type == "step-start":
             return {
                 "type": "step_start",
@@ -910,6 +957,11 @@ class AgentBridge:
         request_body = self._build_prompt_request_body(
             content, model, opencode_message_id, reasoning_effort
         )
+
+        # Resolve the model's context window so step_finish events can carry the
+        # gauge denominator. Best-effort: None just means the UI shows usage
+        # without a denominator.
+        self._current_context_limit = await self._resolve_context_limit(model)
 
         sse_url = f"{self.opencode_base_url}/event"
         async_url = f"{self.opencode_base_url}/session/{self.opencode_session_id}/prompt_async"

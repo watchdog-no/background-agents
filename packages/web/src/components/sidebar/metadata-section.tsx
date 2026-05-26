@@ -32,6 +32,7 @@ interface MetadataSectionProps {
   parentSessionId?: string | null;
   totalCost?: number;
   contextTokens?: number;
+  contextLimit?: number;
 }
 
 export function MetadataSection({
@@ -46,6 +47,7 @@ export function MetadataSection({
   parentSessionId,
   totalCost,
   contextTokens,
+  contextLimit,
 }: MetadataSectionProps) {
   const [copied, setCopied] = useState(false);
 
@@ -108,7 +110,14 @@ export function MetadataSection({
 
       {typeof contextTokens === "number" && contextTokens > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>Context: {formatTokens(contextTokens)} tokens</span>
+          {typeof contextLimit === "number" && contextLimit > 0 ? (
+            <span>
+              Context: {formatTokens(contextTokens)} / {formatTokens(contextLimit)} (
+              {Math.round((contextTokens / contextLimit) * 100)}%)
+            </span>
+          ) : (
+            <span>Context: {formatTokens(contextTokens)} tokens</span>
+          )}
         </div>
       )}
 

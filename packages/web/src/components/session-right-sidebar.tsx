@@ -87,6 +87,7 @@ export function SessionRightSidebarContent({
           parentSessionId={sessionState.parentSessionId}
           totalCost={sessionState.totalCost}
           contextTokens={sessionState.contextTokens}
+          contextLimit={sessionState.contextLimit}
         />
       </div>
 
