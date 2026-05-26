@@ -149,6 +149,37 @@ export async function getLinearClient(env: Env, orgId: string): Promise<LinearAp
 }
 
 /**
+ * Mint a fresh app-actor access token for the (single-tenant) workspace.
+ *
+ * Open-Inspect is single-tenant, so at most one workspace completes the OAuth
+ * install and exactly one `oauth:token:*` entry lives in KV. This resolves that
+ * entry and returns a valid token, transparently refreshing via `getOAuthToken`.
+ * Used by the control plane to inject `LINEAR_API_KEY="Bearer <token>"` into
+ * sandboxes so the coding agent acts as the Linear app, not a human user.
+ *
+ * Returns null when no workspace has authorized the app yet, or when more than
+ * one workspace token exists. The latter is fail-closed on purpose: with
+ * multiple tokens we cannot know which workspace the sandbox should act as, and
+ * arbitrarily picking one risks authenticating the agent to the wrong workspace
+ * and writing comments/updates into the wrong tenant. An operator must delete
+ * the stale `oauth:token:*` entries before app-actor access resumes.
+ */
+export async function getAppActorToken(env: Env): Promise<string | null> {
+  const { keys } = await env.LINEAR_KV.list({ prefix: OAUTH_TOKEN_KEY_PREFIX });
+  if (keys.length === 0) return null;
+  if (keys.length > 1) {
+    // Single-tenant invariant violated — fail closed rather than guess a tenant.
+    log.error("app_token.multiple_workspaces", {
+      count: keys.length,
+      org_ids: keys.map((k) => k.name.slice(OAUTH_TOKEN_KEY_PREFIX.length)).join(","),
+    });
+    return null;
+  }
+  const orgId = keys[0].name.slice(OAUTH_TOKEN_KEY_PREFIX.length);
+  return getOAuthToken(env, orgId);
+}
+
+/**
  * Execute a GraphQL query against the Linear API.
  */
 async function linearGraphQL(

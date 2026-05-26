@@ -10,7 +10,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { initSchema } from "./schema";
 import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
-import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
+import { buildInternalAuthHeaders, resolveAppName, timingSafeEqual } from "@open-inspect/shared";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
 import { buildModalSandboxUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
@@ -106,6 +106,14 @@ const WS_AUTH_TIMEOUT_MS = 30000; // 30 seconds
  * the client to fetch a fresh token on reconnect.
  */
 const WS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Deadline for the best-effort Linear app-token fetch during spawn.
+ * Injecting the token is optional, so a slow/hung linear-bot (e.g. a stalled
+ * OAuth refresh) must not delay session startup — the fetch is aborted past
+ * this and treated as a skip.
+ */
+const LINEAR_APP_TOKEN_FETCH_TIMEOUT_MS = 3000; // 3 seconds
 
 /** Statuses that indicate a session is finished — metrics are synced to D1 on these transitions. */
 const TERMINAL_STATUSES: SessionStatus[] = ["completed", "failed", "cancelled"];
@@ -1716,15 +1724,34 @@ export class SessionDO extends DurableObject<Env> {
       return undefined;
     }
 
+    const merged = await this.loadUserSecrets(session);
+
+    // Inject a fresh Linear app-actor token so the agent can read/write Linear
+    // as the app. This comes from the linear-bot, not the user-secrets store, so
+    // it must run even when that store is unconfigured. A user-provided
+    // LINEAR_API_KEY secret (from the merge above) always wins.
+    await this.injectLinearAppToken(merged);
+
+    return Object.keys(merged).length === 0 ? undefined : merged;
+  }
+
+  /**
+   * Load and merge the user-provided secrets (global + per-repo) for a sandbox.
+   *
+   * Returns an empty object when the secrets store isn't configured (no `DB` or
+   * `REPO_SECRETS_ENCRYPTION_KEY`); callers may still add env vars sourced
+   * elsewhere (e.g. the Linear app-actor token). Fails hard on decryption
+   * errors — sandboxes must not silently lose secrets.
+   */
+  private async loadUserSecrets(session: SessionRow): Promise<Record<string, string>> {
     if (!this.env.DB || !this.env.REPO_SECRETS_ENCRYPTION_KEY) {
       this.log.debug("Secrets not configured, skipping", {
         has_db: !!this.env.DB,
         has_encryption_key: !!this.env.REPO_SECRETS_ENCRYPTION_KEY,
       });
-      return undefined;
+      return {};
     }
 
-    // Fail hard on secret loading — sandboxes must not silently lose secrets
     const globalStore = new GlobalSecretsStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
     const globalSecrets = await globalStore.getDecryptedSecrets();
 
@@ -1734,22 +1761,64 @@ export class SessionDO extends DurableObject<Env> {
 
     // Merge: repo overrides global
     const { merged, totalBytes, exceedsLimit } = mergeSecrets(globalSecrets, repoSecrets);
-    const globalCount = Object.keys(globalSecrets).length;
-    const repoCount = Object.keys(repoSecrets).length;
     const mergedCount = Object.keys(merged).length;
 
     if (mergedCount > 0) {
       const logLevel = exceedsLimit ? "warn" : "info";
       this.log[logLevel]("Secrets merged for sandbox", {
-        global_count: globalCount,
-        repo_count: repoCount,
+        global_count: Object.keys(globalSecrets).length,
+        repo_count: Object.keys(repoSecrets).length,
         merged_count: mergedCount,
         payload_bytes: totalBytes,
         exceeds_limit: exceedsLimit,
       });
     }
 
-    return mergedCount === 0 ? undefined : merged;
+    return merged;
+  }
+
+  /**
+   * Best-effort: set `LINEAR_API_KEY="Bearer <token>"` from the linear-bot's
+   * app-actor OAuth token, so `linear-cli` in the sandbox acts as the Linear
+   * app rather than a human user.
+   *
+   * App-actor tokens expire (~24h) and are refreshed server-side by the
+   * linear-bot, so they're fetched per spawn rather than stored as a static
+   * secret. This is an optional enhancement: if the linear-bot isn't deployed,
+   * no workspace has authorized the app, or the fetch fails, the sandbox simply
+   * spawns without Linear access (the linear-cli skill detects the missing
+   * credential and tells the user). It must not block or fail the spawn.
+   */
+  private async injectLinearAppToken(envVars: Record<string, string>): Promise<void> {
+    if (!this.env.LINEAR_BOT || !this.env.INTERNAL_CALLBACK_SECRET) return;
+    // A user-provided key takes precedence over the app-actor identity.
+    if (envVars.LINEAR_API_KEY) return;
+
+    try {
+      const headers = await buildInternalAuthHeaders(this.env.INTERNAL_CALLBACK_SECRET);
+      const res = await this.env.LINEAR_BOT.fetch("https://internal/internal/app-token", {
+        headers,
+        // Bound the fetch so a slow/hung linear-bot can't stall the spawn.
+        signal: AbortSignal.timeout(LINEAR_APP_TOKEN_FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        // 404 = no workspace has completed the OAuth install yet. Not an error.
+        this.log.debug("Linear app token unavailable, skipping injection", {
+          status: res.status,
+        });
+        return;
+      }
+      const { accessToken } = (await res.json()) as { accessToken?: string };
+      if (accessToken) {
+        envVars.LINEAR_API_KEY = `Bearer ${accessToken}`;
+        this.log.info("Injected Linear app-actor token into sandbox env");
+      }
+    } catch (err) {
+      // Includes the abort timeout — Linear injection is best-effort, never fatal.
+      this.log.warn("Failed to fetch Linear app token", {
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
   }
 
   /**

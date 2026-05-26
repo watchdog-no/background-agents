@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchUser } from "./linear-client";
+import { fetchUser, getAppActorToken } from "./linear-client";
 import type { LinearApiClient } from "./linear-client";
+import type { Env } from "../types";
 
 const client: LinearApiClient = { accessToken: "test-token" };
 
@@ -81,5 +82,50 @@ describe("fetchUser", () => {
 
     const result = await fetchUser(client, "user-1");
     expect(result).toBeNull();
+  });
+});
+
+describe("getAppActorToken", () => {
+  function makeEnv(entries: Record<string, string>): Env {
+    return {
+      LINEAR_KV: {
+        list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+          keys: Object.keys(entries)
+            .filter((k) => k.startsWith(prefix))
+            .map((name) => ({ name })),
+        })),
+        get: vi.fn(async (key: string) => entries[key] ?? null),
+      },
+    } as unknown as Env;
+  }
+
+  // A token comfortably inside its validity window, so getOAuthToken returns it
+  // directly without attempting an OAuth refresh.
+  function freshToken(accessToken: string): string {
+    return JSON.stringify({
+      access_token: accessToken,
+      refresh_token: "refresh",
+      expires_at: Date.now() + 60 * 60 * 1000,
+    });
+  }
+
+  it("returns null when no workspace has authorized the app", async () => {
+    const env = makeEnv({});
+    expect(await getAppActorToken(env)).toBeNull();
+  });
+
+  it("resolves the single workspace token", async () => {
+    const env = makeEnv({ "oauth:token:org-1": freshToken("tok-abc") });
+    expect(await getAppActorToken(env)).toBe("tok-abc");
+  });
+
+  it("fails closed when multiple workspace tokens exist", async () => {
+    // Ambiguous multi-tenant state: guessing a workspace could authenticate the
+    // sandbox to the wrong tenant, so the token resolves to null instead.
+    const env = makeEnv({
+      "oauth:token:org-1": freshToken("tok-1"),
+      "oauth:token:org-2": freshToken("tok-2"),
+    });
+    expect(await getAppActorToken(env)).toBeNull();
   });
 });
