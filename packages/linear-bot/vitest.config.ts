@@ -9,7 +9,7 @@ export default defineConfig({
       reporter: ["text", "json"],
       reportsDirectory: "./coverage",
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/index.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/*.d.ts"],
     },
   },
 });

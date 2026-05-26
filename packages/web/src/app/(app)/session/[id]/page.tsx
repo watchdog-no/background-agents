@@ -1344,6 +1344,22 @@ const EventItem = memo(function EventItem({
         </div>
       );
 
+    case "reasoning": {
+      // The model's reasoning / "thinking". Collapsible (native <details>, no
+      // extra state), open by default so it's visible while the agent works.
+      if (!event.content) return null;
+      const reasoningContent = event.content;
+      return (
+        <details open className="group bg-card/50 border-l-2 border-muted px-4 py-2">
+          <summary className="flex items-center justify-between cursor-pointer list-none select-none">
+            <span className="text-xs text-muted-foreground italic">Thinking</span>
+            <span className="text-xs text-secondary-foreground">{time}</span>
+          </summary>
+          <SafeMarkdown content={reasoningContent} className="text-sm text-muted-foreground mt-2" />
+        </details>
+      );
+    }
+
     case "token": {
       // Display the model's text response with safe markdown rendering
       if (!event.content) return null;

@@ -211,6 +211,12 @@ describe("createChildSessionsHandler", () => {
     ]);
     repository.listEvents.mockReturnValue([
       createEvent({ id: "e1", type: "token", data: '{"token":"x"}', created_at: 9 }),
+      createEvent({
+        id: "e1b",
+        type: "reasoning",
+        data: '{"content":"private chain of thought"}',
+        created_at: 8,
+      }),
       createEvent({ id: "e2", type: "error", data: '{"message":"boom"}', created_at: 8 }),
       createEvent({ id: "e3", type: "heartbeat", data: '{"ok":true}', created_at: 7 }),
       createEvent({ id: "e4", type: "git_sync", data: '{"state":"done"}', created_at: 6 }),

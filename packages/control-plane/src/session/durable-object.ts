@@ -11,6 +11,7 @@ import { DurableObject } from "cloudflare:workers";
 import { initSchema } from "./schema";
 import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
+import { injectLinearAppToken } from "./linear-app-token";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
 import { buildModalSandboxUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
@@ -1718,15 +1719,34 @@ export class SessionDO extends DurableObject<Env> {
       return undefined;
     }
 
+    const merged = await this.loadUserSecrets(session);
+
+    // Inject a fresh Linear app-actor token so the agent can read/write Linear
+    // as the app. This comes from the linear-bot, not the user-secrets store, so
+    // it must run even when that store is unconfigured. A user-provided
+    // LINEAR_API_KEY secret (from the merge above) always wins.
+    await injectLinearAppToken(this.env, merged, this.log);
+
+    return Object.keys(merged).length === 0 ? undefined : merged;
+  }
+
+  /**
+   * Load and merge the user-provided secrets (global + per-repo) for a sandbox.
+   *
+   * Returns an empty object when the secrets store isn't configured (no `DB` or
+   * `REPO_SECRETS_ENCRYPTION_KEY`); callers may still add env vars sourced
+   * elsewhere (e.g. the Linear app-actor token). Fails hard on decryption
+   * errors — sandboxes must not silently lose secrets.
+   */
+  private async loadUserSecrets(session: SessionRow): Promise<Record<string, string>> {
     if (!this.env.DB || !this.env.REPO_SECRETS_ENCRYPTION_KEY) {
       this.log.debug("Secrets not configured, skipping", {
         has_db: !!this.env.DB,
         has_encryption_key: !!this.env.REPO_SECRETS_ENCRYPTION_KEY,
       });
-      return undefined;
+      return {};
     }
 
-    // Fail hard on secret loading — sandboxes must not silently lose secrets
     const globalStore = new GlobalSecretsStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
     const globalSecrets = await globalStore.getDecryptedSecrets();
 
@@ -1736,22 +1756,20 @@ export class SessionDO extends DurableObject<Env> {
 
     // Merge: repo overrides global
     const { merged, totalBytes, exceedsLimit } = mergeSecrets(globalSecrets, repoSecrets);
-    const globalCount = Object.keys(globalSecrets).length;
-    const repoCount = Object.keys(repoSecrets).length;
     const mergedCount = Object.keys(merged).length;
 
     if (mergedCount > 0) {
       const logLevel = exceedsLimit ? "warn" : "info";
       this.log[logLevel]("Secrets merged for sandbox", {
-        global_count: globalCount,
-        repo_count: repoCount,
+        global_count: Object.keys(globalSecrets).length,
+        repo_count: Object.keys(repoSecrets).length,
         merged_count: mergedCount,
         payload_bytes: totalBytes,
         exceeds_limit: exceedsLimit,
       });
     }
 
-    return mergedCount === 0 ? undefined : merged;
+    return merged;
   }
 
   /**

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SELF, env } from "cloudflare:test";
 import { generateInternalToken } from "../../src/auth/internal";
-import { RepoImageStore } from "../../src/db/repo-images";
+import { CURRENT_REPO_IMAGE_SANDBOX_VERSION, RepoImageStore } from "../../src/db/repo-images";
 import { RepoMetadataStore } from "../../src/db/repo-metadata";
 import { cleanD1Tables } from "./cleanup";
 
@@ -33,6 +33,7 @@ describe("D1 RepoImageStore", () => {
       base_branch: "main",
       provider_image_id: "",
       base_sha: "",
+      sandbox_version: "",
     });
     expect(status[0].created_at).toBeGreaterThan(0);
   });
@@ -53,6 +54,7 @@ describe("D1 RepoImageStore", () => {
     expect(ready).not.toBeNull();
     expect(ready!.provider_image_id).toBe("modal-img-abc");
     expect(ready!.base_sha).toBe("abc123");
+    expect(ready!.sandbox_version).toBe(CURRENT_REPO_IMAGE_SANDBOX_VERSION);
     expect(ready!.build_duration_seconds).toBe(42.5);
     expect(ready!.status).toBe("ready");
   });
@@ -304,6 +306,7 @@ describe("Repo image HTTP routes", () => {
         build_id: "img-test-1",
         provider_image_id: "modal-img-xyz",
         base_sha: "abc123",
+        sandbox_version: CURRENT_REPO_IMAGE_SANDBOX_VERSION,
         build_duration_seconds: 45.5,
       }),
     });
@@ -316,6 +319,7 @@ describe("Repo image HTTP routes", () => {
     const ready = await store.getLatestReady("acme", "repo");
     expect(ready).not.toBeNull();
     expect(ready!.provider_image_id).toBe("modal-img-xyz");
+    expect(ready!.sandbox_version).toBe(CURRENT_REPO_IMAGE_SANDBOX_VERSION);
   });
 
   it("POST /repo-images/build-failed marks build as failed", async () => {
@@ -528,6 +532,7 @@ describe("Repo image HTTP routes", () => {
         build_id: "img-flow-1",
         provider_image_id: "modal-img-flow",
         base_sha: "flow-sha-123",
+        sandbox_version: CURRENT_REPO_IMAGE_SANDBOX_VERSION,
         build_duration_seconds: 55.5,
       }),
     });
@@ -542,11 +547,17 @@ describe("Repo image HTTP routes", () => {
     );
     expect(statusResponse.status).toBe(200);
     const statusBody = await statusResponse.json<{
-      images: Array<{ id: string; status: string; provider_image_id: string }>;
+      images: Array<{
+        id: string;
+        status: string;
+        provider_image_id: string;
+        sandbox_version: string;
+      }>;
     }>();
     const readyImage = statusBody.images.find((img) => img.id === "img-flow-1");
     expect(readyImage).toBeDefined();
     expect(readyImage!.status).toBe("ready");
     expect(readyImage!.provider_image_id).toBe("modal-img-flow");
+    expect(readyImage!.sandbox_version).toBe(CURRENT_REPO_IMAGE_SANDBOX_VERSION);
   });
 });

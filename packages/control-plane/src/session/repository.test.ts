@@ -647,6 +647,39 @@ describe("SessionRepository", () => {
     });
   });
 
+  describe("upsertReasoningEvent", () => {
+    const base = {
+      type: "reasoning" as const,
+      content: "thinking",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1,
+    };
+
+    it("keys reasoning by message and block id", () => {
+      repo.upsertReasoningEvent("msg-1", { ...base, blockId: "prt-7" }, 1000);
+
+      expect(mock.calls[0].query).toContain("INSERT INTO events");
+      expect(mock.calls[0].query).toContain("ON CONFLICT(id) DO UPDATE SET");
+      expect(mock.calls[0].params[0]).toBe("reasoning:msg-1:prt-7");
+      expect(mock.calls[0].params[1]).toBe("reasoning");
+    });
+
+    it("uses distinct ids for different blocks of the same message", () => {
+      repo.upsertReasoningEvent("msg-1", { ...base, blockId: "prt-1" }, 1000);
+      repo.upsertReasoningEvent("msg-1", { ...base, blockId: "prt-2" }, 2000);
+
+      expect(mock.calls[0].params[0]).toBe("reasoning:msg-1:prt-1");
+      expect(mock.calls[1].params[0]).toBe("reasoning:msg-1:prt-2");
+    });
+
+    it("falls back to a stable id when blockId is absent", () => {
+      repo.upsertReasoningEvent("msg-1", base, 1000);
+
+      expect(mock.calls[0].params[0]).toBe("reasoning:msg-1:0");
+    });
+  });
+
   describe("upsertExecutionCompleteEvent", () => {
     it("upserts completion event by deterministic message key", () => {
       const event = {

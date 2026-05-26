@@ -130,6 +130,14 @@ export class SessionSandboxEventProcessor {
       return;
     }
 
+    if (event.type === "reasoning") {
+      if (messageId) {
+        this.deps.repository.upsertReasoningEvent(messageId, event, now);
+      }
+      this.deps.broadcast({ type: "sandbox_event", event });
+      return;
+    }
+
     if (event.type === "step_start" || event.type === "step_finish") {
       this.deps.updateLastActivity(now);
       if (

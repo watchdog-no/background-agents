@@ -11,6 +11,7 @@ import pytest
 from sandbox_runtime.auth.internal import generate_internal_token, verify_internal_token
 from src.sandbox.manager import SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS
 from src.scheduler.image_builder import (
+    CACHE_BUSTER,
     CALLBACK_BACKOFF_BASE,
     CALLBACK_MAX_RETRIES,
     BuildError,
@@ -405,6 +406,7 @@ class TestBuildRepoImage:
         assert callback_payload["build_id"] == "img-1"
         assert callback_payload["provider_image_id"] == "im-test"
         assert callback_payload["base_sha"] == "abc123"
+        assert callback_payload["sandbox_version"] == CACHE_BUSTER
 
     @pytest.mark.asyncio
     async def test_terminates_and_reports_failure_when_snapshot_times_out(self):

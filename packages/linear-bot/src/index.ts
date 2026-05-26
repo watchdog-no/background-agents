@@ -6,10 +6,12 @@
  */
 
 import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import type { Env, UserPreferences, AgentSessionWebhook } from "./types";
 import {
   buildOAuthAuthorizeUrl,
   exchangeCodeForToken,
+  getAppActorToken,
   verifyLinearWebhook,
 } from "./utils/linear-client";
 import { callbacksRouter } from "./callbacks";
@@ -177,14 +179,30 @@ app.post("/webhook", async (c) => {
   return c.json({ ok: true, skipped: true, reason: `unhandled event type: ${eventType}` });
 });
 
-// ─── Config Auth Middleware ───────────────────────────────────────────────────
+// ─── Internal Auth Middleware ─────────────────────────────────────────────────
 
-app.use("/config/*", async (c, next) => {
+// Both /config/* and /internal/* are service-to-service only, authenticated with
+// the shared INTERNAL_CALLBACK_SECRET (HMAC bearer token).
+const internalAuthMiddleware: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const secret = c.env.INTERNAL_CALLBACK_SECRET;
   if (!secret) return c.json({ error: "Auth not configured" }, 500);
   const isValid = await verifyInternalToken(c.req.header("Authorization") ?? null, secret);
   if (!isValid) return c.json({ error: "Unauthorized" }, 401);
   return next();
+};
+
+app.use("/config/*", internalAuthMiddleware);
+app.use("/internal/*", internalAuthMiddleware);
+
+// ─── Internal Endpoints ───────────────────────────────────────────────────────
+
+// Mint a fresh app-actor access token for the control plane to inject into
+// sandboxes. The token is short-lived (~24h) and refreshed on demand, so it is
+// fetched per sandbox spawn rather than stored as a static secret.
+app.get("/internal/app-token", async (c) => {
+  const accessToken = await getAppActorToken(c.env);
+  if (!accessToken) return c.json({ error: "no_authorized_workspace" }, 404);
+  return c.json({ accessToken });
 });
 
 // ─── Config Endpoints ────────────────────────────────────────────────────────

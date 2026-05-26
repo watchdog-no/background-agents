@@ -5,12 +5,15 @@ export interface RepoImageBuild {
   baseBranch: string;
 }
 
+export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v54-linear-cli";
+
 export interface RepoImage {
   id: string;
   repo_owner: string;
   repo_name: string;
   provider_image_id: string;
   base_sha: string;
+  sandbox_version: string;
   base_branch: string;
   status: "building" | "ready" | "failed";
   build_duration_seconds: number | null;
@@ -42,7 +45,8 @@ export class RepoImageStore {
     buildId: string,
     providerImageId: string,
     baseSha: string,
-    buildDurationSeconds: number
+    buildDurationSeconds: number,
+    sandboxVersion: string = CURRENT_REPO_IMAGE_SANDBOX_VERSION
   ): Promise<{ replacedImageId: string | null }> {
     const build = await this.db
       .prepare("SELECT repo_owner, repo_name, base_branch FROM repo_images WHERE id = ?")
@@ -53,17 +57,17 @@ export class RepoImageStore {
 
     const oldReady = await this.db
       .prepare(
-        "SELECT id, provider_image_id FROM repo_images WHERE repo_owner = ? AND repo_name = ? AND base_branch = ? AND status = 'ready'"
+        "SELECT id, provider_image_id FROM repo_images WHERE repo_owner = ? AND repo_name = ? AND base_branch = ? AND status = 'ready' AND sandbox_version = ?"
       )
-      .bind(build.repo_owner, build.repo_name, build.base_branch)
+      .bind(build.repo_owner, build.repo_name, build.base_branch, sandboxVersion)
       .first<{ id: string; provider_image_id: string }>();
 
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
-          "UPDATE repo_images SET status = 'ready', provider_image_id = ?, base_sha = ?, build_duration_seconds = ? WHERE id = ?"
+          "UPDATE repo_images SET status = 'ready', provider_image_id = ?, base_sha = ?, build_duration_seconds = ?, sandbox_version = ? WHERE id = ?"
         )
-        .bind(providerImageId, baseSha, buildDurationSeconds, buildId),
+        .bind(providerImageId, baseSha, buildDurationSeconds, sandboxVersion, buildId),
     ];
 
     if (oldReady) {
@@ -93,10 +97,15 @@ export class RepoImageStore {
           `SELECT ri.* FROM repo_images ri
            INNER JOIN repo_metadata rm ON ri.repo_owner = rm.repo_owner AND ri.repo_name = rm.repo_name
            WHERE ri.repo_owner = ? AND ri.repo_name = ? AND ri.base_branch = ? AND ri.status = 'ready'
-           AND rm.image_build_enabled = 1
+           AND rm.image_build_enabled = 1 AND ri.sandbox_version = ?
            ORDER BY ri.created_at DESC LIMIT 1`
         )
-        .bind(repoOwner.toLowerCase(), repoName.toLowerCase(), baseBranch)
+        .bind(
+          repoOwner.toLowerCase(),
+          repoName.toLowerCase(),
+          baseBranch,
+          CURRENT_REPO_IMAGE_SANDBOX_VERSION
+        )
         .first<RepoImage>();
     }
     return this.db
@@ -104,10 +113,10 @@ export class RepoImageStore {
         `SELECT ri.* FROM repo_images ri
          INNER JOIN repo_metadata rm ON ri.repo_owner = rm.repo_owner AND ri.repo_name = rm.repo_name
          WHERE ri.repo_owner = ? AND ri.repo_name = ? AND ri.status = 'ready'
-         AND rm.image_build_enabled = 1
+         AND rm.image_build_enabled = 1 AND ri.sandbox_version = ?
          ORDER BY ri.created_at DESC LIMIT 1`
       )
-      .bind(repoOwner.toLowerCase(), repoName.toLowerCase())
+      .bind(repoOwner.toLowerCase(), repoName.toLowerCase(), CURRENT_REPO_IMAGE_SANDBOX_VERSION)
       .first<RepoImage>();
   }
 

@@ -60,6 +60,7 @@ async function handleBuildComplete(
     build_id?: string;
     provider_image_id?: string;
     base_sha?: string;
+    sandbox_version?: string;
     build_duration_seconds?: number;
   }>(request);
   if (body instanceof Response) return body;
@@ -67,6 +68,7 @@ async function handleBuildComplete(
   const buildId = body.build_id;
   const providerImageId = body.provider_image_id;
   const baseSha = body.base_sha;
+  const sandboxVersion = body.sandbox_version ?? "";
   const buildDurationSeconds = body.build_duration_seconds;
 
   if (!buildId || !providerImageId) {
@@ -80,13 +82,15 @@ async function handleBuildComplete(
       buildId,
       providerImageId,
       baseSha || "",
-      buildDurationSeconds ?? 0
+      buildDurationSeconds ?? 0,
+      sandboxVersion
     );
 
     logger.info("repo_image.build_complete", {
       build_id: buildId,
       provider_image_id: providerImageId,
       base_sha: baseSha,
+      sandbox_version: sandboxVersion,
       replaced_image_id: result.replacedImageId,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,

@@ -1486,6 +1486,40 @@ class TestFetchFinalMessageState:
         assert len(events) == 0
 
     @pytest.mark.asyncio
+    async def test_skips_child_session_reasoning(self, bridge_with_mock_client: AgentBridge):
+        """Child-session reasoning must not be replayed as the parent's in final state."""
+        bridge = bridge_with_mock_client
+
+        all_messages = [
+            {
+                "info": {
+                    "id": "oc-msg-child",
+                    "role": "assistant",
+                    "parentID": "msg_0002bbbbbb",
+                    "sessionID": "child-session-xyz",
+                },
+                "parts": [{"id": "rpart-1", "type": "reasoning", "text": "child thinking"}],
+            },
+            {
+                "info": {
+                    "id": "oc-msg-parent",
+                    "role": "assistant",
+                    "parentID": "msg_0002bbbbbb",
+                    "sessionID": "oc-session-123",
+                },
+                "parts": [{"id": "rpart-2", "type": "reasoning", "text": "parent thinking"}],
+            },
+        ]
+        bridge.http_client.get = AsyncMock(return_value=MockResponse(200, all_messages))
+
+        result = await bridge._fetch_final_message_state("cp-msg-2", "msg_0002bbbbbb", {})
+        reasoning = [e for e in result.events if e["type"] == "reasoning"]
+
+        assert len(reasoning) == 1
+        assert reasoning[0]["content"] == "parent thinking"
+        assert reasoning[0]["blockId"] == "rpart-2"
+
+    @pytest.mark.asyncio
     async def test_skips_text_already_sent(self, bridge_with_mock_client: AgentBridge):
         """Should skip text that's not longer than what was already sent."""
         bridge = bridge_with_mock_client
