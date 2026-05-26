@@ -289,8 +289,13 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
 
     // Track current context-window usage from each step's input tokens.
     // This is the full prompt size for the call, not a per-turn delta, so
-    // replace (don't accumulate); it drops after a compaction.
-    if (event.type === "step_finish" && typeof event.tokens?.input === "number") {
+    // replace (don't accumulate); it drops after a compaction. Ignore subtask
+    // (child-session) steps so a sub-agent can't overwrite the parent's count.
+    if (
+      event.type === "step_finish" &&
+      !event.isSubtask &&
+      typeof event.tokens?.input === "number"
+    ) {
       const contextTokens = event.tokens.input;
       setSessionState((prev) => (prev ? { ...prev, contextTokens } : prev));
     }

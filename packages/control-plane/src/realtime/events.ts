@@ -29,6 +29,8 @@ export function getEventCategory(eventType: string): EventCategory {
       return "git";
     case "artifact":
       return "artifact";
+    case "compaction":
+      return "system";
     default:
       return "system";
   }

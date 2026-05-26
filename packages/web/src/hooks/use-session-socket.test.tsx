@@ -444,6 +444,81 @@ describe("useSessionSocket", () => {
     });
   });
 
+  it("ignores subtask and token-less steps, and reflects the post-compaction drop", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 18000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(18000);
+    });
+
+    act(() => {
+      // A child-session (subtask) step must not overwrite the parent's count.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+          isSubtask: true,
+          tokens: { input: 50000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      // A step without token usage must preserve the previous value.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 12,
+          cost: 0.01,
+        },
+      });
+    });
+    // Neither should have changed it.
+    expect(result.current.sessionState?.contextTokens).toBe(18000);
+
+    act(() => {
+      // After a compaction the next step reports a smaller input — value drops.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 13,
+          tokens: { input: 9000, output: 50, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(9000);
+    });
+  });
+
   it("collapses replayed accumulated token snapshots to the final assistant text", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 

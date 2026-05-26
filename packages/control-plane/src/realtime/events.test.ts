@@ -26,6 +26,10 @@ describe("event utilities", () => {
       expect(getEventCategory("unknown_event")).toBe("system");
       expect(getEventCategory("")).toBe("system");
     });
+
+    it("categorizes compaction as a system event", () => {
+      expect(getEventCategory("compaction")).toBe("system");
+    });
   });
 });
 

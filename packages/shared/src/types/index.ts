@@ -205,9 +205,12 @@ export interface PullRequest {
  */
 export interface TokenUsage {
   input: number;
-  output: number;
-  reasoning: number;
-  cache: { read: number; write: number };
+  // The runtime forwards provider usage verbatim and omits fields the provider
+  // doesn't report, so only `input` (used for context-window tracking) is
+  // guaranteed.
+  output?: number;
+  reasoning?: number;
+  cache?: { read: number; write: number };
 }
 
 // Sandbox events (from Modal / control-plane synthesized)

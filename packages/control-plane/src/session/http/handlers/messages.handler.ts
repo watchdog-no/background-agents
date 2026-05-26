@@ -14,6 +14,7 @@ const VALID_EVENT_TYPES = [
   "step_start",
   "step_finish",
   "execution_complete",
+  "compaction",
   "heartbeat",
   "push_complete",
   "push_error",

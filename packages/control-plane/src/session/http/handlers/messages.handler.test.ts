@@ -87,6 +87,18 @@ describe("createMessagesHandler", () => {
     expect(await response.json()).toEqual({ error: "Invalid event type: invalid" });
   });
 
+  it("accepts compaction as a valid event type filter", async () => {
+    const { handler, messageService } = createHandler();
+    vi.mocked(messageService.listEvents).mockReturnValue({
+      events: [],
+      cursor: undefined,
+      hasMore: false,
+    });
+
+    const response = handler.listEvents(new URL("http://internal/internal/events?type=compaction"));
+    expect(response.status).toBe(200);
+  });
+
   it("maps listEvents response", async () => {
     const { handler, messageService } = createHandler();
     vi.mocked(messageService.listEvents).mockReturnValue({
