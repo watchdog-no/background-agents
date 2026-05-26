@@ -119,11 +119,13 @@ describe("getAppActorToken", () => {
     expect(await getAppActorToken(env)).toBe("tok-abc");
   });
 
-  it("picks the first token when multiple workspaces exist", async () => {
+  it("fails closed when multiple workspace tokens exist", async () => {
+    // Ambiguous multi-tenant state: guessing a workspace could authenticate the
+    // sandbox to the wrong tenant, so the token resolves to null instead.
     const env = makeEnv({
       "oauth:token:org-1": freshToken("tok-1"),
       "oauth:token:org-2": freshToken("tok-2"),
     });
-    expect(await getAppActorToken(env)).toBe("tok-1");
+    expect(await getAppActorToken(env)).toBeNull();
   });
 });
