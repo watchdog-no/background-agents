@@ -99,6 +99,18 @@ describe("createMessagesHandler", () => {
     expect(response.status).toBe(200);
   });
 
+  it("accepts reasoning as a valid event type filter", async () => {
+    const { handler, messageService } = createHandler();
+    vi.mocked(messageService.listEvents).mockReturnValue({
+      events: [],
+      cursor: undefined,
+      hasMore: false,
+    });
+
+    const response = handler.listEvents(new URL("http://internal/internal/events?type=reasoning"));
+    expect(response.status).toBe(200);
+  });
+
   it("maps listEvents response", async () => {
     const { handler, messageService } = createHandler();
     vi.mocked(messageService.listEvents).mockReturnValue({

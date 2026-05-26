@@ -215,7 +215,7 @@ class AgentBridge:
 
         # Effective model context window, fetched from OpenCode's provider config
         # and attached to step_finish events as the context-usage gauge denominator.
-        # Cached per model id; `_current_context_limit` holds the active prompt's value.
+        # Cached per provider/model id; `_current_context_limit` holds the active prompt's value.
         self._context_limit_cache: dict[str, int] = {}
         self._current_context_limit: int | None = None
 
@@ -722,16 +722,17 @@ class AgentBridge:
 
         Used as the denominator for the context-usage gauge ("distance to
         compaction"). This is intentionally the limit OpenCode itself compacts
-        against, not the model's headline window. Cached per model id; returns
-        None on any failure, in which case the UI shows usage without a cap.
+        against, not the model's headline window. Cached per provider/model id;
+        returns None on any failure, in which case the UI shows usage without a cap.
         """
         if not model or not self.http_client:
             return None
         provider_id, _, model_id = model.partition("/")
         if not model_id:
             provider_id, model_id = "anthropic", model
-        if model_id in self._context_limit_cache:
-            return self._context_limit_cache[model_id]
+        cache_key = f"{provider_id}/{model_id}"
+        if cache_key in self._context_limit_cache:
+            return self._context_limit_cache[cache_key]
         try:
             resp = await self.http_client.get(
                 f"{self.opencode_base_url}/config/providers",
@@ -742,14 +743,24 @@ class AgentBridge:
             data = resp.json()
             providers = data.get("providers") if isinstance(data, dict) else data
             if isinstance(providers, dict):
-                providers = list(providers.values())
-            for provider in providers or []:
-                if provider.get("id") != provider_id:
+                provider_entries = [
+                    (provider_key, provider)
+                    for provider_key, provider in providers.items()
+                    if isinstance(provider, dict)
+                ]
+            else:
+                provider_entries = [
+                    (provider.get("id"), provider)
+                    for provider in providers or []
+                    if isinstance(provider, dict)
+                ]
+            for provider_key, provider in provider_entries:
+                if (provider.get("id") or provider_key) != provider_id:
                     continue
                 model_def = (provider.get("models") or {}).get(model_id) or {}
                 limit = (model_def.get("limit") or {}).get("context")
                 if isinstance(limit, int) and limit > 0:
-                    self._context_limit_cache[model_id] = limit
+                    self._context_limit_cache[cache_key] = limit
                     return limit
         except Exception as e:
             self.log.debug("bridge.context_limit_fetch_failed", exc=e)

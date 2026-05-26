@@ -211,7 +211,7 @@ export interface TokenUsage {
   // doesn't report, so only `input` is guaranteed.
   output?: number;
   reasoning?: number;
-  cache?: { read: number; write: number };
+  cache?: { read?: number; write?: number };
 }
 
 /**

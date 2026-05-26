@@ -24,5 +24,6 @@ describe("contextTokensFromUsage", () => {
 
   it("tolerates missing optional fields", () => {
     expect(contextTokensFromUsage({ input: 500 })).toBe(500);
+    expect(contextTokensFromUsage({ input: 500, cache: { read: 250 } })).toBe(750);
   });
 });

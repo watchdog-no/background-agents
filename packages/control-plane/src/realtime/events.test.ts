@@ -5,6 +5,7 @@ describe("event utilities", () => {
   describe("getEventCategory", () => {
     it("categorizes execution events", () => {
       expect(getEventCategory("token")).toBe("execution");
+      expect(getEventCategory("reasoning")).toBe("execution");
       expect(getEventCategory("step_start")).toBe("execution");
       expect(getEventCategory("step_finish")).toBe("execution");
       expect(getEventCategory("tool_call")).toBe("execution");

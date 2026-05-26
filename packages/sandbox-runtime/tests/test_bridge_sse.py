@@ -259,6 +259,53 @@ class TestSSEStreaming:
         assert not [e for e in events if e["type"] == "compaction"]
 
     @pytest.mark.asyncio
+    async def test_resolve_context_limit_from_provider_map_without_id(self, bridge: AgentBridge):
+        """Provider config may be keyed by id without repeating id inside each provider."""
+        http_client = bridge.http_client
+        http_client.get_responses = [
+            MockResponse(
+                200,
+                {
+                    "providers": {
+                        "anthropic": {
+                            "models": {
+                                "claude-sonnet-4-5": {"limit": {"context": 200000}},
+                            }
+                        }
+                    }
+                },
+            )
+        ]
+
+        limit = await bridge._resolve_context_limit("anthropic/claude-sonnet-4-5")
+
+        assert limit == 200000
+
+    @pytest.mark.asyncio
+    async def test_context_limit_cache_is_scoped_by_provider(self, bridge: AgentBridge):
+        """Same model ids from different providers can have different context windows."""
+        http_client = bridge.http_client
+        http_client.get_responses = [
+            MockResponse(
+                200,
+                [{"id": "anthropic", "models": {"shared-model": {"limit": {"context": 100000}}}}],
+            ),
+            MockResponse(
+                200,
+                [{"id": "openai", "models": {"shared-model": {"limit": {"context": 200000}}}}],
+            ),
+        ]
+
+        anthropic_limit = await bridge._resolve_context_limit("anthropic/shared-model")
+        openai_limit = await bridge._resolve_context_limit("openai/shared-model")
+        cached_anthropic_limit = await bridge._resolve_context_limit("anthropic/shared-model")
+
+        assert anthropic_limit == 100000
+        assert openai_limit == 200000
+        assert cached_anthropic_limit == 100000
+        assert http_client._get_call_count == 2
+
+    @pytest.mark.asyncio
     async def test_text_streaming_with_part_delta_event(
         self, bridge: AgentBridge, opencode_message_id: str
     ):
