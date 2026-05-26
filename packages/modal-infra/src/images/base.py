@@ -17,6 +17,8 @@ import modal
 
 import sandbox_runtime
 
+from .version import CACHE_BUSTER
+
 # Get the path to the sandbox runtime code (provider-agnostic)
 SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 
@@ -39,15 +41,14 @@ TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
 # linear-cli version to install (pinned for reproducible images).
 # Gives the agent read/write access to Linear via the `linear` CLI, paired with
-# the linear-cli Skill. Authenticates from the LINEAR_API_KEY env var injected
-# as a user secret — no CLI tool schemas in the agent's request context.
+# the linear-cli Skill. Authenticates from LINEAR_API_KEY, populated per spawn
+# from the Linear app-actor token when available or from a user secret fallback.
 LINEAR_CLI_VERSION = "2.0.0"
 
 # Cache buster - change this to force Modal image rebuild
 # v52: git credential helper backed by control plane; remove embedded VCS tokens
 # v53: upgrade OpenCode to 1.15.10 after the SSE event subscription fix
 # v54: install schpet/linear-cli for agent-side Linear access
-CACHE_BUSTER = "v54-linear-cli"
 
 # Base image with all development tools
 base_image = (

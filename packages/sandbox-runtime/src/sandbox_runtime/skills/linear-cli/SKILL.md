@@ -68,15 +68,15 @@ linear project list
 
 Notes:
 
-- `issue list` (alias `mine`) defaults to **your own unstarted** issues. For general lookups use
-  `issue query`, which defaults to all states and supports `--all-teams`.
+- `issue list` (alias `mine`) is user-centric and may be empty under app-actor auth. For general
+  lookups use `issue query`, which defaults to all states and supports `--all-teams`.
 - `--search` and `--sort` can't be combined; with `--search`, results are relevance-ordered.
 
 ## Writing
 
 Use **file-based flags** (`--description-file`, `--body-file`) for any markdown body — they avoid
-shell-escaping mangling of newlines, backticks, and quotes. Always pass `--no-interactive` on
-`create` so it never blocks on a prompt in the headless sandbox.
+shell-escaping mangling of newlines, backticks, and quotes. Always pass `--no-interactive` on write
+commands that support it so they never block on prompts in the headless sandbox.
 
 ```bash
 # Create an issue (write the body to a temp file first)
@@ -92,14 +92,14 @@ linear issue create \
 # add --assignee self, --priority 2, --label bug, --project "...", --state "Todo" as needed
 
 # Update an existing issue (state accepts a workflow-state name or type)
-linear issue update WD-123 --state "In Progress"
-linear issue update WD-123 --assignee self --priority 2
+linear issue update WD-123 --state "In Progress" --no-interactive
+linear issue update WD-123 --assignee self --priority 2 --no-interactive
 
 # Comment on an issue (body from a file)
 cat > /tmp/comment.md <<'EOF'
 Opened PR with the fix; see linked branch.
 EOF
-linear issue comment add WD-123 --body-file /tmp/comment.md
+linear issue comment add WD-123 --body-file /tmp/comment.md --no-interactive
 # reply to a comment with --parent <commentId>; attach a file with --attach <path>
 ```
 

@@ -16,7 +16,7 @@ The build flow:
 The scheduler flow:
 1. Every 30 min, fetch enabled repos and current image status from control plane
 2. For each enabled repo, git ls-remote to get HEAD SHA
-3. If SHA differs from latest ready image, trigger a build
+3. If SHA or sandbox toolchain version differs from latest ready image, trigger a build
 4. Mark stale builds as failed, clean up old failed rows
 """
 
@@ -38,6 +38,7 @@ from ..app import (
     validate_control_plane_url,
 )
 from ..auth import generate_internal_token
+from ..images.version import CACHE_BUSTER
 from ..log_config import get_logger
 
 log = get_logger("image_builder")
@@ -322,6 +323,7 @@ async def build_repo_image(
             build_id=build_id,
             provider_image_id=provider_image_id,
             base_sha=base_sha,
+            sandbox_version=CACHE_BUSTER,
             build_duration_s=round(build_duration, 1),
         )
 
@@ -333,6 +335,7 @@ async def build_repo_image(
                     "build_id": build_id,
                     "provider_image_id": provider_image_id,
                     "base_sha": base_sha,
+                    "sandbox_version": CACHE_BUSTER,
                     "build_duration_seconds": round(build_duration, 2),
                 },
             )
@@ -475,7 +478,8 @@ def _should_rebuild(
     """
     Determine if a repo needs a rebuild based on current image status.
 
-    Returns True if a build should be triggered.
+    Returns True if a build should be triggered because the repo SHA changed,
+    no ready image exists, or the ready image predates the current toolchain.
     """
     owner_lower = repo_owner.lower()
     name_lower = repo_name.lower()
@@ -510,8 +514,20 @@ def _should_rebuild(
         )
         return True
 
-    # Compare SHA
-    latest_ready = ready[0]  # getAllStatus returns ordered by created_at DESC
+    # Compare against the latest image built with the current sandbox toolchain.
+    current_ready = [img for img in ready if img.get("sandbox_version", "") == CACHE_BUSTER]
+    if not current_ready:
+        latest_ready = ready[0]  # getAllStatus returns ordered by created_at DESC
+        log.info(
+            "scheduler.sandbox_version_mismatch",
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ready_sandbox_version=latest_ready.get("sandbox_version", ""),
+            required_sandbox_version=CACHE_BUSTER,
+        )
+        return True
+
+    latest_ready = current_ready[0]
     if latest_ready.get("base_sha") != remote_sha:
         log.info(
             "scheduler.sha_mismatch",

@@ -14,10 +14,12 @@ from daytona import CreateSnapshotParams, Daytona, Image
 OPENCODE_VERSION = "1.15.10"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
+LINEAR_CLI_VERSION = "2.0.0"
 # Bump when changing image contents to invalidate the Daytona snapshot.
 # daytona-v2: install the SCM credential-helper shim and configure
 # git system-wide so per-request token brokerage works (parity with Modal v52).
-SANDBOX_VERSION = "daytona-v2-credential-helper"
+# daytona-v3: install schpet/linear-cli for agent-side Linear access.
+SANDBOX_VERSION = "daytona-v3-linear-cli"
 
 
 def build_base_image(repo_root: Path) -> Image:
@@ -64,6 +66,7 @@ def build_base_image(repo_root: Path) -> Image:
             "rm /tmp/code-server.deb",
             f"npm install -g agent-browser@{AGENT_BROWSER_VERSION}",
             "agent-browser install",
+            f"npm install -g @schpet/linear-cli@{LINEAR_CLI_VERSION}",
             "mkdir -p /workspace /app /tmp/opencode",
             # Install the SCM credential-helper shim and configure git
             # system-wide. The shim delegates to the Python helper module

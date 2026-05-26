@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RepoImageStore } from "./repo-images";
+import { CURRENT_REPO_IMAGE_SANDBOX_VERSION, RepoImageStore } from "./repo-images";
 
 type RepoImageRow = {
   id: string;
@@ -7,6 +7,7 @@ type RepoImageRow = {
   repo_name: string;
   provider_image_id: string;
   base_sha: string;
+  sandbox_version: string;
   base_branch: string;
   status: string;
   build_duration_seconds: number | null;
@@ -18,15 +19,15 @@ const QUERY_PATTERNS = {
   INSERT_BUILD: /^INSERT INTO repo_images/,
   SELECT_BY_ID: /^SELECT repo_owner, repo_name, base_branch FROM repo_images WHERE id = \?$/,
   SELECT_READY_FOR_REPO:
-    /^SELECT id, provider_image_id FROM repo_images WHERE repo_owner = \? AND repo_name = \? AND base_branch = \? AND status = 'ready'$/,
+    /^SELECT id, provider_image_id FROM repo_images WHERE repo_owner = \? AND repo_name = \? AND base_branch = \? AND status = 'ready' AND sandbox_version = \?$/,
   UPDATE_READY:
-    /^UPDATE repo_images SET status = 'ready', provider_image_id = \?, base_sha = \?, build_duration_seconds = \? WHERE id = \?$/,
+    /^UPDATE repo_images SET status = 'ready', provider_image_id = \?, base_sha = \?, build_duration_seconds = \?, sandbox_version = \? WHERE id = \?$/,
   DELETE_BY_ID: /^DELETE FROM repo_images WHERE id = \?$/,
   UPDATE_FAILED: /^UPDATE repo_images SET status = 'failed', error_message = \? WHERE id = \?$/,
   SELECT_LATEST_READY:
-    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 ORDER BY ri\.created_at DESC LIMIT 1$/,
+    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 AND ri\.sandbox_version = \? ORDER BY ri\.created_at DESC LIMIT 1$/,
   SELECT_LATEST_READY_WITH_BRANCH:
-    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.base_branch = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 ORDER BY ri\.created_at DESC LIMIT 1$/,
+    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.base_branch = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 AND ri\.sandbox_version = \? ORDER BY ri\.created_at DESC LIMIT 1$/,
   SELECT_STATUS:
     /^SELECT \* FROM repo_images WHERE repo_owner = \? AND repo_name = \? ORDER BY created_at DESC LIMIT 10$/,
   SELECT_ALL_STATUS: /^SELECT \* FROM repo_images ORDER BY created_at DESC LIMIT 100$/,
@@ -70,13 +71,14 @@ class FakeD1Database {
     }
 
     if (QUERY_PATTERNS.SELECT_READY_FOR_REPO.test(normalized)) {
-      const [owner, name, branch] = args as [string, string, string];
+      const [owner, name, branch, sandboxVersion] = args as [string, string, string, string];
       for (const row of this.rows.values()) {
         if (
           row.repo_owner === owner &&
           row.repo_name === name &&
           row.base_branch === branch &&
-          row.status === "ready"
+          row.status === "ready" &&
+          row.sandbox_version === sandboxVersion
         ) {
           return { id: row.id, provider_image_id: row.provider_image_id };
         }
@@ -85,7 +87,7 @@ class FakeD1Database {
     }
 
     if (QUERY_PATTERNS.SELECT_LATEST_READY_WITH_BRANCH.test(normalized)) {
-      const [owner, name, branch] = args as [string, string, string];
+      const [owner, name, branch, sandboxVersion] = args as [string, string, string, string];
       if (!this.isImageBuildEnabled(owner, name)) return null;
       let latest: RepoImageRow | null = null;
       for (const row of this.rows.values()) {
@@ -93,7 +95,8 @@ class FakeD1Database {
           row.repo_owner === owner &&
           row.repo_name === name &&
           row.base_branch === branch &&
-          row.status === "ready"
+          row.status === "ready" &&
+          row.sandbox_version === sandboxVersion
         ) {
           if (!latest || row.created_at > latest.created_at) {
             latest = row;
@@ -104,11 +107,16 @@ class FakeD1Database {
     }
 
     if (QUERY_PATTERNS.SELECT_LATEST_READY.test(normalized)) {
-      const [owner, name] = args as [string, string];
+      const [owner, name, sandboxVersion] = args as [string, string, string];
       if (!this.isImageBuildEnabled(owner, name)) return null;
       let latest: RepoImageRow | null = null;
       for (const row of this.rows.values()) {
-        if (row.repo_owner === owner && row.repo_name === name && row.status === "ready") {
+        if (
+          row.repo_owner === owner &&
+          row.repo_name === name &&
+          row.status === "ready" &&
+          row.sandbox_version === sandboxVersion
+        ) {
           if (!latest || row.created_at > latest.created_at) {
             latest = row;
           }
@@ -160,6 +168,7 @@ class FakeD1Database {
         provider_image_id: "",
         status: "building",
         base_sha: "",
+        sandbox_version: "",
         build_duration_seconds: null,
         error_message: null,
         created_at: createdAt,
@@ -168,10 +177,11 @@ class FakeD1Database {
     }
 
     if (QUERY_PATTERNS.UPDATE_READY.test(normalized)) {
-      const [providerImageId, baseSha, buildDuration, id] = args as [
+      const [providerImageId, baseSha, buildDuration, sandboxVersion, id] = args as [
         string,
         string,
         number,
+        string,
         string,
       ];
       const row = this.rows.get(id);
@@ -180,6 +190,7 @@ class FakeD1Database {
         row.provider_image_id = providerImageId;
         row.base_sha = baseSha;
         row.build_duration_seconds = buildDuration;
+        row.sandbox_version = sandboxVersion;
         return { meta: { changes: 1 } };
       }
       return { meta: { changes: 0 } };
@@ -296,6 +307,7 @@ describe("RepoImageStore", () => {
       expect(status[0].repo_name).toBe("repo");
       expect(status[0].provider_image_id).toBe("");
       expect(status[0].base_sha).toBe("");
+      expect(status[0].sandbox_version).toBe("");
     });
 
     it("normalizes owner and name to lowercase", async () => {
@@ -331,6 +343,7 @@ describe("RepoImageStore", () => {
       expect(ready).not.toBeNull();
       expect(ready!.provider_image_id).toBe("modal-img-abc");
       expect(ready!.base_sha).toBe("sha123");
+      expect(ready!.sandbox_version).toBe(CURRENT_REPO_IMAGE_SANDBOX_VERSION);
       expect(ready!.build_duration_seconds).toBe(45.2);
       expect(ready!.status).toBe("ready");
     });
@@ -361,6 +374,33 @@ describe("RepoImageStore", () => {
       expect(ready).not.toBeNull();
       expect(ready!.id).toBe("img-new");
       expect(ready!.provider_image_id).toBe("modal-img-new");
+    });
+
+    it("does not replace ready images built with another sandbox version", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-current",
+        repoOwner: "acme",
+        repoName: "repo",
+        baseBranch: "main",
+      });
+      await store.markReady("img-current", "modal-img-current", "sha-current", 30);
+
+      vi.advanceTimersByTime(1000);
+
+      await store.registerBuild({
+        id: "img-stale",
+        repoOwner: "acme",
+        repoName: "repo",
+        baseBranch: "main",
+      });
+      const result = await store.markReady("img-stale", "modal-img-stale", "sha-stale", 20, "");
+
+      expect(result.replacedImageId).toBeNull();
+      const ready = await store.getLatestReady("acme", "repo");
+      expect(ready).not.toBeNull();
+      expect(ready!.id).toBe("img-current");
+      expect(ready!.provider_image_id).toBe("modal-img-current");
     });
 
     it("returns null replacedImageId when no previous ready image", async () => {
@@ -432,6 +472,20 @@ describe("RepoImageStore", () => {
       expect(result).not.toBeNull();
       expect(result!.id).toBe("img-1");
       expect(result!.provider_image_id).toBe("modal-img-1");
+    });
+
+    it("ignores ready images from stale sandbox versions", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-old-version",
+        repoOwner: "acme",
+        repoName: "repo",
+        baseBranch: "main",
+      });
+      await store.markReady("img-old-version", "modal-img-old", "sha1", 30, "v53-old");
+
+      const result = await store.getLatestReady("acme", "repo");
+      expect(result).toBeNull();
     });
 
     it("returns null when image_build_enabled is false", async () => {
