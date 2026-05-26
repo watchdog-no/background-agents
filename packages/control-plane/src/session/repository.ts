@@ -26,8 +26,12 @@ import type {
 } from "../types";
 
 type TokenEvent = Extract<SandboxEvent, { type: "token" }>;
+type ReasoningEvent = Extract<SandboxEvent, { type: "reasoning" }>;
 type ExecutionCompleteEvent = Extract<SandboxEvent, { type: "execution_complete" }>;
-type UpsertableEventType = TokenEvent["type"] | ExecutionCompleteEvent["type"];
+type UpsertableEventType =
+  | TokenEvent["type"]
+  | ReasoningEvent["type"]
+  | ExecutionCompleteEvent["type"];
 
 /**
  * WS client mapping result for hibernation recovery.
@@ -728,6 +732,25 @@ export class SessionRepository {
 
   upsertTokenEvent(messageId: string, event: TokenEvent, createdAt: number): void {
     this.upsertEventByMessageId("token", messageId, event, createdAt);
+  }
+
+  upsertReasoningEvent(messageId: string, event: ReasoningEvent, createdAt: number): void {
+    // Key by block, not just message, so multiple reasoning blocks in one
+    // message are stored separately and all survive history replay.
+    const id = `reasoning:${messageId}:${event.blockId ?? "0"}`;
+    this.sql.exec(
+      `INSERT INTO events (id, type, data, message_id, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         data = excluded.data,
+         message_id = excluded.message_id,
+         created_at = excluded.created_at`,
+      id,
+      "reasoning",
+      JSON.stringify(event),
+      messageId,
+      createdAt
+    );
   }
 
   upsertExecutionCompleteEvent(

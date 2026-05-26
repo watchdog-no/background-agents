@@ -7,6 +7,7 @@ function createProcessor() {
     updateSandboxHeartbeat: vi.fn(),
     getProcessingMessage: vi.fn(() => null as { id: string } | null),
     upsertTokenEvent: vi.fn(),
+    upsertReasoningEvent: vi.fn(),
     createArtifact: vi.fn(),
     createEvent: vi.fn(),
     addSessionCost: vi.fn(),
@@ -103,6 +104,26 @@ describe("SessionSandboxEventProcessor", () => {
     await h.processor.processSandboxEvent(event);
 
     expect(h.repository.upsertTokenEvent).toHaveBeenCalledWith("msg-1", event, expect.any(Number));
+    expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
+  });
+
+  it("persists reasoning event and broadcasts it", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "reasoning",
+      content: "let me think",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.upsertReasoningEvent).toHaveBeenCalledWith(
+      "msg-1",
+      event,
+      expect.any(Number)
+    );
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
   });
 

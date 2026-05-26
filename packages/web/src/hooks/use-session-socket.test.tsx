@@ -528,6 +528,63 @@ describe("useSessionSocket", () => {
     });
   });
 
+  it("coalesces reasoning by block: same blockId replaces, new blockId appends", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    const reasoning = (content: string, blockId: string, timestamp: number) => ({
+      type: "sandbox_event" as const,
+      event: {
+        type: "reasoning" as const,
+        content,
+        messageId: "msg-1",
+        blockId,
+        sandboxId: "sandbox-1",
+        timestamp,
+      },
+    });
+
+    act(() => {
+      // Two cumulative updates of the same block -> one entry (replaced).
+      socket.receive(reasoning("Think", "blk-1", 10));
+      socket.receive(reasoning("Thinking hard", "blk-1", 11));
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "tool_call",
+          tool: "bash",
+          args: { cmd: "pwd" },
+          callId: "call-1",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11.5,
+        },
+      });
+      socket.receive(reasoning("Thinking hard after tool", "blk-1", 11.75));
+      // A distinct block -> a new entry, not a replacement.
+      socket.receive(reasoning("Different thought", "blk-2", 12));
+    });
+
+    await waitFor(() => {
+      const reasoningEvents = result.current.events.filter((e) => e.type === "reasoning");
+      expect(reasoningEvents).toHaveLength(2);
+      expect(reasoningEvents[0]).toMatchObject({
+        blockId: "blk-1",
+        content: "Thinking hard after tool",
+      });
+      expect(reasoningEvents[1]).toMatchObject({ blockId: "blk-2", content: "Different thought" });
+    });
+  });
+
   it("prepends new artifacts and replaces duplicates by id", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 

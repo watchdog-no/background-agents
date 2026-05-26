@@ -727,6 +727,17 @@ class AgentBridge:
                     "content": text,
                     "messageId": message_id,
                 }
+        elif part_type == "reasoning":
+            text = part.get("text", "")
+            if text:
+                return {
+                    "type": "reasoning",
+                    "content": text,
+                    "messageId": message_id,
+                    # Block identity so a message with several reasoning blocks
+                    # keeps them distinct (not overwritten) downstream.
+                    "blockId": part.get("id", ""),
+                }
         elif part_type == "tool":
             state = part.get("state", {})
             status = state.get("status", "")
@@ -986,6 +997,24 @@ class AgentBridge:
                         }
                     )
 
+            elif part_type == "reasoning":
+                if is_subtask:
+                    return events  # Don't forward child reasoning tokens
+                text = part.get("text", "")
+                previous_text = cumulative_text.get(part_id, "")
+                next_text = previous_text + delta if delta else text
+
+                cumulative_text[part_id] = next_text
+                if next_text and next_text != previous_text:
+                    events.append(
+                        {
+                            "type": "reasoning",
+                            "content": next_text,
+                            "messageId": message_id,
+                            "blockId": part_id,
+                        }
+                    )
+
             elif part_type == "tool":
                 tool_event = self._transform_part_to_event(part, message_id)
                 if tool_event:
@@ -1025,7 +1054,7 @@ class AgentBridge:
             field: str,
             delta: Any,
         ) -> list[dict[str, Any]]:
-            if field != "text" or not isinstance(delta, str):
+            if field not in ("text", "reasoning") or not isinstance(delta, str):
                 return []
             part_type = part_types.get(part_id)
             if part_type is None:
@@ -1549,6 +1578,24 @@ class AgentBridge:
                                     "type": "token",
                                     "content": text,
                                     "messageId": message_id,
+                                }
+                            )
+                    elif part_type == "reasoning":
+                        # Don't replay child-session reasoning as the parent's;
+                        # the live path skips subtask reasoning, so match it here.
+                        msg_session_id = info.get("sessionID", "")
+                        if msg_session_id and msg_session_id != self.opencode_session_id:
+                            continue
+                        text = part.get("text", "")
+                        previously_sent = cumulative_text.get(part_id, "")
+                        if len(text) > len(previously_sent):
+                            cumulative_text[part_id] = text
+                            result.events.append(
+                                {
+                                    "type": "reasoning",
+                                    "content": text,
+                                    "messageId": message_id,
+                                    "blockId": part_id,
                                 }
                             )
                     elif (
