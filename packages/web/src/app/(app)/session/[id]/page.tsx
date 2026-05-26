@@ -1333,6 +1333,17 @@ const EventItem = memo(function EventItem({
       );
     }
 
+    case "compaction":
+      // Marks where the agent runtime compacted the context window. Rendered as a
+      // centered divider so the timeline shows why earlier detail may have dropped.
+      return (
+        <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+          <span className="h-px flex-1 bg-border" />
+          <span>Context compacted</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      );
+
     case "token": {
       // Display the model's text response with safe markdown rendering
       if (!event.content) return null;

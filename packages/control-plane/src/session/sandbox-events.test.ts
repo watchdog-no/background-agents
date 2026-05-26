@@ -106,6 +106,27 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
   });
 
+  it("persists compaction marker and broadcasts it", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "compaction",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.createEvent).toHaveBeenCalledWith({
+      id: expect.any(String),
+      type: "compaction",
+      data: JSON.stringify(event),
+      messageId: "msg-1",
+      createdAt: expect.any(Number),
+    });
+    expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
+  });
+
   it("persists artifact events into artifacts and broadcasts both channels", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {

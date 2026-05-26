@@ -1385,6 +1385,13 @@ class AgentBridge:
                                             "bridge.session_compacted",
                                             message_id=message_id,
                                         )
+                                        # Surface compaction as a timeline marker. The
+                                        # OpenCode event carries no token deltas, so this
+                                        # is just a "context was compacted here" signal.
+                                        yield {
+                                            "type": "compaction",
+                                            "messageId": message_id,
+                                        }
 
                         if (
                             pending_terminal_finish

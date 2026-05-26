@@ -225,6 +225,40 @@ class TestSSEStreaming:
         assert token_events[1]["content"] == "Hello world"  # Cumulative
 
     @pytest.mark.asyncio
+    async def test_session_compacted_emits_marker(self, bridge: AgentBridge):
+        """A session.compacted for our session should yield a compaction marker."""
+        http_client = bridge.http_client
+        http_client.sse_events = [
+            create_sse_event("server.connected", {}),
+            create_sse_event("session.compacted", {"sessionID": "oc-session-123"}),
+            create_sse_event("session.idle", {"sessionID": "oc-session-123"}),
+        ]
+
+        events = []
+        async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
+            events.append(event)
+
+        compaction_events = [e for e in events if e["type"] == "compaction"]
+        assert len(compaction_events) == 1
+        assert compaction_events[0]["messageId"] == "cp-msg-1"
+
+    @pytest.mark.asyncio
+    async def test_session_compacted_ignores_other_sessions(self, bridge: AgentBridge):
+        """A session.compacted for a different session must not yield a marker."""
+        http_client = bridge.http_client
+        http_client.sse_events = [
+            create_sse_event("server.connected", {}),
+            create_sse_event("session.compacted", {"sessionID": "some-other-session"}),
+            create_sse_event("session.idle", {"sessionID": "oc-session-123"}),
+        ]
+
+        events = []
+        async for event in bridge._stream_opencode_response_sse("cp-msg-1", "Test prompt"):
+            events.append(event)
+
+        assert not [e for e in events if e["type"] == "compaction"]
+
+    @pytest.mark.asyncio
     async def test_text_streaming_with_part_delta_event(
         self, bridge: AgentBridge, opencode_message_id: str
     ):

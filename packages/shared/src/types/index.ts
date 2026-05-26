@@ -36,6 +36,7 @@ export type EventType =
   | "git_sync"
   | "error"
   | "execution_complete"
+  | "compaction"
   | "artifact"
   | "push_complete"
   | "push_error"
@@ -263,6 +264,15 @@ export type SandboxEvent =
       messageId: string;
       success: boolean;
       error?: string;
+      sandboxId: string;
+      timestamp: number;
+    }
+  | {
+      // Emitted when the agent runtime compacts the session context (summarizes
+      // earlier turns to free up the context window). Surfaced as a marker in
+      // the timeline so users can see why earlier detail may have been dropped.
+      type: "compaction";
+      messageId: string;
       sandboxId: string;
       timestamp: number;
     }

@@ -111,6 +111,20 @@ export class SessionSandboxEventProcessor {
       return;
     }
 
+    if (event.type === "compaction") {
+      // Persist each compaction marker (distinct events, not upserted) so it
+      // replays in the timeline on reload, then broadcast it live.
+      this.deps.repository.createEvent({
+        id: generateId(),
+        type: event.type,
+        data: JSON.stringify(event),
+        messageId,
+        createdAt: now,
+      });
+      this.deps.broadcast({ type: "sandbox_event", event });
+      return;
+    }
+
     if (event.type === "step_start" || event.type === "step_finish") {
       this.deps.updateLastActivity(now);
       if (
