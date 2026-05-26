@@ -395,6 +395,55 @@ describe("useSessionSocket", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
+  it("tracks current context size from step_finish input tokens (replaces, not sums)", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 14000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(14000);
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+          tokens: { input: 18000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+
+    // Latest input replaces the previous value (not 14000 + 18000).
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(18000);
+    });
+  });
+
   it("collapses replayed accumulated token snapshots to the final assistant text", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 

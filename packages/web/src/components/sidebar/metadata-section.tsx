@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { formatModelName, truncateBranch, copyToClipboard } from "@/lib/format";
+import { formatModelName, formatTokens, truncateBranch, copyToClipboard } from "@/lib/format";
 import { formatSessionCost } from "@/lib/session-cost";
 import { formatRelativeTime } from "@/lib/time";
 import { getSafeExternalUrl } from "@/lib/urls";
@@ -31,6 +31,7 @@ interface MetadataSectionProps {
   artifacts?: Artifact[];
   parentSessionId?: string | null;
   totalCost?: number;
+  contextTokens?: number;
 }
 
 export function MetadataSection({
@@ -44,6 +45,7 @@ export function MetadataSection({
   artifacts = [],
   parentSessionId,
   totalCost,
+  contextTokens,
 }: MetadataSectionProps) {
   const [copied, setCopied] = useState(false);
 
@@ -101,6 +103,12 @@ export function MetadataSection({
       {typeof totalCost === "number" && totalCost > 0 && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>Session cost: {formatSessionCost(totalCost)}</span>
+        </div>
+      )}
+
+      {typeof contextTokens === "number" && contextTokens > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Context: {formatTokens(contextTokens)} tokens</span>
         </div>
       )}
 

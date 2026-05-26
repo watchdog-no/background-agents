@@ -137,12 +137,13 @@ class TestTransformPartToEvent:
         assert event["messageId"] == "cp-message-123"
 
     def test_step_finish_part(self, bridge: AgentBridge):
-        """Step-finish parts should include cost and token info."""
+        """Step-finish parts should include cost and structured token usage."""
+        tokens = {"input": 120, "output": 30, "reasoning": 0, "cache": {"read": 0, "write": 0}}
         part = {
             "type": "step-finish",
             "id": "step-1",
             "cost": 0.001,
-            "tokens": 150,
+            "tokens": tokens,
             "reason": "end_turn",
         }
 
@@ -151,7 +152,7 @@ class TestTransformPartToEvent:
         assert event is not None
         assert event["type"] == "step_finish"
         assert event["cost"] == 0.001
-        assert event["tokens"] == 150
+        assert event["tokens"] == tokens
         assert event["reason"] == "end_turn"
         assert event["messageId"] == "cp-message-123"
 

@@ -10,6 +10,16 @@ const MODEL_DISPLAY_NAMES = new Map<string, string>(
 );
 
 /**
+ * Format a token count compactly.
+ * e.g., 14059 → "14k", 232441 → "232k", 1_050_000 → "1.1M", 800 → "800"
+ */
+export function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
+  return `${tokens}`;
+}
+
+/**
  * Format model ID to display name.
  * e.g., "anthropic/claude-sonnet-4-5" → "Claude Sonnet 4.5"
  * e.g., "openai/gpt-5.2-codex" → "GPT 5.2 Codex"

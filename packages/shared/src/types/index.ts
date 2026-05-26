@@ -198,6 +198,18 @@ export interface PullRequest {
   updatedAt: string;
 }
 
+/**
+ * Token usage reported by the agent runtime for a single step. `input` is the
+ * full prompt size for that LLM call (system + tools + the whole conversation
+ * so far), so the latest step's `input` reflects current context-window usage.
+ */
+export interface TokenUsage {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
+}
+
 // Sandbox events (from Modal / control-plane synthesized)
 export type SandboxEvent =
   | { type: "heartbeat"; sandboxId: string; status: string; timestamp: number }
@@ -229,7 +241,7 @@ export type SandboxEvent =
   | {
       type: "step_finish";
       cost?: number;
-      tokens?: number;
+      tokens?: TokenUsage;
       reason?: string;
       messageId: string;
       sandboxId: string;
@@ -396,6 +408,13 @@ export interface SessionState {
   isProcessing?: boolean;
   parentSessionId?: string | null;
   totalCost?: number;
+  /**
+   * Current context-window usage in tokens (latest step's input tokens).
+   * Derived live on the client from `step_finish` events; not persisted
+   * server-side. Grows as the conversation fills the window and drops after
+   * a compaction.
+   */
+  contextTokens?: number;
   codeServerUrl?: string | null;
   codeServerPassword?: string | null;
   tunnelUrls?: Record<string, string> | null;
