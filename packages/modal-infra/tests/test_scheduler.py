@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.scheduler.image_builder import (
+    CACHE_BUSTER,
     _git_ls_remote_sha,
     _should_rebuild,
 )
@@ -102,6 +103,7 @@ class TestShouldRebuild:
                 "repo_name": "repo",
                 "status": "ready",
                 "base_sha": "old-sha-111",
+                "sandbox_version": CACHE_BUSTER,
             }
         ]
         result = _should_rebuild("acme", "repo", "new-sha-222", images)
@@ -115,7 +117,56 @@ class TestShouldRebuild:
                 "repo_name": "repo",
                 "status": "ready",
                 "base_sha": "abc123",
+                "sandbox_version": CACHE_BUSTER,
             }
+        ]
+        result = _should_rebuild("acme", "repo", "abc123", images)
+        assert result is False
+
+    def test_rebuild_when_sandbox_version_mismatch(self):
+        """Ready image with matching SHA but stale toolchain version -> rebuild."""
+        images = [
+            {
+                "repo_owner": "acme",
+                "repo_name": "repo",
+                "status": "ready",
+                "base_sha": "abc123",
+                "sandbox_version": "v53-old",
+            }
+        ]
+        result = _should_rebuild("acme", "repo", "abc123", images)
+        assert result is True
+
+    def test_rebuild_when_sandbox_version_missing(self):
+        """Ready image without version predates version tracking -> rebuild."""
+        images = [
+            {
+                "repo_owner": "acme",
+                "repo_name": "repo",
+                "status": "ready",
+                "base_sha": "abc123",
+            }
+        ]
+        result = _should_rebuild("acme", "repo", "abc123", images)
+        assert result is True
+
+    def test_skip_when_current_version_image_exists_after_stale_image(self):
+        """A newer stale-version row should not hide a valid current-version image."""
+        images = [
+            {
+                "repo_owner": "acme",
+                "repo_name": "repo",
+                "status": "ready",
+                "base_sha": "abc123",
+                "sandbox_version": "v53-old",
+            },
+            {
+                "repo_owner": "acme",
+                "repo_name": "repo",
+                "status": "ready",
+                "base_sha": "abc123",
+                "sandbox_version": CACHE_BUSTER,
+            },
         ]
         result = _should_rebuild("acme", "repo", "abc123", images)
         assert result is False
@@ -141,6 +192,7 @@ class TestShouldRebuild:
                 "repo_name": "Repo",
                 "status": "ready",
                 "base_sha": "abc123",
+                "sandbox_version": CACHE_BUSTER,
             }
         ]
         result = _should_rebuild("acme", "repo", "abc123", images)
@@ -282,6 +334,7 @@ class TestRebuildRepoImages:
                     "repo_name": "repo",
                     "status": "ready",
                     "base_sha": "same-sha",
+                    "sandbox_version": CACHE_BUSTER,
                 }
             ]
         }

@@ -119,13 +119,34 @@ describe("getAppActorToken", () => {
     expect(await getAppActorToken(env)).toBe("tok-abc");
   });
 
+  it("returns null when the single workspace token cannot be resolved", async () => {
+    const env = makeEnv({ "oauth:token:org-1": "not-json" });
+    expect(await getAppActorToken(env)).toBeNull();
+  });
+
   it("fails closed when multiple workspace tokens exist", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     // Ambiguous multi-tenant state: guessing a workspace could authenticate the
     // sandbox to the wrong tenant, so the token resolves to null instead.
     const env = makeEnv({
       "oauth:token:org-1": freshToken("tok-1"),
       "oauth:token:org-2": freshToken("tok-2"),
     });
-    expect(await getAppActorToken(env)).toBeNull();
+    try {
+      expect(await getAppActorToken(env)).toBeNull();
+      const logLines = consoleError.mock.calls.map(([line]) => JSON.parse(String(line)));
+      expect(logLines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            level: "error",
+            msg: "app_token.multiple_workspaces",
+            count: 2,
+            org_ids: "org-1,org-2",
+          }),
+        ])
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
