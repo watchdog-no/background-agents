@@ -24,6 +24,7 @@ type SessionRow = {
   pr_count: number;
   created_at: number;
   updated_at: number;
+  title_updated_at: number | null;
 };
 
 const QUERY_PATTERNS = {
@@ -34,6 +35,8 @@ const QUERY_PATTERNS = {
   UPDATE_STATUS: /^UPDATE sessions SET status = \?/,
   UPDATE_UPDATED_AT: /^UPDATE sessions SET updated_at = \?/,
   UPDATE_TITLE: /^UPDATE sessions SET title = \?/,
+  UPDATE_TITLE_IF_NEWER:
+    /^UPDATE sessions SET title = \?, title_updated_at = \?, updated_at = max\(updated_at, \?\) WHERE id = \? AND \(title_updated_at IS NULL OR title_updated_at <= \?\)$/,
   UPDATE_METRICS: /^UPDATE sessions SET total_cost = \?/,
   DELETE_SESSION: /^DELETE FROM sessions WHERE id = \?$/,
   SELECT_BY_PARENT:
@@ -181,6 +184,7 @@ class FakeD1Database {
           pr_count: 0,
           created_at: createdAt,
           updated_at: updatedAt,
+          title_updated_at: null,
         });
       }
       return { meta: { changes: this.rows.has(id) ? 1 : 0 } };
@@ -192,6 +196,24 @@ class FakeD1Database {
       if (row && row.updated_at <= maxUpdatedAt) {
         row.status = status;
         row.updated_at = updatedAt;
+        return { meta: { changes: 1 } };
+      }
+      return { meta: { changes: 0 } };
+    }
+
+    if (QUERY_PATTERNS.UPDATE_TITLE_IF_NEWER.test(normalized)) {
+      const [title, titleUpdatedAt, maxUpdatedAt, id, titleGuard] = args as [
+        string,
+        number,
+        number,
+        string,
+        number,
+      ];
+      const row = this.rows.get(id);
+      if (row && (row.title_updated_at === null || row.title_updated_at <= titleGuard)) {
+        row.title = title;
+        row.title_updated_at = titleUpdatedAt;
+        row.updated_at = Math.max(row.updated_at, maxUpdatedAt);
         return { meta: { changes: 1 } };
       }
       return { meta: { changes: 0 } };
@@ -525,6 +547,49 @@ describe("SessionIndexStore", () => {
     it("returns false when session not found", async () => {
       const updated = await store.updateTitle("nonexistent", "New Title");
       expect(updated).toBe(false);
+    });
+  });
+
+  describe("updateTitleIfNewer", () => {
+    it("updates the title when the write is current", async () => {
+      await store.create(makeSession({ updatedAt: 1000 }));
+
+      const updated = await store.updateTitleIfNewer("test-id", "Generated Title", 2000);
+      expect(updated).toBe(true);
+
+      const session = await store.get("test-id");
+      expect(session?.title).toBe("Generated Title");
+      expect(session?.updatedAt).toBe(2000);
+    });
+
+    it("ignores stale title writes when a newer title already exists", async () => {
+      await store.create(makeSession({ updatedAt: 1000 }));
+      // A title written at t=2000 establishes the current title timestamp.
+      expect(await store.updateTitleIfNewer("test-id", "Manual Title", 2000)).toBe(true);
+
+      // An older title write must not clobber the newer one.
+      const updated = await store.updateTitleIfNewer("test-id", "Generated Title", 1500);
+      expect(updated).toBe(false);
+
+      const session = await store.get("test-id");
+      expect(session?.title).toBe("Manual Title");
+      expect(session?.updatedAt).toBe(2000);
+    });
+
+    it("applies the title even when a newer status write advanced updated_at", async () => {
+      // Regression: the generated title (t=1500) and a later execution_complete
+      // status write (t=2000) race to the index. If the status write lands first
+      // it advances `updated_at`, but it must not suppress the title.
+      await store.create(makeSession({ updatedAt: 1000 }));
+      expect(await store.updateStatus("test-id", "completed", 2000)).toBe(true);
+
+      const updated = await store.updateTitleIfNewer("test-id", "Generated Title", 1500);
+      expect(updated).toBe(true);
+
+      const session = await store.get("test-id");
+      expect(session?.title).toBe("Generated Title");
+      // `updated_at` stays monotonic — not pulled back to the title timestamp.
+      expect(session?.updatedAt).toBe(2000);
     });
   });
 

@@ -9,6 +9,7 @@ import { assertArtifactType } from "./artifacts";
 import type { SessionRepository } from "./repository";
 import type { CallbackNotificationService } from "./callback-notification-service";
 import type { SessionWebSocketManager } from "./websocket-manager";
+import type { SessionTitleUpdateOptions, SessionTitleUpdateResult } from "./title";
 
 type PushResolver = { resolve: () => void; reject: (err: Error) => void };
 type SandboxEventWithAck = SandboxEvent & { ackId?: string };
@@ -20,6 +21,10 @@ interface SessionSandboxEventProcessorDeps {
   callbackService: CallbackNotificationService;
   wsManager: SessionWebSocketManager;
   broadcast: (message: ServerMessage) => void;
+  applySessionTitleUpdate: (
+    title: string,
+    options?: SessionTitleUpdateOptions
+  ) => SessionTitleUpdateResult;
   getIsProcessing: () => boolean;
   triggerSnapshot: (reason: string) => Promise<void>;
   reconcileSessionStatusAfterExecution: (success: boolean) => Promise<void>;
@@ -55,6 +60,11 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "heartbeat") {
       this.deps.repository.updateSandboxHeartbeat(now);
+      return;
+    }
+
+    if (event.type === "session_title") {
+      this.deps.applySessionTitleUpdate(event.title, { onlyIfUnset: true });
       return;
     }
 

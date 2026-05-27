@@ -173,7 +173,7 @@ export interface SandboxLifecycleConfig {
    * (e.g. workspace not configured, non-Modal provider). Optional — when
    * absent the helper skips the broadcast entirely.
    */
-  modalSandboxUrlBuilder?: (providerObjectId: string) => string | null;
+  sandboxDashboardUrlBuilder?: (providerObjectId: string) => string | null;
 }
 
 /**
@@ -462,7 +462,7 @@ export class SandboxLifecycleManager {
       });
 
       if (result.providerObjectId) {
-        this.storeAndBroadcastModalObjectId(result.providerObjectId);
+        this.storeAndBroadcastProviderObjectId(result.providerObjectId);
       }
       if (result.codeServerUrl && result.codeServerPassword) {
         await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -585,9 +585,6 @@ export class SandboxLifecycleManager {
 
       this.storage.setLastSpawnError(null, null);
 
-      this.storage.updateSandboxStatus("spawning");
-      this.broadcaster.broadcast({ type: "sandbox_status", status: "spawning" });
-
       const now = Date.now();
       const sandboxAuthToken = this.idGenerator.generateId();
       const sandboxAuthTokenHash = await hashToken(sandboxAuthToken);
@@ -600,6 +597,7 @@ export class SandboxLifecycleManager {
         authTokenHash: sandboxAuthTokenHash,
         modalSandboxId: expectedSandboxId,
       });
+      this.broadcaster.broadcast({ type: "sandbox_status", status: "spawning" });
 
       this.log.info("Restoring from snapshot", {
         event: "sandbox.restore",
@@ -644,7 +642,7 @@ export class SandboxLifecycleManager {
         });
 
         if (result.providerObjectId) {
-          this.storeAndBroadcastModalObjectId(result.providerObjectId);
+          this.storeAndBroadcastProviderObjectId(result.providerObjectId);
         }
         if (result.codeServerUrl && result.codeServerPassword) {
           await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -758,9 +756,11 @@ export class SandboxLifecycleManager {
         throw new Error(result.error || "Failed to resume sandbox");
       }
 
+      const finalProviderObjectId = result.providerObjectId ?? providerObjectId;
       if (result.providerObjectId && result.providerObjectId !== providerObjectId) {
-        this.storeAndBroadcastModalObjectId(result.providerObjectId);
+        this.storeProviderObjectId(result.providerObjectId);
       }
+      this.broadcastSandboxDashboardUrl(finalProviderObjectId);
 
       if (result.codeServerUrl && result.codeServerPassword) {
         await this.storeAndBroadcastCodeServer(result.codeServerUrl, result.codeServerPassword);
@@ -1154,17 +1154,22 @@ export class SandboxLifecycleManager {
     return this.wsManager.getConnectedClientCount();
   }
 
-  /**
-   * Persist the provider object id and, when a URL builder is configured,
-   * broadcast the resulting dashboard link so already-connected clients can
-   * update without reconnecting. The initial subscribed snapshot covers
-   * clients that connect later.
-   */
-  private storeAndBroadcastModalObjectId(providerObjectId: string): void {
+  private storeAndBroadcastProviderObjectId(providerObjectId: string): void {
+    this.storeProviderObjectId(providerObjectId);
+    this.broadcastSandboxDashboardUrl(providerObjectId);
+  }
+
+  private storeProviderObjectId(providerObjectId: string): void {
     this.storage.updateSandboxModalObjectId(providerObjectId);
-    const url = this.config.modalSandboxUrlBuilder?.(providerObjectId);
+  }
+
+  private broadcastSandboxDashboardUrl(providerObjectId: string): void {
+    const url = this.config.sandboxDashboardUrlBuilder?.(providerObjectId);
     if (url) {
-      this.broadcaster.broadcast({ type: "modal_sandbox_url", url });
+      this.log.debug("Broadcasting sandbox dashboard URL", {
+        provider_object_id: providerObjectId,
+      });
+      this.broadcaster.broadcast({ type: "sandbox_dashboard_url", url });
     }
   }
 

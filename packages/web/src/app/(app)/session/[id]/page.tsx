@@ -796,7 +796,7 @@ function SessionContent({
               <ConnectionStatus connected={connected} connecting={connecting} />
               <SandboxStatus
                 status={sessionState?.sandboxStatus}
-                url={sessionState?.modalSandboxUrl}
+                dashboardUrl={sessionState?.sandboxDashboardUrl}
               />
               <ParticipantsList participants={participants} />
             </div>
@@ -1121,7 +1121,13 @@ function ConnectionStatus({ connected, connecting }: { connected: boolean; conne
   );
 }
 
-function SandboxStatus({ status, url }: { status?: string; url?: string | null }) {
+function SandboxStatus({
+  status,
+  dashboardUrl,
+}: {
+  status?: string;
+  dashboardUrl?: string | null;
+}) {
   if (!status) return null;
 
   const colors: Record<string, string> = {
@@ -1137,13 +1143,13 @@ function SandboxStatus({ status, url }: { status?: string; url?: string | null }
   const className = `text-xs ${colors[status] || colors.pending}`;
   const label = `Sandbox: ${status}`;
 
-  if (url) {
+  if (dashboardUrl) {
     return (
       <a
-        href={url}
+        href={dashboardUrl}
         target="_blank"
         rel="noreferrer noopener"
-        title="Open sandbox in Modal dashboard"
+        title="Open sandbox in provider dashboard"
         className={`${className} hover:underline`}
       >
         {label}

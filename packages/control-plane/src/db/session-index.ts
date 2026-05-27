@@ -46,6 +46,7 @@ interface SessionRow {
   pr_count: number;
   created_at: number;
   updated_at: number;
+  title_updated_at: number | null;
 }
 
 export interface ListSessionsOptions {
@@ -187,6 +188,23 @@ export class SessionIndexStore {
       .run();
 
     return (result.meta.changes ?? 0) > 0;
+  }
+
+  async updateTitleIfNewer(id: string, title: string, updatedAt: number): Promise<boolean> {
+    // Gate the title on a title-specific timestamp rather than the shared
+    // `updated_at`: an interleaved newer status/touch write advances `updated_at`
+    // and would otherwise permanently suppress a valid title. `updated_at` is
+    // still moved forward monotonically so the session-list sort order stays
+    // fresh, while a genuinely stale title (older than the last title write) is
+    // still ignored.
+    const result = await this.db
+      .prepare(
+        "UPDATE sessions SET title = ?, title_updated_at = ?, updated_at = max(updated_at, ?) WHERE id = ? AND (title_updated_at IS NULL OR title_updated_at <= ?)"
+      )
+      .bind(title, updatedAt, updatedAt, id, updatedAt)
+      .run();
+
+    return (result.meta?.changes ?? 0) > 0;
   }
 
   async updateStatus(id: string, status: SessionStatus, updatedAt = Date.now()): Promise<boolean> {

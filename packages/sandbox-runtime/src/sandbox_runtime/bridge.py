@@ -153,6 +153,10 @@ class AgentBridge:
     MAX_EVENT_BUFFER_SIZE = 1000
     CLEAN_TERMINAL_FINISH_REASONS: ClassVar[set[str]] = {"stop", "length"}
     WAIT_FOR_IDLE_FINISH_REASONS: ClassVar[set[str]] = {"", "tool-calls", "unknown"}
+    OPENCODE_DEFAULT_TITLE_RE = re.compile(
+        r"^(new session|child session) - " r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$",
+        re.IGNORECASE,
+    )
     CRITICAL_EVENT_TYPES: ClassVar[set[str]] = {
         "execution_complete",
         "error",
@@ -218,6 +222,7 @@ class AgentBridge:
         # Cached per provider/model id; `_current_context_limit` holds the active prompt's value.
         self._context_limit_cache: dict[str, int] = {}
         self._current_context_limit: int | None = None
+        self._last_forwarded_session_title: str | None = None
 
     @property
     def ws_url(self) -> str:
@@ -700,6 +705,41 @@ class AgentBridge:
         )
 
         await self._save_session_id()
+
+    def _normalize_forwardable_session_title(self, title: object) -> str | None:
+        if not isinstance(title, str):
+            return None
+
+        trimmed = title.strip()
+        if not trimmed or self.OPENCODE_DEFAULT_TITLE_RE.match(trimmed):
+            return None
+        return trimmed
+
+    def _session_title_event_once(self, title: object) -> dict[str, str] | None:
+        trimmed = self._normalize_forwardable_session_title(title)
+        if trimmed is None:
+            return None
+        if trimmed == self._last_forwarded_session_title:
+            return None
+
+        self._last_forwarded_session_title = trimmed
+        return {"type": "session_title", "title": trimmed}
+
+    def _session_title_event_from_sse(
+        self, event_type: object, props: dict[str, Any]
+    ) -> dict[str, str] | None:
+        if event_type != "session.updated":
+            return None
+
+        info = props.get("info")
+        if not isinstance(info, dict):
+            return None
+
+        session_id = props.get("sessionID") or info.get("id")
+        if session_id != self.opencode_session_id:
+            return None
+
+        return self._session_title_event_once(info.get("title"))
 
     @staticmethod
     def _extract_error_message(error: object) -> str | None:
@@ -1189,6 +1229,8 @@ class AgentBridge:
                     async for event in self._parse_sse_stream(sse_response, timeout_ctx):
                         event_type = event.get("type")
                         props = event.get("properties", {})
+                        if not isinstance(props, dict):
+                            props = {}
 
                         if event_type == "server.connected":
                             pass
@@ -1207,6 +1249,12 @@ class AgentBridge:
                                     )
                                 # Always continue: no downstream handler processes session.created,
                                 # and non-matching events would just fall through to no-op.
+                                continue
+
+                            title_event = self._session_title_event_from_sse(event_type, props)
+                            if title_event:
+                                yield title_event
+                            if event_type == "session.updated":
                                 continue
 
                             event_session_id = props.get("sessionID") or props.get("part", {}).get(
