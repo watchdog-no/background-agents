@@ -395,7 +395,7 @@ describe("useSessionSocket", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
-  it("tracks current context size from step_finish input tokens (replaces, not sums)", async () => {
+  it("tracks current context pressure from step_finish tokens (replaces, not sums)", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 
     await waitFor(() => {
@@ -416,14 +416,14 @@ describe("useSessionSocket", () => {
           messageId: "msg-1",
           sandboxId: "sandbox-1",
           timestamp: 10,
-          tokens: { input: 14000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+          tokens: { input: 14000, output: 100, reasoning: 50, cache: { read: 0, write: 0 } },
           contextLimit: 400000,
         },
       });
     });
 
     await waitFor(() => {
-      expect(result.current.sessionState?.contextTokens).toBe(14000);
+      expect(result.current.sessionState?.contextTokens).toBe(14150);
     });
     // The limit is captured as the gauge denominator.
     expect(result.current.sessionState?.contextLimit).toBe(400000);
@@ -436,14 +436,14 @@ describe("useSessionSocket", () => {
           messageId: "msg-1",
           sandboxId: "sandbox-1",
           timestamp: 11,
-          tokens: { input: 18000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+          tokens: { input: 18000, output: 100, reasoning: 25, cache: { read: 0, write: 0 } },
         },
       });
     });
 
-    // Latest input replaces the previous value (not 14000 + 18000).
+    // Latest step replaces the previous value (not 14150 + 18125).
     await waitFor(() => {
-      expect(result.current.sessionState?.contextTokens).toBe(18000);
+      expect(result.current.sessionState?.contextTokens).toBe(18125);
     });
     // A step without contextLimit preserves the previously captured limit.
     expect(result.current.sessionState?.contextLimit).toBe(400000);
@@ -470,12 +470,12 @@ describe("useSessionSocket", () => {
           messageId: "msg-1",
           sandboxId: "sandbox-1",
           timestamp: 10,
-          tokens: { input: 18000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+          tokens: { input: 18000, output: 100, reasoning: 25, cache: { read: 0, write: 0 } },
         },
       });
     });
     await waitFor(() => {
-      expect(result.current.sessionState?.contextTokens).toBe(18000);
+      expect(result.current.sessionState?.contextTokens).toBe(18125);
     });
 
     act(() => {
@@ -504,7 +504,7 @@ describe("useSessionSocket", () => {
       });
     });
     // Neither should have changed it.
-    expect(result.current.sessionState?.contextTokens).toBe(18000);
+    expect(result.current.sessionState?.contextTokens).toBe(18125);
 
     act(() => {
       // After a compaction the next step reports a smaller input — value drops.
@@ -515,16 +515,16 @@ describe("useSessionSocket", () => {
           messageId: "msg-1",
           sandboxId: "sandbox-1",
           timestamp: 13,
-          tokens: { input: 9000, output: 50, reasoning: 0, cache: { read: 0, write: 0 } },
+          tokens: { input: 9000, output: 50, reasoning: 10, cache: { read: 0, write: 0 } },
         },
       });
     });
     await waitFor(() => {
-      expect(result.current.sessionState?.contextTokens).toBe(9000);
+      expect(result.current.sessionState?.contextTokens).toBe(9060);
     });
   });
 
-  it("sums cached prompt tokens and clears the gauge on compaction", async () => {
+  it("sums cached and generated tokens and clears the gauge on compaction", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 
     await waitFor(() => {
@@ -545,13 +545,13 @@ describe("useSessionSocket", () => {
           messageId: "msg-1",
           sandboxId: "sandbox-1",
           timestamp: 10,
-          tokens: { input: 760, output: 100, reasoning: 0, cache: { read: 231424, write: 0 } },
+          tokens: { input: 760, output: 100, reasoning: 5000, cache: { read: 231424, write: 0 } },
         },
       });
     });
-    // Cached prompt tokens are included: 760 + 231424, not the 760 delta.
+    // Cached and generated tokens are included, not just the 760 input delta.
     await waitFor(() => {
-      expect(result.current.sessionState?.contextTokens).toBe(232184);
+      expect(result.current.sessionState?.contextTokens).toBe(237284);
     });
 
     act(() => {

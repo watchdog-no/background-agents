@@ -314,11 +314,10 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
       );
     }
 
-    // Track current context-window usage from each step. Use the full input
-    // context (incl. cached prompt tokens), not just the non-cached `input`,
-    // or cached sessions show false headroom. Replace (don't accumulate); it
-    // drops after a compaction. Ignore subtask (child-session) steps so a
-    // sub-agent can't overwrite the parent's count.
+    // Track current context-window pressure from each step. Include cached
+    // prompt and generated tokens so cached or long-output sessions don't show
+    // false headroom. Replace (don't accumulate); it drops after a compaction.
+    // Ignore subtask steps so a sub-agent can't overwrite the parent's count.
     if (
       event.type === "step_finish" &&
       !event.isSubtask &&

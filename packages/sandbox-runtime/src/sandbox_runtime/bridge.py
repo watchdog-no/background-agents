@@ -214,7 +214,7 @@ class AgentBridge:
         self._pending_acks: dict[str, dict[str, Any]] = {}
 
         # Effective model context window, fetched from OpenCode's provider config
-        # and attached to step_finish events as the context-usage gauge denominator.
+        # and attached to step_finish events as the context-pressure gauge denominator.
         # Cached per provider/model id; `_current_context_limit` holds the active prompt's value.
         self._context_limit_cache: dict[str, int] = {}
         self._current_context_limit: int | None = None

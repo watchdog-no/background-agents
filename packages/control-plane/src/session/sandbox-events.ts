@@ -148,10 +148,10 @@ export class SessionSandboxEventProcessor {
       ) {
         this.deps.repository.addSessionCost(event.cost, now);
       }
-      // Persist current context-window usage from the parent session's steps.
+      // Persist current context-window pressure from the parent session's steps.
       // Subtask steps belong to a child session's context, so ignore them.
-      // Use the full input context (incl. cached prompt tokens), not just the
-      // non-cached `input`, so cached sessions don't show false headroom.
+      // Include cached prompt and generated tokens so long responses don't show
+      // false headroom near compaction.
       if (
         event.type === "step_finish" &&
         !event.isSubtask &&

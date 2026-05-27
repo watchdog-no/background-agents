@@ -200,10 +200,9 @@ export interface PullRequest {
 }
 
 /**
- * Token usage reported by the agent runtime for a single step. `input` is the
- * *non-cached* prompt tokens; with prompt caching the cached portion is reported
- * separately under `cache`. Use {@link contextTokensFromUsage} to get the true
- * context-window occupancy.
+ * Token usage reported by the agent runtime for a single step. Providers can
+ * split prompt cache and generated tokens across fields; use
+ * {@link contextTokensFromUsage} for the best available context-pressure value.
  */
 export interface TokenUsage {
   input: number;
@@ -211,18 +210,27 @@ export interface TokenUsage {
   // doesn't report, so only `input` is guaranteed.
   output?: number;
   reasoning?: number;
+  total?: number;
   cache?: { read?: number; write?: number };
 }
 
 /**
- * True input context size for a step = non-cached input + cached (read) +
- * newly-cached (write) prompt tokens. Providers report cached prompt tokens
- * separately from `input`, so summing reflects what the runtime actually
- * compacts against; using `input` alone undercounts cached sessions and shows
- * false headroom.
+ * Best available post-step context pressure for the gauge. Prefer an explicit
+ * runtime total when provided; otherwise sum prompt-side tokens (including
+ * cache) plus generated output/reasoning so long responses do not show false
+ * headroom near compaction.
  */
 export function contextTokensFromUsage(tokens: TokenUsage): number {
-  return tokens.input + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0);
+  if (typeof tokens.total === "number" && Number.isFinite(tokens.total)) {
+    return tokens.total;
+  }
+  return (
+    tokens.input +
+    (tokens.cache?.read ?? 0) +
+    (tokens.cache?.write ?? 0) +
+    (tokens.output ?? 0) +
+    (tokens.reasoning ?? 0)
+  );
 }
 
 // Sandbox events (from Modal / control-plane synthesized)
@@ -442,10 +450,10 @@ export interface SessionState {
   parentSessionId?: string | null;
   totalCost?: number;
   /**
-   * Current context-window usage in tokens (latest non-subtask step's input
-   * tokens). Grows as the conversation fills the window and drops after a
-   * compaction. Updated live from `step_finish` and persisted so it survives
-   * reload.
+   * Current context-window pressure in tokens (latest non-subtask step's
+   * reported usage or best-effort computed total). Grows as the conversation
+   * fills the window and drops after a compaction. Updated live from
+   * `step_finish` and persisted so it survives reload.
    */
   contextTokens?: number;
   /**

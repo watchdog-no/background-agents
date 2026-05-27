@@ -307,8 +307,8 @@ export class SessionRepository {
   }
 
   /**
-   * Record current context-window usage. `contextTokens` replaces (it's the
-   * latest step's full input, not a delta); `contextLimit` is constant per
+   * Record current context-window pressure. `contextTokens` replaces (it's the
+   * latest step's reported usage, not a delta); `contextLimit` is constant per
    * session, so a null leaves the stored value untouched.
    */
   setSessionContextUsage(

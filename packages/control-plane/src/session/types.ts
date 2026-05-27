@@ -38,7 +38,7 @@ export interface SessionRow {
   spawn_depth: number;
   code_server_enabled: number; // 0 = disabled (default), 1 = enabled
   total_cost: number; // Running aggregate of step_finish event costs
-  context_tokens: number; // Current context-window usage (latest step input tokens)
+  context_tokens: number; // Current context-window pressure (latest step usage estimate)
   context_limit: number; // Model's effective context window (gauge denominator)
   sandbox_settings: string | null; // JSON blob of SandboxSettings
   created_at: number;

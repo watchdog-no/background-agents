@@ -228,27 +228,27 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
   });
 
-  it("persists context usage from a non-subtask step_finish", async () => {
+  it("persists context pressure from a non-subtask step_finish", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
       type: "step_finish",
       messageId: "msg-1",
       sandboxId: "sb-1",
       timestamp: 1000,
-      tokens: { input: 14000, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+      tokens: { input: 14000, output: 100, reasoning: 50, cache: { read: 0, write: 0 } },
       contextLimit: 400000,
     };
 
     await h.processor.processSandboxEvent(event);
 
     expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
-      14000,
+      14150,
       400000,
       expect.any(Number)
     );
   });
 
-  it("ignores subtask step_finish for context usage", async () => {
+  it("ignores subtask step_finish for context pressure", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
       type: "step_finish",
@@ -265,28 +265,28 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.repository.setSessionContextUsage).not.toHaveBeenCalled();
   });
 
-  it("sums cached prompt tokens into context usage", async () => {
+  it("sums cached and generated tokens into context pressure", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
       type: "step_finish",
       messageId: "msg-1",
       sandboxId: "sb-1",
       timestamp: 1000,
-      tokens: { input: 760, output: 100, reasoning: 0, cache: { read: 231424, write: 0 } },
+      tokens: { input: 760, output: 100, reasoning: 5000, cache: { read: 231424, write: 0 } },
       contextLimit: 400000,
     };
 
     await h.processor.processSandboxEvent(event);
 
-    // 760 (non-cached) + 231424 (cached) = 232184, not the tiny 760 delta.
+    // Includes cache + generated output/reasoning, not just the tiny 760 input delta.
     expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
-      232184,
+      237284,
       400000,
       expect.any(Number)
     );
   });
 
-  it("clears context usage on compaction", async () => {
+  it("clears context pressure on compaction", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
       type: "compaction",
