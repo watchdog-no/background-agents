@@ -15,8 +15,8 @@ const log = createLogger("modal-client");
 // Modal app name
 const MODAL_APP_NAME = "open-inspect";
 
-// Modal environment — Terraform deploys the app to the default "main" environment.
-const MODAL_ENVIRONMENT = "main";
+// Modal's default environment name; unrelated to the git branch named "main".
+const DEFAULT_MODAL_DASHBOARD_ENVIRONMENT = "main";
 
 /**
  * Construct the Modal base URL from workspace name.
@@ -26,16 +26,16 @@ function getModalBaseUrl(workspace: string): string {
   return `https://${workspace}--${MODAL_APP_NAME}`;
 }
 
-/**
- * Construct a deep link to a sandbox's detail panel in the Modal dashboard.
- * Returns null when either input is missing so callers can fall back gracefully.
- */
-export function buildModalSandboxUrl(
-  workspace: string | undefined,
-  modalObjectId: string | null | undefined
-): string | null {
-  if (!workspace || !modalObjectId) return null;
-  return `https://modal.com/apps/${workspace}/${MODAL_ENVIRONMENT}/deployed/${MODAL_APP_NAME}?activeTab=sandboxes&sandboxId=${modalObjectId}`;
+export function buildModalSandboxDashboardUrl(params: {
+  workspace: string | undefined;
+  environment?: string | undefined;
+  providerObjectId: string | null | undefined;
+}): string | null {
+  if (!params.workspace || !params.providerObjectId) return null;
+  const workspace = encodeURIComponent(params.workspace);
+  const environment = encodeURIComponent(params.environment || DEFAULT_MODAL_DASHBOARD_ENVIRONMENT);
+  const providerObjectId = encodeURIComponent(params.providerObjectId);
+  return `https://modal.com/apps/${workspace}/${environment}/deployed/${MODAL_APP_NAME}?activeTab=sandboxes&sandboxId=${providerObjectId}`;
 }
 
 export interface CreateSandboxRequest {
