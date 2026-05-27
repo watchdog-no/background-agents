@@ -1655,6 +1655,8 @@ export class SessionDO extends DurableObject<Env> {
       isProcessing,
       parentSessionId: session?.parent_session_id ?? null,
       totalCost: session?.total_cost ?? 0,
+      contextTokens: session?.context_tokens || undefined,
+      contextLimit: session?.context_limit || undefined,
       codeServerUrl: sandbox?.code_server_url ?? null,
       codeServerPassword,
       tunnelUrls: sandbox?.tunnel_urls ? this.safeParseTunnelUrls(sandbox.tunnel_urls) : null,

@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS session (
   spawn_depth INTEGER NOT NULL DEFAULT 0,           -- 0 for top-level, parent.depth + 1 for children
   code_server_enabled INTEGER NOT NULL DEFAULT 0,   -- 0 = disabled, 1 = enabled (opt-in)
   total_cost REAL NOT NULL DEFAULT 0,              -- Running session cost from step_finish events
+  context_tokens INTEGER NOT NULL DEFAULT 0,        -- Current context-window pressure (latest step usage estimate)
+  context_limit INTEGER NOT NULL DEFAULT 0,         -- Model's effective context window (gauge denominator)
   sandbox_settings TEXT DEFAULT NULL,               -- JSON blob of SandboxSettings (resolved at session creation)
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -382,6 +384,16 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
     id: 30,
     description: "Add total_cost to session",
     run: `ALTER TABLE session ADD COLUMN total_cost REAL NOT NULL DEFAULT 0`,
+  },
+  {
+    id: 31,
+    description: "Add context_tokens to session",
+    run: `ALTER TABLE session ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    id: 32,
+    description: "Add context_limit to session",
+    run: `ALTER TABLE session ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0`,
   },
 ];
 

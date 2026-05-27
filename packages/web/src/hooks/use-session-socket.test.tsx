@@ -395,6 +395,177 @@ describe("useSessionSocket", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
+  it("tracks current context pressure from step_finish tokens (replaces, not sums)", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 14000, output: 100, reasoning: 50, cache: { read: 0, write: 0 } },
+          contextLimit: 400000,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(14150);
+    });
+    // The limit is captured as the gauge denominator.
+    expect(result.current.sessionState?.contextLimit).toBe(400000);
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+          tokens: { input: 18000, output: 100, reasoning: 25, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+
+    // Latest step replaces the previous value (not 14150 + 18125).
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(18125);
+    });
+    // A step without contextLimit preserves the previously captured limit.
+    expect(result.current.sessionState?.contextLimit).toBe(400000);
+  });
+
+  it("ignores subtask and token-less steps, and reflects the post-compaction drop", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 18000, output: 100, reasoning: 25, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(18125);
+    });
+
+    act(() => {
+      // A child-session (subtask) step must not overwrite the parent's count.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 11,
+          isSubtask: true,
+          tokens: { input: 50000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      // A step without token usage must preserve the previous value.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 12,
+          cost: 0.01,
+        },
+      });
+    });
+    // Neither should have changed it.
+    expect(result.current.sessionState?.contextTokens).toBe(18125);
+
+    act(() => {
+      // After a compaction the next step reports a smaller input — value drops.
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 13,
+          tokens: { input: 9000, output: 50, reasoning: 10, cache: { read: 0, write: 0 } },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(9060);
+    });
+  });
+
+  it("sums cached and generated tokens and clears the gauge on compaction", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: {
+          type: "step_finish",
+          messageId: "msg-1",
+          sandboxId: "sandbox-1",
+          timestamp: 10,
+          tokens: { input: 760, output: 100, reasoning: 5000, cache: { read: 231424, write: 0 } },
+        },
+      });
+    });
+    // Cached and generated tokens are included, not just the 760 input delta.
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBe(237284);
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_event",
+        event: { type: "compaction", messageId: "msg-1", sandboxId: "sandbox-1", timestamp: 11 },
+      });
+    });
+    // Compaction clears the gauge until the next step reports the new size.
+    await waitFor(() => {
+      expect(result.current.sessionState?.contextTokens).toBeUndefined();
+    });
+  });
+
   it("collapses replayed accumulated token snapshots to the final assistant text", async () => {
     const { result } = renderHook(() => useSessionSocket("session-1"));
 

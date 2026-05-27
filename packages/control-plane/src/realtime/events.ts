@@ -8,9 +8,9 @@ import type { SandboxEvent, ServerMessage } from "../types";
  * Event categories for filtering.
  */
 export type EventCategory =
-  | "execution" // token, tool_call, tool_result, execution_complete
+  | "execution" // token, reasoning, tool_call, tool_result, execution_complete
   | "git" // git_sync
-  | "system" // heartbeat, error
+  | "system" // heartbeat, error, compaction
   | "artifact"; // artifact
 
 /**
@@ -19,6 +19,7 @@ export type EventCategory =
 export function getEventCategory(eventType: string): EventCategory {
   switch (eventType) {
     case "token":
+    case "reasoning":
     case "step_start":
     case "step_finish":
     case "tool_call":
@@ -29,6 +30,8 @@ export function getEventCategory(eventType: string): EventCategory {
       return "git";
     case "artifact":
       return "artifact";
+    case "compaction":
+      return "system";
     default:
       return "system";
   }

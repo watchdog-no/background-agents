@@ -37,6 +37,7 @@ export type EventType =
   | "git_sync"
   | "error"
   | "execution_complete"
+  | "compaction"
   | "artifact"
   | "push_complete"
   | "push_error"
@@ -198,6 +199,40 @@ export interface PullRequest {
   updatedAt: string;
 }
 
+/**
+ * Token usage reported by the agent runtime for a single step. Providers can
+ * split prompt cache and generated tokens across fields; use
+ * {@link contextTokensFromUsage} for the best available context-pressure value.
+ */
+export interface TokenUsage {
+  input: number;
+  // The runtime forwards provider usage verbatim and omits fields the provider
+  // doesn't report, so only `input` is guaranteed.
+  output?: number;
+  reasoning?: number;
+  total?: number;
+  cache?: { read?: number; write?: number };
+}
+
+/**
+ * Best available post-step context pressure for the gauge. Prefer an explicit
+ * runtime total when provided; otherwise sum prompt-side tokens (including
+ * cache) plus generated output/reasoning so long responses do not show false
+ * headroom near compaction.
+ */
+export function contextTokensFromUsage(tokens: TokenUsage): number {
+  if (typeof tokens.total === "number" && Number.isFinite(tokens.total)) {
+    return tokens.total;
+  }
+  return (
+    tokens.input +
+    (tokens.cache?.read ?? 0) +
+    (tokens.cache?.write ?? 0) +
+    (tokens.output ?? 0) +
+    (tokens.reasoning ?? 0)
+  );
+}
+
 // Sandbox events (from Modal / control-plane synthesized)
 export type SandboxEvent =
   | { type: "heartbeat"; sandboxId: string; status: string; timestamp: number }
@@ -243,8 +278,12 @@ export type SandboxEvent =
   | {
       type: "step_finish";
       cost?: number;
-      tokens?: number;
+      tokens?: TokenUsage;
       reason?: string;
+      // The model's effective context window as the runtime sees it (used as
+      // the denominator for the context-usage gauge / "distance to compaction").
+      // Constant for a session; the runtime may attach it to every step.
+      contextLimit?: number;
       messageId: string;
       sandboxId: string;
       timestamp: number;
@@ -278,6 +317,15 @@ export type SandboxEvent =
       messageId: string;
       success: boolean;
       error?: string;
+      sandboxId: string;
+      timestamp: number;
+    }
+  | {
+      // Emitted when the agent runtime compacts the session context (summarizes
+      // earlier turns to free up the context window). Surfaced as a marker in
+      // the timeline so users can see why earlier detail may have been dropped.
+      type: "compaction";
+      messageId: string;
       sandboxId: string;
       timestamp: number;
     }
@@ -401,6 +449,18 @@ export interface SessionState {
   isProcessing?: boolean;
   parentSessionId?: string | null;
   totalCost?: number;
+  /**
+   * Current context-window pressure in tokens (latest non-subtask step's
+   * reported usage or best-effort computed total). Grows as the conversation
+   * fills the window and drops after a compaction. Updated live from
+   * `step_finish` and persisted so it survives reload.
+   */
+  contextTokens?: number;
+  /**
+   * The model's effective context window (denominator for the usage gauge),
+   * as reported by the runtime. Constant for a session.
+   */
+  contextLimit?: number;
   codeServerUrl?: string | null;
   codeServerPassword?: string | null;
   tunnelUrls?: Record<string, string> | null;

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { mutate } from "swr";
+import { contextTokensFromUsage } from "@open-inspect/shared";
 import { SIDEBAR_SESSIONS_KEY } from "@/lib/session-list";
 import type { Artifact, SandboxEvent } from "@/types/session";
 import type {
@@ -311,6 +312,28 @@ export function useSessionSocket(sessionId: string): UseSessionSocketReturn {
             }
           : prev
       );
+    }
+
+    // Track current context-window pressure from each step. Include cached
+    // prompt and generated tokens so cached or long-output sessions don't show
+    // false headroom. Replace (don't accumulate); it drops after a compaction.
+    // Ignore subtask steps so a sub-agent can't overwrite the parent's count.
+    if (
+      event.type === "step_finish" &&
+      !event.isSubtask &&
+      typeof event.tokens?.input === "number"
+    ) {
+      const contextTokens = contextTokensFromUsage(event.tokens);
+      const contextLimit = typeof event.contextLimit === "number" ? event.contextLimit : undefined;
+      setSessionState((prev) =>
+        prev ? { ...prev, contextTokens, ...(contextLimit ? { contextLimit } : {}) } : prev
+      );
+    }
+
+    // Compaction shrinks the context; the new size isn't known until the next
+    // step. Clear the gauge so it doesn't show a stale pre-compaction count.
+    if (event.type === "compaction") {
+      setSessionState((prev) => (prev ? { ...prev, contextTokens: undefined } : prev));
     }
   }, []);
 

@@ -163,6 +163,23 @@ describe("SessionRepository", () => {
     });
   });
 
+  describe("setSessionContextUsage", () => {
+    it("replaces context_tokens and keeps context_limit when null (COALESCE)", () => {
+      repo.setSessionContextUsage(14000, null, 5000);
+
+      expect(mock.calls.length).toBe(1);
+      expect(mock.calls[0].query).toContain("SET context_tokens = ?");
+      expect(mock.calls[0].query).toContain("context_limit = COALESCE(?, context_limit)");
+      expect(mock.calls[0].params).toEqual([14000, null, 5000]);
+    });
+
+    it("stores context_limit when provided", () => {
+      repo.setSessionContextUsage(14000, 400000, 5000);
+
+      expect(mock.calls[0].params).toEqual([14000, 400000, 5000]);
+    });
+  });
+
   // === SANDBOX ===
 
   describe("getSandbox", () => {

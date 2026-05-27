@@ -11,6 +11,7 @@ function createProcessor() {
     createArtifact: vi.fn(),
     createEvent: vi.fn(),
     addSessionCost: vi.fn(),
+    setSessionContextUsage: vi.fn(),
     upsertExecutionCompleteEvent: vi.fn(),
     updateMessageCompletion: vi.fn(),
     getMessageTimestamps: vi.fn(
@@ -104,6 +105,27 @@ describe("SessionSandboxEventProcessor", () => {
     await h.processor.processSandboxEvent(event);
 
     expect(h.repository.upsertTokenEvent).toHaveBeenCalledWith("msg-1", event, expect.any(Number));
+    expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
+  });
+
+  it("persists compaction marker and broadcasts it", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "compaction",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.createEvent).toHaveBeenCalledWith({
+      id: expect.any(String),
+      type: "compaction",
+      data: JSON.stringify(event),
+      messageId: "msg-1",
+      createdAt: expect.any(Number),
+    });
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
   });
 
@@ -204,6 +226,78 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.repository.addSessionCost).toHaveBeenCalledWith(0.0123, expect.any(Number));
     expect(h.repository.createEvent).not.toHaveBeenCalled();
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
+  });
+
+  it("persists context pressure from a non-subtask step_finish", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      tokens: { input: 14000, output: 100, reasoning: 50, cache: { read: 0, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
+      14150,
+      400000,
+      expect.any(Number)
+    );
+  });
+
+  it("ignores subtask step_finish for context pressure", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      isSubtask: true,
+      tokens: { input: 50000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).not.toHaveBeenCalled();
+  });
+
+  it("sums cached and generated tokens into context pressure", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "step_finish",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+      tokens: { input: 760, output: 100, reasoning: 5000, cache: { read: 231424, write: 0 } },
+      contextLimit: 400000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    // Includes cache + generated output/reasoning, not just the tiny 760 input delta.
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(
+      237284,
+      400000,
+      expect.any(Number)
+    );
+  });
+
+  it("clears context pressure on compaction", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "compaction",
+      messageId: "msg-1",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.repository.setSessionContextUsage).toHaveBeenCalledWith(0, null, expect.any(Number));
   });
 
   it("does not add session cost for step_finish with NaN cost", async () => {
