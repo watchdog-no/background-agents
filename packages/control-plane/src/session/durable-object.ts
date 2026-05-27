@@ -13,7 +13,7 @@ import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { resolveAppName, timingSafeEqual } from "@open-inspect/shared";
 import { generateId, hashToken, encryptToken, decryptToken } from "../auth/crypto";
 import { getGitHubAppConfig, getCachedInstallationToken } from "../auth/github-app";
-import { createModalClient } from "../sandbox/client";
+import { buildModalSandboxDashboardUrl, createModalClient } from "../sandbox/client";
 import { createDaytonaRestClient } from "../sandbox/daytona-rest-client";
 import { createModalProvider } from "../sandbox/providers/modal-provider";
 import { createDaytonaProvider } from "../sandbox/providers/daytona-provider";
@@ -728,6 +728,11 @@ export class SessionDO extends DurableObject<Env> {
       };
     }
 
+    const sandboxDashboardUrlBuilder =
+      sandboxBackend === "modal"
+        ? (providerObjectId: string) => this.getSandboxDashboardUrl(providerObjectId)
+        : undefined;
+
     const config = {
       ...DEFAULT_LIFECYCLE_CONFIG,
       controlPlaneUrl,
@@ -739,6 +744,7 @@ export class SessionDO extends DurableObject<Env> {
       },
       mcpServerLookup,
       slackAgentNotifyLookup,
+      sandboxDashboardUrlBuilder,
     };
 
     // Create repo image lookup if D1 is available (Modal-only — Daytona doesn't use repo images)
@@ -1676,7 +1682,16 @@ export class SessionDO extends DurableObject<Env> {
       tunnelUrls: sandbox?.tunnel_urls ? this.safeParseTunnelUrls(sandbox.tunnel_urls) : null,
       ttydUrl: sandbox?.ttyd_url ?? null,
       ttydToken,
+      sandboxDashboardUrl: this.getSandboxDashboardUrl(sandbox?.modal_object_id),
     };
+  }
+
+  private getSandboxDashboardUrl(providerObjectId: string | null | undefined): string | null {
+    if (resolveSandboxBackendName(this.env.SANDBOX_PROVIDER) !== "modal") return null;
+    return buildModalSandboxDashboardUrl({
+      workspace: this.env.MODAL_WORKSPACE,
+      providerObjectId,
+    });
   }
 
   /**

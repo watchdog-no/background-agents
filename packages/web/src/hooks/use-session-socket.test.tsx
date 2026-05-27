@@ -94,6 +94,18 @@ function createSubscribedMessage(artifacts: SessionArtifact[] = []): ServerMessa
   };
 }
 
+function sendSandboxAccessMessages(socket: FakeWebSocket, sandboxId: string) {
+  socket.receive({
+    type: "code_server_info",
+    url: `https://code.example/${sandboxId}`,
+    password: "secret",
+  });
+  socket.receive({
+    type: "sandbox_dashboard_url",
+    url: `https://provider.example/${sandboxId}`,
+  });
+}
+
 describe("useSessionSocket", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -391,6 +403,145 @@ describe("useSessionSocket", () => {
       expect(result.current.sessionState?.branchName).toBe("feature/live-update");
     });
     expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("updates sessionState.sandboxDashboardUrl from sandbox_dashboard_url", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+    });
+
+    act(() => {
+      socket.receive({
+        type: "sandbox_dashboard_url",
+        url: "https://provider.example/sandbox-123",
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/sandbox-123"
+      );
+    });
+  });
+
+  it("clears credentials on spawn and terminal statuses without dropping diagnostic links early", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+      sendSandboxAccessMessages(socket, "old-sandbox");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/old-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBe("https://code.example/old-sandbox");
+    });
+
+    act(() => {
+      socket.receive({ type: "sandbox_spawning" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxStatus).toBe("spawning");
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/old-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBeUndefined();
+    });
+
+    act(() => {
+      socket.receive({ type: "sandbox_status", status: "spawning" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxStatus).toBe("spawning");
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBeUndefined();
+      expect(result.current.sessionState?.codeServerUrl).toBeUndefined();
+    });
+
+    act(() => {
+      sendSandboxAccessMessages(socket, "new-sandbox");
+      socket.receive({ type: "sandbox_status", status: "failed" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxStatus).toBe("failed");
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/new-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBeUndefined();
+    });
+  });
+
+  it("clears dashboard URL only for replacement starts, not sandbox errors", async () => {
+    const { result } = renderHook(() => useSessionSocket("session-1"));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket.open();
+      socket.receive(createSubscribedMessage());
+      sendSandboxAccessMessages(socket, "old-sandbox");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/old-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBe("https://code.example/old-sandbox");
+    });
+
+    act(() => {
+      socket.receive({ type: "sandbox_status", status: "spawning" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxStatus).toBe("spawning");
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBeUndefined();
+      expect(result.current.sessionState?.codeServerUrl).toBeUndefined();
+    });
+
+    act(() => {
+      sendSandboxAccessMessages(socket, "new-sandbox");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/new-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBe("https://code.example/new-sandbox");
+    });
+
+    act(() => {
+      socket.receive({ type: "sandbox_error", error: "spawn failed" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionState?.sandboxStatus).toBe("failed");
+      expect(result.current.sessionState?.sandboxDashboardUrl).toBe(
+        "https://provider.example/new-sandbox"
+      );
+      expect(result.current.sessionState?.codeServerUrl).toBeUndefined();
+    });
   });
 
   it("prepends new artifacts and replaces duplicates by id", async () => {
