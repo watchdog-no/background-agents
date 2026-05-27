@@ -40,7 +40,7 @@ Resolving a library id first, then fetching docs, gives far better results than 
 #    Use the official name with proper punctuation: "Next.js" not "nextjs".
 ctx7 library "Next.js" "app router data fetching"
 
-# 2. Fetch docs for the best-matching id, passing the full question as the query.
+# 2. Fetch docs for the best-matching id, passing the full question as the required query.
 ctx7 docs "/vercel/next.js" "app router data fetching"
 ```
 
@@ -63,5 +63,6 @@ ctx7 docs "/vercel/next.js/v14.3.0" "middleware configuration"
 
 - Use the user's full question as the query — specific, detailed queries return better results than
   vague single words.
+- `ctx7 docs` requires both a library id and a query; do not omit the query.
 - Run at most ~3 `ctx7` commands per question.
 - Never include sensitive information (API keys, passwords, credentials) in queries.
