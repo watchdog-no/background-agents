@@ -8,6 +8,7 @@ This image provides a complete development environment with:
 - OpenCode CLI pre-installed
 - agent-browser CLI with headless Chrome for browser automation
 - ffmpeg for browser video encoding
+- ctx7 (Context7) CLI for up-to-date library documentation
 - Sandbox entrypoint and bridge code
 """
 
@@ -45,10 +46,18 @@ TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 # from the Linear app-actor token when available or from a user secret fallback.
 LINEAR_CLI_VERSION = "2.0.0"
 
+# ctx7 (Context7) version to install (pinned for reproducible images).
+# Gives the agent up-to-date library/framework documentation via the `ctx7` CLI,
+# paired with the context7 Skill. Auth is optional: it works anonymously
+# (rate-limited) and reads CONTEXT7_API_KEY for higher limits, populated per spawn
+# from a user secret when set in Settings → Secrets.
+CTX7_VERSION = "0.4.4"
+
 # Cache buster - change this to force Modal image rebuild
 # v52: git credential helper backed by control plane; remove embedded VCS tokens
 # v53: upgrade OpenCode to 1.15.10 after the SSE event subscription fix
 # v54: install schpet/linear-cli for agent-side Linear access
+# v55: install ctx7 (Context7) for agent-side library documentation
 
 # Base image with all development tools
 base_image = (
@@ -174,6 +183,13 @@ base_image = (
     .run_commands(
         f"npm install -g @schpet/linear-cli@{LINEAR_CLI_VERSION}",
         "linear --version",
+    )
+    # Install ctx7 (Context7) for up-to-date library/framework documentation.
+    # Exposes `ctx7` on PATH. Auth is optional: anonymous works (rate-limited),
+    # CONTEXT7_API_KEY raises limits. See the context7 Skill for usage.
+    .run_commands(
+        f"npm install -g ctx7@{CTX7_VERSION}",
+        "ctx7 --version",
     )
     # Create working directories
     .run_commands(
