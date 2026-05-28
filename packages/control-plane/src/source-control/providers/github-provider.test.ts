@@ -276,8 +276,8 @@ describe("GitHubSourceControlProvider", () => {
     });
 
     it("classifies an upstream 5xx (with .status) as transient", async () => {
-      const httpError = Object.assign(new Error("Failed to get installation token: 503 down"), {
-        status: 503,
+      const httpError = Object.assign(new Error("Failed to get installation token: 500 down"), {
+        status: 500,
       });
       mockGetCachedInstallationTokenWithExpiry.mockRejectedValueOnce(httpError);
 
@@ -287,7 +287,7 @@ describe("GitHubSourceControlProvider", () => {
       expect(err).toBeInstanceOf(SourceControlProviderError);
       // Transient → the service maps this to 502, not 500.
       expect((err as SourceControlProviderError).errorType).toBe("transient");
-      expect((err as SourceControlProviderError).httpStatus).toBe(503);
+      expect((err as SourceControlProviderError).httpStatus).toBe(500);
     });
   });
 });

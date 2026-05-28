@@ -1153,6 +1153,9 @@ function SandboxStatus({
         className={`${className} hover:underline`}
       >
         {label}
+        <span aria-hidden="true" className="ml-0.5">
+          ↗
+        </span>
       </a>
     );
   }

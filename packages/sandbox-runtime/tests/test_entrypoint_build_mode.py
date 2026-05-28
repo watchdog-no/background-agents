@@ -816,10 +816,6 @@ class TestEnsureCredentialHelperConfigured:
             "credential_helper.shim_write_failed",
             error="read-only",
         )
-        supervisor.log.warn.assert_any_call(
-            "credential_helper.unavailable",
-            path="/usr/local/bin/oi-git-credentials",
-        )
         pairs = {(c[4], c[5]) for c in git_config_calls}
         assert ("credential.helper", "/usr/local/bin/oi-git-credentials") not in pairs
         assert ("credential.useHttpPath", "true") in pairs
