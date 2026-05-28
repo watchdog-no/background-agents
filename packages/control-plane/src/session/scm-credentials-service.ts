@@ -28,6 +28,22 @@ export class ScmCredentialsService {
   async getCredentials(): Promise<ScmCredentialsResult> {
     try {
       const auth = await this.provider.generateCredentialHelperAuth();
+      if (
+        !auth.username.trim() ||
+        !auth.password.trim() ||
+        !Number.isFinite(auth.expiresAtEpochMs) ||
+        auth.expiresAtEpochMs <= Date.now()
+      ) {
+        this.log.error("Provider returned invalid SCM credential helper auth", {
+          scm_provider: this.provider.name,
+        });
+        return {
+          ok: false,
+          status: 500,
+          error: "Failed to generate SCM credentials",
+        };
+      }
+
       return {
         ok: true,
         username: auth.username,

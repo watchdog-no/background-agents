@@ -1,3 +1,3 @@
 """Sandbox image version constants."""
 
-CACHE_BUSTER = "v55-context7"
+CACHE_BUSTER = "v56-scm-broker"

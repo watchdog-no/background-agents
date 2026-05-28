@@ -46,6 +46,47 @@ describe("ScmCredentialsService", () => {
     });
   });
 
+  it("rejects invalid provider credential payloads", async () => {
+    const log = createTestLogger();
+    const provider = makeProvider({
+      generateCredentialHelperAuth: vi.fn().mockResolvedValue({
+        username: "x-access-token",
+        password: "",
+        expiresAtEpochMs: Date.now() + 60 * 60 * 1000,
+      }),
+    });
+
+    const result = await new ScmCredentialsService(provider, log).getCredentials();
+
+    expect(result).toEqual({
+      ok: false,
+      status: 500,
+      error: "Failed to generate SCM credentials",
+    });
+    expect(log.error).toHaveBeenCalledWith(
+      "Provider returned invalid SCM credential helper auth",
+      expect.objectContaining({ scm_provider: "github" })
+    );
+  });
+
+  it("rejects expired provider credential payloads", async () => {
+    const provider = makeProvider({
+      generateCredentialHelperAuth: vi.fn().mockResolvedValue({
+        username: "x-access-token",
+        password: "ghs_token",
+        expiresAtEpochMs: Date.now() - 1,
+      }),
+    });
+
+    const result = await new ScmCredentialsService(provider, createTestLogger()).getCredentials();
+
+    expect(result).toEqual({
+      ok: false,
+      status: 500,
+      error: "Failed to generate SCM credentials",
+    });
+  });
+
   it("maps permanent provider errors to 500", async () => {
     const log = createTestLogger();
     const provider = makeProvider({

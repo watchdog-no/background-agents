@@ -21,7 +21,8 @@ CTX7_VERSION = "0.4.4"
 # git system-wide so per-request token brokerage works (parity with Modal v52).
 # daytona-v3: install schpet/linear-cli for agent-side Linear access.
 # daytona-v4: install ctx7 (Context7) for agent-side library documentation.
-SANDBOX_VERSION = "daytona-v4-context7"
+# daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
+SANDBOX_VERSION = "daytona-v5-scm-broker"
 
 
 def build_base_image(repo_root: Path) -> Image:

@@ -58,6 +58,7 @@ CTX7_VERSION = "0.4.4"
 # v53: upgrade OpenCode to 1.15.10 after the SSE event subscription fix
 # v54: install schpet/linear-cli for agent-side Linear access
 # v55: install ctx7 (Context7) for agent-side library documentation
+# v56: adopt upstream host-scoped SCM credential broker (PR #679)
 
 # Base image with all development tools
 base_image = (

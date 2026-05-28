@@ -100,9 +100,11 @@ For the agent to interact with GitHub from the sandbox, these prerequisites must
    short-lived SCM credentials from the control plane
 
 Fresh sandboxes get GitHub CLI credentials through the helper rather than spawn-time token
-injection. `GITHUB_TOKEN` and `GITHUB_APP_TOKEN` env fallbacks are only used for compatibility with
-legacy snapshots, repo images, and image-build paths that cannot call the control-plane credential
-broker yet.
+injection. `GITHUB_TOKEN` and `GITHUB_APP_TOKEN` env fallbacks are only used for legacy snapshots
+and repo images when the user has not provided an explicit GitHub CLI token. One-shot image-build
+sandboxes use only the narrower `VCS_CLONE_TOKEN` fallback because they cannot call the
+control-plane credential broker. For git operations, the helper keeps the existing installation-wide
+access model and can authenticate auxiliary private repos on the configured SCM host.
 
 ## Webhook Events
 

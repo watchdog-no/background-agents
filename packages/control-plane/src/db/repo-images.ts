@@ -5,7 +5,7 @@ export interface RepoImageBuild {
   baseBranch: string;
 }
 
-export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v55-context7";
+export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v56-scm-broker";
 
 export interface RepoImage {
   id: string;
