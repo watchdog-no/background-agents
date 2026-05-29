@@ -1,6 +1,7 @@
 """Tests for anthropic auth proxy plugin deployment in SandboxSupervisor."""
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,7 +38,7 @@ class TestAnthropicAuthPluginSetup:
         with (
             patch.dict(
                 "os.environ",
-                {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_real_secret"},
+                {"ANTHROPIC_OAUTH_ENABLED": "true"},
                 clear=False,
             ),
             patch("pathlib.Path.home", return_value=tmp_path),
@@ -71,9 +72,7 @@ class TestAnthropicAuthPluginSetup:
         original_path = Path
 
         with (
-            patch.dict(
-                "os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_real_secret"}, clear=False
-            ),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("sandbox_runtime.entrypoint.Path") as mock_path,
             patch("sandbox_runtime.entrypoint.shutil.copy") as mock_copy,
             patch(
@@ -107,8 +106,8 @@ class TestAnthropicAuthPluginSetup:
             sup.workspace_path / ".opencode" / "plugins" / "anthropic-auth-plugin.js",
         )
 
-    async def test_start_opencode_skips_plugin_without_refresh_token(self, tmp_path):
-        """Without the refresh token, the anthropic plugin must not be copied."""
+    async def test_start_opencode_skips_plugin_without_oauth_enabled(self, tmp_path):
+        """Without the non-secret OAuth flag, the anthropic plugin must not be copied."""
         sup = _make_supervisor()
         sup.workspace_path = tmp_path / "workspace"
         sup.workspace_path.mkdir()
@@ -126,7 +125,7 @@ class TestAnthropicAuthPluginSetup:
         original_path = Path
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": ""}, clear=False),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": ""}, clear=False),
             patch("sandbox_runtime.entrypoint.Path") as mock_path,
             patch("sandbox_runtime.entrypoint.shutil.copy") as mock_copy,
             patch(
@@ -155,3 +154,68 @@ class TestAnthropicAuthPluginSetup:
         for call in mock_copy.call_args_list:
             dest = call.args[1]
             assert dest.name != "anthropic-auth-plugin.js"
+
+    def test_provider_models_hook_zeroes_oauth_costs(self):
+        """OAuth-backed Anthropic models should report zero subscription cost."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = f"""
+            import {{ AnthropicAuthProxy }} from {json.dumps(plugin_path.as_uri())};
+
+            const plugin = await AnthropicAuthProxy({{
+              client: {{ auth: {{ set: async () => {{}} }} }},
+            }});
+
+            const models = await plugin.provider.models(
+              {{
+                id: "anthropic",
+                models: {{
+                  "claude-test": {{
+                    name: "Claude Test",
+                    cost: {{
+                      input: 3,
+                      output: 15,
+                      cache: {{ read: 0.3, write: 3.75 }},
+                      tiers: [
+                        {{
+                          input: 6,
+                          output: 22.5,
+                          cache: {{ read: 0.6, write: 7.5 }},
+                          tier: {{ type: "context", size: 200000 }},
+                        }},
+                      ],
+                    }},
+                  }},
+                }},
+              }},
+              {{ auth: {{ type: "oauth", refresh: "sentinel", access: "", expires: 0 }} }}
+            );
+
+            console.log(JSON.stringify(models["claude-test"].cost));
+        """
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert json.loads(result.stdout) == {
+            "input": 0,
+            "output": 0,
+            "cache": {"read": 0, "write": 0},
+            "tiers": [
+                {
+                    "input": 0,
+                    "output": 0,
+                    "cache": {"read": 0, "write": 0},
+                    "tier": {"type": "context", "size": 200000},
+                }
+            ],
+        }

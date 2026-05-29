@@ -608,9 +608,8 @@ class SandboxSupervisor:
             self.log.warn("openai_oauth.setup_error", exc=e)
 
     def _setup_anthropic_oauth(self) -> None:
-        """Write OpenCode auth.json for Claude OAuth if refresh token is configured."""
-        refresh_token = os.environ.get("ANTHROPIC_OAUTH_REFRESH_TOKEN")
-        if not refresh_token:
+        """Write OpenCode auth.json for Claude OAuth if control plane enables it."""
+        if os.environ.get("ANTHROPIC_OAUTH_ENABLED") != "true":
             return
 
         try:
@@ -908,7 +907,7 @@ class SandboxSupervisor:
 
         # Deploy anthropic auth proxy plugin if Anthropic OAuth is configured
         anthropic_plugin_source = Path("/app/sandbox_runtime/plugins/anthropic-auth-plugin.js")
-        if anthropic_plugin_source.exists() and os.environ.get("ANTHROPIC_OAUTH_REFRESH_TOKEN"):
+        if anthropic_plugin_source.exists() and os.environ.get("ANTHROPIC_OAUTH_ENABLED") == "true":
             plugin_dir = opencode_dir / "plugins"
             plugin_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy(anthropic_plugin_source, plugin_dir / "anthropic-auth-plugin.js")

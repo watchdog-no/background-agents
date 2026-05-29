@@ -37,6 +37,22 @@ log = get_logger("manager")
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 7200  # 2 hours
 SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS = 300
 MAX_TUNNEL_PORTS = 10
+ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = {
+    "ANTHROPIC_OAUTH_REFRESH_TOKEN",
+    "ANTHROPIC_OAUTH_ACCESS_TOKEN",
+    "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT",
+    "ANTHROPIC_OAUTH_ENABLED",
+}
+
+
+def _filter_sandbox_user_env_vars(user_env_vars: dict[str, str] | None) -> dict[str, str]:
+    if not user_env_vars:
+        return {}
+    return {
+        key: value
+        for key, value in user_env_vars.items()
+        if key.upper() not in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS
+    }
 
 
 @dataclass
@@ -53,6 +69,7 @@ class SandboxConfig:
     timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS
     clone_token: str | None = None  # VCS clone token for git operations
     user_env_vars: dict[str, str] | None = None  # User-provided env vars (repo secrets)
+    anthropic_oauth_enabled: bool = False  # Non-secret Anthropic OAuth setup signal
     repo_image_id: str | None = None  # Pre-built repo image ID from provider
     repo_image_sha: str | None = None  # Git SHA the repo image was built from
     code_server_enabled: bool = False  # Whether to start code-server in the sandbox
@@ -322,8 +339,7 @@ class SandboxManager:
         # Prepare environment variables (user vars first, system vars override)
         env_vars: dict[str, str] = {}
 
-        if config.user_env_vars:
-            env_vars.update(config.user_env_vars)
+        env_vars.update(_filter_sandbox_user_env_vars(config.user_env_vars))
 
         env_vars.update(
             {
@@ -366,6 +382,9 @@ class SandboxManager:
 
         if config.session_config:
             env_vars["SESSION_CONFIG"] = config.session_config.model_dump_json()
+
+        if config.anthropic_oauth_enabled:
+            env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
         # Determine image to use (priority: session snapshot > repo image > base image)
         if config.snapshot_id:
@@ -458,8 +477,7 @@ class SandboxManager:
         # Prepare environment variables (user vars first, system vars override)
         env_vars: dict[str, str] = {}
 
-        if user_env_vars:
-            env_vars.update(user_env_vars)
+        env_vars.update(_filter_sandbox_user_env_vars(user_env_vars))
 
         env_vars.update(
             {
@@ -626,6 +644,7 @@ class SandboxManager:
         timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS,
         code_server_enabled: bool = False,
         agent_slack_notify_enabled: bool = False,
+        anthropic_oauth_enabled: bool = False,
         settings: dict[str, Any] | None = None,
     ) -> SandboxHandle:
         """
@@ -667,8 +686,7 @@ class SandboxManager:
         # Prepare environment variables (user vars first, system vars override)
         env_vars: dict[str, str] = {}
 
-        if user_env_vars:
-            env_vars.update(user_env_vars)
+        env_vars.update(_filter_sandbox_user_env_vars(user_env_vars))
 
         env_vars.update(
             {
@@ -705,6 +723,9 @@ class SandboxManager:
 
         if agent_slack_notify_enabled:
             env_vars["AGENT_SLACK_NOTIFY_ENABLED"] = "true"
+
+        if anthropic_oauth_enabled:
+            env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
         exposed_ports, tunnel_ports = self._collect_exposed_ports(
             code_server_enabled, terminal_enabled, settings

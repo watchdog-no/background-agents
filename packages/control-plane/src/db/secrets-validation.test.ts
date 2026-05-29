@@ -50,6 +50,11 @@ describe("validateKey", () => {
   it("rejects reserved keys case-insensitively", () => {
     expect(() => validateKey("path")).toThrow(SecretsValidationError);
   });
+
+  it("allows Anthropic OAuth refresh token but reserves the sandbox flag", () => {
+    expect(() => validateKey("ANTHROPIC_OAUTH_REFRESH_TOKEN")).not.toThrow();
+    expect(() => validateKey("ANTHROPIC_OAUTH_ENABLED")).toThrow(SecretsValidationError);
+  });
 });
 
 describe("validateValue", () => {

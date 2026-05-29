@@ -51,8 +51,8 @@ export class AnthropicTokenRefreshService {
     try {
       return await this.attemptRefresh(tokenState, session);
     } catch (e) {
-      if (e instanceof AnthropicTokenRefreshError && e.status === 401) {
-        return this.handleUnauthorizedRefresh(tokenState, readTokenState, session);
+      if (e instanceof AnthropicTokenRefreshError && this.isConcurrentRotationError(e)) {
+        return this.handleConcurrentRotationRefresh(tokenState, readTokenState, session, e);
       }
 
       this.log.error("Anthropic token refresh failed", {
@@ -149,12 +149,31 @@ export class AnthropicTokenRefreshService {
     };
   }
 
-  private async handleUnauthorizedRefresh(
+  private isConcurrentRotationError(error: AnthropicTokenRefreshError): boolean {
+    if (error.status === 401) {
+      return true;
+    }
+
+    if (error.status !== 400) {
+      return false;
+    }
+
+    try {
+      const body = JSON.parse(error.body) as { error?: unknown };
+      return body.error === "invalid_grant";
+    } catch {
+      return error.body.includes("invalid_grant");
+    }
+  }
+
+  private async handleConcurrentRotationRefresh(
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     readTokenState: () => Promise<AnthropicTokenState | null>,
-    session: SessionRow
+    session: SessionRow,
+    error: AnthropicTokenRefreshError
   ): Promise<AnthropicTokenRefreshResult> {
-    this.log.warn("Anthropic refresh got 401, checking for concurrent rotation", {
+    this.log.warn("Anthropic refresh failed, checking for concurrent rotation", {
+      status: error.status,
       source: tokenState.source,
     });
 
@@ -177,11 +196,11 @@ export class AnthropicTokenRefreshService {
         return this.attemptRefresh(reread, session);
       }
     } catch (retryErr) {
-      this.log.error("Retry after 401 also failed", {
+      this.log.error("Retry after Anthropic refresh failure also failed", {
         error: retryErr instanceof Error ? retryErr.message : String(retryErr),
       });
     }
 
-    return { ok: false, status: 401, error: "Anthropic token refresh failed: unauthorized" };
+    return { ok: false, status: error.status, error: "Anthropic token refresh failed" };
   }
 }

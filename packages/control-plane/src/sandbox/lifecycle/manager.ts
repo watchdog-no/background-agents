@@ -15,6 +15,7 @@ import type { SandboxStatus } from "../../types";
 import type { SandboxRow, SessionRow } from "../../session/types";
 import type { McpServerConfig } from "@open-inspect/shared";
 import { SandboxProviderError, type SandboxProvider, type CreateSandboxConfig } from "../provider";
+import { prepareSandboxOAuthEnv } from "../oauth-env";
 import {
   evaluateCircuitBreaker,
   evaluateSpawnDecision,
@@ -396,7 +397,7 @@ export class SandboxLifecycleManager {
         repo_name: session.repo_name,
       });
 
-      const userEnvVars = await this.storage.getUserEnvVars();
+      const sandboxEnv = prepareSandboxOAuthEnv(await this.storage.getUserEnvVars());
       const { provider, model: modelId } = this.resolveProviderAndModel(session);
 
       // Look up pre-built repo image (graceful fallback on failure)
@@ -442,7 +443,8 @@ export class SandboxLifecycleManager {
         sandboxAuthToken,
         provider,
         model: modelId,
-        userEnvVars,
+        userEnvVars: sandboxEnv.userEnvVars,
+        anthropicOauthEnabled: sandboxEnv.anthropicOauthEnabled,
         repoImageId,
         repoImageSha,
         timeoutSeconds,
@@ -604,7 +606,7 @@ export class SandboxLifecycleManager {
         snapshot_image_id: snapshotImageId,
       });
 
-      const userEnvVars = await this.storage.getUserEnvVars();
+      const sandboxEnv = prepareSandboxOAuthEnv(await this.storage.getUserEnvVars());
       const { provider, model: modelId } = this.resolveProviderAndModel(session);
 
       // Child sessions get a shorter timeout (same logic as doSpawn)
@@ -625,7 +627,8 @@ export class SandboxLifecycleManager {
         repoName: session.repo_name,
         provider,
         model: modelId,
-        userEnvVars,
+        userEnvVars: sandboxEnv.userEnvVars,
+        anthropicOauthEnabled: sandboxEnv.anthropicOauthEnabled,
         timeoutSeconds,
         branch: session.base_branch,
         codeServerEnabled,

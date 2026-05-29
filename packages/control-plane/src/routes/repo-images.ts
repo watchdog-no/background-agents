@@ -14,6 +14,7 @@ import { GlobalSecretsStore } from "../db/global-secrets";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import { mergeSecrets } from "../db/secrets-validation";
 import { createModalClient } from "../sandbox/client";
+import { prepareSandboxOAuthEnv } from "../sandbox/oauth-env";
 import { isModalSandboxBackend } from "../sandbox/provider-name";
 import { createLogger } from "../logger";
 import type { Env } from "../types";
@@ -249,13 +250,14 @@ async function handleTriggerBuild(
       }
 
       const { merged, totalBytes, exceedsLimit } = mergeSecrets(globalSecrets, repoSecrets);
-      if (Object.keys(merged).length > 0) {
-        userEnvVars = merged;
+      const prepared = prepareSandboxOAuthEnv(merged);
+      if (prepared.userEnvVars) {
+        userEnvVars = prepared.userEnvVars;
         const logLevel = exceedsLimit ? "warn" : "info";
         logger[logLevel]("repo_image.secrets_loaded", {
           global_count: Object.keys(globalSecrets).length,
           repo_count: Object.keys(repoSecrets).length,
-          merged_count: Object.keys(merged).length,
+          merged_count: Object.keys(userEnvVars).length,
           payload_bytes: totalBytes,
           exceeds_limit: exceedsLimit,
           repo_owner: owner,

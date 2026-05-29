@@ -18,6 +18,31 @@ const ANTHROPIC_BETA_OAUTH = "oauth-2025-04-20";
 let cachedAccessToken = null;
 let cachedExpiresAt = 0;
 
+function zeroCost(cost = {}) {
+  const base = {
+    input: 0,
+    output: 0,
+    cache: { read: 0, write: 0 },
+  };
+
+  if (Array.isArray(cost.tiers)) {
+    base.tiers = cost.tiers.map((tierCost) => ({
+      ...base,
+      tier: tierCost.tier,
+    }));
+  }
+
+  if (cost.experimentalOver200K) {
+    base.experimentalOver200K = {
+      input: 0,
+      output: 0,
+      cache: { read: 0, write: 0 },
+    };
+  }
+
+  return base;
+}
+
 function getSessionId() {
   try {
     const config = JSON.parse(process.env.SESSION_CONFIG || "{}");
@@ -101,16 +126,6 @@ export const AnthropicAuthProxy = async (input) => {
         const auth = await getAuth();
         if (auth.type !== "oauth") return {};
 
-        // Zero out costs for subscription-billed Claude models so the UI shows
-        // them as free.
-        for (const model of Object.values(provider.models)) {
-          model.cost = {
-            input: 0,
-            output: 0,
-            cache: { read: 0, write: 0 },
-          };
-        }
-
         const setAuth = async (body) => {
           await input.client.auth.set({ path: { id: "anthropic" }, body });
         };
@@ -182,6 +197,22 @@ export const AnthropicAuthProxy = async (input) => {
             return fetch(requestInput, { ...init, headers });
           },
         };
+      },
+    },
+    provider: {
+      id: "anthropic",
+      async models(provider, ctx) {
+        if (ctx?.auth && ctx.auth.type !== "oauth") return provider.models;
+
+        return Object.fromEntries(
+          Object.entries(provider.models).map(([modelId, model]) => [
+            modelId,
+            {
+              ...model,
+              cost: zeroCost(model.cost),
+            },
+          ])
+        );
       },
     },
   };

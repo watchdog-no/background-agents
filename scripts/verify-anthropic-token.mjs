@@ -10,7 +10,9 @@
  *      anthropic-auth-plugin.js), proving the subscription path works.
  *
  * Reads ANTHROPIC_OAUTH_REFRESH_TOKEN from the environment, or from a file
- * passed as the first arg (e.g. .env-tmp). Never prints the secret values.
+ * passed as the first arg (e.g. .env-tmp). Secret values are masked unless an
+ * env-sourced refresh token rotates; then the replacement is printed once so
+ * it is not lost after Anthropic invalidates the previous token.
  *
  * Usage:
  *   node scripts/verify-anthropic-token.mjs .env-tmp
@@ -108,6 +110,10 @@ async function main() {
   if (rotated && source.file) {
     persistRotatedToken(source, tokens.refresh_token);
     console.log(`    (wrote rotated token back to ${source.file} as ${source.key})`);
+  } else if (rotated) {
+    console.log("    new_refresh_token:");
+    console.log(tokens.refresh_token);
+    console.log("    Save this value now; the previous refresh token is already invalid.");
   }
 
   // --- Step 2: access token -> Messages API ---
@@ -175,7 +181,7 @@ async function main() {
       source.file
         ? `ℹ️  The refresh token rotated and the live value was saved to ${source.file}. ` +
             "Paste THAT value into Open-Inspect Secrets (the previous one is now dead)."
-        : "⚠️  The refresh token rotated; the previous value is now dead. Capture the new one before it is lost."
+        : "⚠️  The refresh token rotated; the previous value is now dead. The live value was printed above."
     );
   }
 }

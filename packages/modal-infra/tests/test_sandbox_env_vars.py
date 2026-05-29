@@ -42,6 +42,69 @@ async def test_user_env_vars_override_order(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_oauth_flag_is_system_env(monkeypatch):
+    captured = {}
+
+    async def fake_create_aio(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+
+        class FakeSandbox:
+            object_id = "obj-123"
+            stdout = None
+
+        return FakeSandbox()
+
+    fake_create_aio.aio = fake_create_aio
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", fake_create_aio)
+
+    manager = SandboxManager()
+    await manager.create_sandbox(
+        SandboxConfig(
+            repo_owner="acme",
+            repo_name="repo",
+            anthropic_oauth_enabled=True,
+            user_env_vars={"ANTHROPIC_OAUTH_ENABLED": "false"},
+        )
+    )
+
+    assert captured["env"]["ANTHROPIC_OAUTH_ENABLED"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_oauth_token_env_vars_are_filtered(monkeypatch):
+    captured = {}
+
+    async def fake_create_aio(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+
+        class FakeSandbox:
+            object_id = "obj-123"
+            stdout = None
+
+        return FakeSandbox()
+
+    fake_create_aio.aio = fake_create_aio
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", fake_create_aio)
+
+    manager = SandboxManager()
+    await manager.create_sandbox(
+        SandboxConfig(
+            repo_owner="acme",
+            repo_name="repo",
+            user_env_vars={
+                "ANTHROPIC_OAUTH_REFRESH_TOKEN": "refresh-token",
+                "ANTHROPIC_OAUTH_ACCESS_TOKEN": "access-token",
+                "CUSTOM_SECRET": "value",
+            },
+        )
+    )
+
+    assert "ANTHROPIC_OAUTH_REFRESH_TOKEN" not in captured["env"]
+    assert "ANTHROPIC_OAUTH_ACCESS_TOKEN" not in captured["env"]
+    assert captured["env"]["CUSTOM_SECRET"] == "value"
+
+
+@pytest.mark.asyncio
 async def test_restore_user_env_vars_override_order(monkeypatch):
     captured = {}
 
@@ -89,6 +152,46 @@ async def test_restore_user_env_vars_override_order(monkeypatch):
     assert env_vars["SANDBOX_AUTH_TOKEN"] == "token-456"
     # User vars that don't collide are preserved
     assert env_vars["CUSTOM_SECRET"] == "value"
+
+
+@pytest.mark.asyncio
+async def test_restore_anthropic_oauth_flag_is_system_env(monkeypatch):
+    captured = {}
+
+    class FakeImage:
+        object_id = "img-123"
+
+    def fake_from_id(*args, **kwargs):
+        return FakeImage()
+
+    async def fake_create_aio(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+
+        class FakeSandbox:
+            object_id = "obj-456"
+            stdout = None
+
+        return FakeSandbox()
+
+    fake_create_aio.aio = fake_create_aio
+    monkeypatch.setattr("src.sandbox.manager.modal.Image.from_id", fake_from_id)
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", fake_create_aio)
+
+    manager = SandboxManager()
+    await manager.restore_from_snapshot(
+        snapshot_image_id="img-abc",
+        session_config={
+            "repo_owner": "acme",
+            "repo_name": "repo",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "session_id": "sess-1",
+        },
+        anthropic_oauth_enabled=True,
+        user_env_vars={"ANTHROPIC_OAUTH_ENABLED": "false"},
+    )
+
+    assert captured["env"]["ANTHROPIC_OAUTH_ENABLED"] == "true"
 
 
 @pytest.mark.asyncio

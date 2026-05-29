@@ -223,6 +223,33 @@ async def test_user_env_vars_injected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_oauth_env_vars_are_filtered(monkeypatch):
+    """Build sandboxes must not receive control-plane OAuth credential material."""
+    captured = {}
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+
+    manager = SandboxManager()
+    await manager.create_build_sandbox(
+        repo_owner="acme",
+        repo_name="my-repo",
+        user_env_vars={
+            "ANTHROPIC_OAUTH_REFRESH_TOKEN": "refresh-token",
+            "ANTHROPIC_OAUTH_ACCESS_TOKEN": "access-token",
+            "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT": "123",
+            "ANTHROPIC_OAUTH_ENABLED": "true",
+            "NPM_TOKEN": "tok_abc",
+        },
+    )
+
+    env = captured["env"]
+    assert "ANTHROPIC_OAUTH_REFRESH_TOKEN" not in env
+    assert "ANTHROPIC_OAUTH_ACCESS_TOKEN" not in env
+    assert "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT" not in env
+    assert "ANTHROPIC_OAUTH_ENABLED" not in env
+    assert env["NPM_TOKEN"] == "tok_abc"
+
+
+@pytest.mark.asyncio
 async def test_user_env_vars_none_by_default(monkeypatch):
     """When user_env_vars is None, only system vars should be present."""
     captured = {}

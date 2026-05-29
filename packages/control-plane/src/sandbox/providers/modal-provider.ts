@@ -19,6 +19,7 @@ import {
   type SnapshotConfig,
   type SnapshotResult,
 } from "../provider";
+import { filterAnthropicOAuthSandboxUserEnvVars } from "../oauth-env";
 
 /**
  * Modal sandbox provider.
@@ -69,7 +70,8 @@ export class ModalSandboxProvider implements SandboxProvider {
           opencodeSessionId: config.opencodeSessionId,
           provider: config.provider,
           model: config.model,
-          userEnvVars: config.userEnvVars,
+          userEnvVars: filterAnthropicOAuthSandboxUserEnvVars(config.userEnvVars),
+          anthropicOauthEnabled: config.anthropicOauthEnabled,
           repoImageId: config.repoImageId,
           repoImageSha: config.repoImageSha,
           timeoutSeconds: config.timeoutSeconds,
@@ -113,7 +115,8 @@ export class ModalSandboxProvider implements SandboxProvider {
           repoName: config.repoName,
           provider: config.provider,
           model: config.model,
-          userEnvVars: config.userEnvVars,
+          userEnvVars: filterAnthropicOAuthSandboxUserEnvVars(config.userEnvVars),
+          anthropicOauthEnabled: config.anthropicOauthEnabled,
           timeoutSeconds: config.timeoutSeconds ?? DEFAULT_SANDBOX_TIMEOUT_SECONDS,
           branch: config.branch,
           codeServerEnabled: config.codeServerEnabled,

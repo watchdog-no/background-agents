@@ -233,4 +233,41 @@ describe("AnthropicTokenRefreshService", () => {
     });
     expect(mockState.refreshImpl).toHaveBeenCalledTimes(1);
   });
+
+  it("uses cached token after concurrent rotation when refresh gets invalid_grant", async () => {
+    vi.useFakeTimers();
+
+    const repoId = 123;
+    mockState.repoSecrets.set(repoId, {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-stale",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+
+    mockState.refreshImpl.mockImplementationOnce(async () => {
+      mockState.repoSecrets.set(repoId, {
+        ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-rotated",
+        ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-concurrent",
+        ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(Date.now() + 60 * 60 * 1000),
+      });
+      throw new AnthropicTokenRefreshError("invalid grant", 400, '{"error":"invalid_grant"}');
+    });
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      createLogger()
+    );
+
+    const promise = service.refresh(createSession());
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toEqual({
+      ok: true,
+      accessToken: "access-concurrent",
+      expiresIn: expect.any(Number),
+    });
+    expect(mockState.refreshImpl).toHaveBeenCalledTimes(1);
+  });
 });

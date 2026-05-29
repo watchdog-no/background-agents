@@ -30,11 +30,11 @@ def _auth_file(tmp_path):
 class TestAnthropicOauthSetup:
     """Cases for _setup_anthropic_oauth()."""
 
-    def test_writes_auth_json_when_refresh_token_present(self, tmp_path):
+    def test_writes_auth_json_when_oauth_enabled(self, tmp_path):
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
             sup._setup_anthropic_oauth()
@@ -51,13 +51,24 @@ class TestAnthropicOauthSetup:
         # Anthropic has no per-account header equivalent.
         assert "accountId" not in data["anthropic"]
 
-    def test_skips_when_no_refresh_token(self, tmp_path, monkeypatch):
+    def test_skips_when_oauth_not_enabled(self, tmp_path, monkeypatch):
         sup = _make_supervisor()
 
         # Explicitly remove the key so it is absent regardless of test ordering
-        monkeypatch.delenv("ANTHROPIC_OAUTH_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("ANTHROPIC_OAUTH_ENABLED", raising=False)
 
         with patch("pathlib.Path.home", return_value=tmp_path):
+            sup._setup_anthropic_oauth()
+
+        assert not _auth_file(tmp_path).exists()
+
+    def test_refresh_token_env_alone_does_not_enable_oauth(self, tmp_path):
+        sup = _make_supervisor()
+
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch("pathlib.Path.home", return_value=tmp_path),
+        ):
             sup._setup_anthropic_oauth()
 
         assert not _auth_file(tmp_path).exists()
@@ -66,7 +77,7 @@ class TestAnthropicOauthSetup:
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
             sup._setup_anthropic_oauth()
@@ -78,7 +89,7 @@ class TestAnthropicOauthSetup:
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=OSError("disk full")),
         ):
@@ -94,7 +105,7 @@ class TestAnthropicOauthSetup:
             return original_open(path, *args, **kwargs)
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=fail_on_tmp),
         ):
@@ -113,7 +124,7 @@ class TestAnthropicOauthSetup:
                 "os.environ",
                 {
                     "OPENAI_OAUTH_REFRESH_TOKEN": "rt_openai",
-                    "ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_anthropic",
+                    "ANTHROPIC_OAUTH_ENABLED": "true",
                 },
                 clear=False,
             ),
