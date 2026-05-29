@@ -446,6 +446,35 @@ describe("SandboxLifecycleManager", () => {
       expect(provider.createSandbox).toHaveBeenCalledWith(expect.objectContaining({ userEnvVars }));
     });
 
+    it("filters Anthropic OAuth tokens and passes a non-secret setup flag on spawn", async () => {
+      const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
+      const storage = createMockStorage(createMockSession(), sandbox, {
+        DATABASE_URL: "postgres://example",
+        ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
+        ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
+      });
+      const provider = createMockProvider();
+
+      const manager = new SandboxLifecycleManager(
+        provider,
+        storage,
+        createMockBroadcaster(),
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        createTestConfig()
+      );
+
+      await manager.spawnSandbox();
+
+      expect(provider.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userEnvVars: { DATABASE_URL: "postgres://example" },
+          anthropicOauthEnabled: true,
+        })
+      );
+    });
+
     it("respects circuit breaker blocking", async () => {
       const now = Date.now();
       const sandbox = createMockSandbox({
@@ -558,6 +587,38 @@ describe("SandboxLifecycleManager", () => {
       const scheduledTime = alarmScheduler.alarms[0];
       expect(scheduledTime).toBeGreaterThanOrEqual(before + config.connectingTimeout.timeoutMs);
       expect(scheduledTime).toBeLessThanOrEqual(after + config.connectingTimeout.timeoutMs);
+    });
+
+    it("filters Anthropic OAuth tokens and passes a non-secret setup flag on restore", async () => {
+      const sandbox = createMockSandbox({
+        status: "stopped",
+        snapshot_image_id: "img-abc123",
+      });
+      const storage = createMockStorage(createMockSession(), sandbox, {
+        NPM_TOKEN: "npm-token",
+        ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
+        ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+      });
+      const provider = createMockProvider();
+
+      const manager = new SandboxLifecycleManager(
+        provider,
+        storage,
+        createMockBroadcaster(),
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        createTestConfig()
+      );
+
+      await manager.spawnSandbox();
+
+      expect(provider.restoreFromSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userEnvVars: { NPM_TOKEN: "npm-token" },
+          anthropicOauthEnabled: true,
+        })
+      );
     });
 
     it("stores providerObjectId after successful restore for future snapshots", async () => {

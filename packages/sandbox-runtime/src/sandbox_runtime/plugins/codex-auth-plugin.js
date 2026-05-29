@@ -101,8 +101,9 @@ async function ensureAccessToken(getAuth, setAuth) {
       expires: cachedExpiresAt,
       ...(cachedAccountId && { accountId: cachedAccountId }),
     });
-  } catch {
+  } catch (err) {
     // Non-fatal: the in-memory cache is the source of truth
+    console.warn("openai_oauth.set_auth_failed", err);
   }
 
   return { accessToken: cachedAccessToken, accountId: cachedAccountId };

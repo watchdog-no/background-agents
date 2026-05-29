@@ -21,6 +21,7 @@ import {
   type StopConfig,
   type StopResult,
 } from "../provider";
+import { ANTHROPIC_OAUTH_SANDBOX_FLAG, filterAnthropicOAuthSandboxUserEnvVars } from "../oauth-env";
 
 const log = createLogger("daytona-provider");
 
@@ -192,7 +193,9 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
   private async buildEnvVars(config: CreateSandboxConfig): Promise<Record<string, string>> {
     // Start with user env vars (repo secrets), then overlay system vars
-    const envVars: Record<string, string> = { ...(config.userEnvVars ?? {}) };
+    const envVars: Record<string, string> = {
+      ...(filterAnthropicOAuthSandboxUserEnvVars(config.userEnvVars) ?? {}),
+    };
 
     const sessionConfig: Record<string, string> = {
       session_id: config.sessionId,
@@ -214,6 +217,10 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       REPO_NAME: config.repoName,
       SESSION_CONFIG: JSON.stringify(sessionConfig),
     });
+
+    if (config.anthropicOauthEnabled) {
+      envVars[ANTHROPIC_OAUTH_SANDBOX_FLAG] = "true";
+    }
 
     if (config.codeServerEnabled) {
       envVars.CODE_SERVER_PASSWORD = await this.deriveCodeServerPassword(config.sandboxId);

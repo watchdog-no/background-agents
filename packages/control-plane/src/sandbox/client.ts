@@ -50,6 +50,7 @@ export interface CreateSandboxRequest {
   provider?: string;
   model?: string;
   userEnvVars?: Record<string, string>;
+  anthropicOauthEnabled?: boolean;
   repoImageId?: string | null;
   repoImageSha?: string | null;
   timeoutSeconds?: number;
@@ -82,6 +83,7 @@ export interface RestoreSandboxRequest {
   provider: string;
   model: string;
   userEnvVars?: Record<string, string>;
+  anthropicOauthEnabled?: boolean;
   timeoutSeconds?: number;
   branch?: string;
   codeServerEnabled?: boolean;
@@ -245,6 +247,7 @@ export class ModalClient {
           provider: request.provider || "openai",
           model: request.model || "openai/gpt-5.5",
           user_env_vars: request.userEnvVars || null,
+          anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
           repo_image_id: request.repoImageId || null,
           repo_image_sha: request.repoImageSha || null,
           timeout_seconds: request.timeoutSeconds || null,
@@ -336,6 +339,7 @@ export class ModalClient {
           control_plane_url: request.controlPlaneUrl,
           sandbox_auth_token: request.sandboxAuthToken,
           user_env_vars: request.userEnvVars || null,
+          anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
           timeout_seconds: request.timeoutSeconds || null,
           code_server_enabled: request.codeServerEnabled ?? false,
           agent_slack_notify_enabled: request.agentSlackNotifyEnabled ?? false,

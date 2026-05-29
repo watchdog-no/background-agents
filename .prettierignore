@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 .next/
+.open-next/
 .wrangler/
 coverage/
 
@@ -14,6 +15,7 @@ packages/modal-infra/
 __pycache__/
 *.pyc
 .venv/
+.venv*/
 venv/
 
 # Reference code (vendored)

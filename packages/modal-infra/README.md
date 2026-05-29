@@ -71,8 +71,9 @@ Base image definition with:
 3. Create secrets via Modal CLI:
 
 ```bash
-# LLM API keys
-modal secret create llm-api-keys ANTHROPIC_API_KEY="sk-ant-..."
+# Optional metered Claude API fallback. Set to an empty value when using
+# Claude subscription OAuth as the Anthropic model path.
+modal secret create llm-api-keys ANTHROPIC_API_KEY=""
 
 # GitHub App credentials (for repo access)
 modal secret create github-app \
@@ -159,7 +160,7 @@ Set via Modal secrets:
 
 | Variable | Secret | Description |
 |----------|--------|-------------|
-| `ANTHROPIC_API_KEY` | `llm-api-keys` | Anthropic API key for Claude |
+| `ANTHROPIC_API_KEY` | `llm-api-keys` | Optional metered Claude API fallback |
 | `GITHUB_APP_ID` | `github-app` | GitHub App ID for repo access |
 | `GITHUB_APP_PRIVATE_KEY` | `github-app` | GitHub App private key (PKCS#8) |
 | `GITHUB_APP_INSTALLATION_ID` | `github-app` | GitHub App installation ID |

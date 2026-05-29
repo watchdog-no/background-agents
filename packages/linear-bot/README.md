@@ -57,10 +57,10 @@ linear_client_secret  = "your-client-secret"
 linear_webhook_secret = "your-webhook-signing-secret"
 ```
 
-The worker also requires these secrets (set via `wrangler secret put` or Terraform):
+The worker also uses these secrets (set via `wrangler secret put` or Terraform):
 
-- **`ANTHROPIC_API_KEY`** — used by the LLM classifier for repo resolution fallback
 - **`INTERNAL_CALLBACK_SECRET`** — HMAC auth for config endpoints and callback verification
+- **`ANTHROPIC_API_KEY`** — optional LLM classifier key for repo resolution fallback
 
 Then `terraform apply`.
 

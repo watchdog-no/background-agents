@@ -87,6 +87,8 @@ export interface Env {
   DAYTONA_AUTO_STOP_INTERVAL_MINUTES?: string; // Daytona idle stop interval in minutes
   DAYTONA_AUTO_ARCHIVE_INTERVAL_MINUTES?: string; // Daytona archive interval in minutes
   DAYTONA_TARGET?: string; // Optional Daytona target name
+  ANTHROPIC_OAUTH_CLIENT_ID?: string; // Optional Claude subscription OAuth public client override
+  ANTHROPIC_OAUTH_TOKEN_URL?: string; // Optional Claude subscription OAuth token endpoint override
 
   // Sandbox lifecycle configuration
   SANDBOX_INACTIVITY_TIMEOUT_MS?: string; // Inactivity timeout in ms (default: 600000 = 10 min)

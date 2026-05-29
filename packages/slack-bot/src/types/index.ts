@@ -24,7 +24,7 @@ export interface Env {
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   SLACK_APP_TOKEN?: string;
-  ANTHROPIC_API_KEY: string;
+  ANTHROPIC_API_KEY?: string;
   CONTROL_PLANE_API_KEY?: string;
   INTERNAL_CALLBACK_SECRET?: string; // For verifying callbacks from control-plane
   LOG_LEVEL?: string;

@@ -179,6 +179,7 @@ async def api_create_sandbox(
             sandbox_auth_token=request.get("sandbox_auth_token"),
             clone_token=clone_token,
             user_env_vars=request.get("user_env_vars") or None,
+            anthropic_oauth_enabled=bool(request.get("anthropic_oauth_enabled", False)),
             repo_image_id=repo_image_id,
             repo_image_sha=request.get("repo_image_sha") or None,
             code_server_enabled=bool(request.get("code_server_enabled", False)),
@@ -464,6 +465,7 @@ async def api_restore_sandbox(
         sandbox_id = request.get("sandbox_id")
         sandbox_auth_token = request.get("sandbox_auth_token", "")
         user_env_vars = request.get("user_env_vars") or None
+        anthropic_oauth_enabled = bool(request.get("anthropic_oauth_enabled", False))
         timeout_seconds = int(request.get("timeout_seconds", DEFAULT_SANDBOX_TIMEOUT_SECONDS))
 
         manager = SandboxManager()
@@ -482,6 +484,7 @@ async def api_restore_sandbox(
             sandbox_auth_token=sandbox_auth_token,
             clone_token=clone_token,
             user_env_vars=user_env_vars,
+            anthropic_oauth_enabled=anthropic_oauth_enabled,
             timeout_seconds=timeout_seconds,
             code_server_enabled=code_server_enabled,
             agent_slack_notify_enabled=agent_slack_notify_enabled,

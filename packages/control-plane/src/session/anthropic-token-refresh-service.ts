@@ -1,49 +1,50 @@
 import {
-  refreshOpenAIToken,
-  extractOpenAIAccountId,
-  OpenAITokenRefreshError,
-} from "../auth/openai";
+  refreshAnthropicToken,
+  AnthropicTokenRefreshError,
+  type AnthropicOAuthConfig,
+} from "../auth/anthropic";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import type { Env } from "../types";
 import type { Logger } from "../logger";
 import type { SessionRow } from "./types";
 
-const OPENAI_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const ANTHROPIC_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS = 3;
 const ROTATED_REFRESH_TOKEN_PERSIST_RETRY_DELAY_MS = 100;
 
-type OpenAITokenState =
-  | { type: "cached"; accessToken: string; expiresIn: number; accountId?: string }
+type AnthropicTokenState =
+  | { type: "cached"; accessToken: string; expiresIn: number }
   | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number };
 
-export type OpenAITokenRefreshResult =
-  | { ok: true; accessToken: string; expiresIn?: number; accountId?: string }
+export type AnthropicTokenRefreshResult =
+  | { ok: true; accessToken: string; expiresIn?: number }
   | { ok: false; status: number; error: string };
 
-export class OpenAITokenRefreshService {
+export class AnthropicTokenRefreshService {
   constructor(
     private readonly db: Env["DB"],
     private readonly encryptionKey: string,
     private readonly ensureRepoId: (session: SessionRow) => Promise<number>,
-    private readonly log: Logger
+    private readonly log: Logger,
+    private readonly oauthConfig?: AnthropicOAuthConfig
   ) {}
 
-  async refresh(session: SessionRow): Promise<OpenAITokenRefreshResult> {
+  async refresh(session: SessionRow): Promise<AnthropicTokenRefreshResult> {
     const readTokenState = () => this.readTokenState(session);
 
-    let tokenState: OpenAITokenState | null;
+    let tokenState: AnthropicTokenState | null;
     try {
       tokenState = await readTokenState();
     } catch (e) {
-      this.log.error("Failed to read OpenAI token state from secrets", {
+      this.log.error("Failed to read Anthropic token state from secrets", {
         error: e instanceof Error ? e.message : String(e),
       });
       return { ok: false, status: 500, error: "Failed to read token state" };
     }
 
     if (!tokenState) {
-      return { ok: false, status: 404, error: "OPENAI_OAUTH_REFRESH_TOKEN not configured" };
+      return { ok: false, status: 404, error: "ANTHROPIC_OAUTH_REFRESH_TOKEN not configured" };
     }
 
     if (tokenState.type === "cached") {
@@ -51,21 +52,20 @@ export class OpenAITokenRefreshService {
         ok: true,
         accessToken: tokenState.accessToken,
         expiresIn: tokenState.expiresIn,
-        accountId: tokenState.accountId,
       };
     }
 
     try {
       return await this.attemptRefresh(tokenState, session);
     } catch (e) {
-      if (e instanceof OpenAITokenRefreshError && e.status === 401) {
-        return this.handleUnauthorizedRefresh(tokenState, readTokenState, session);
+      if (e instanceof AnthropicTokenRefreshError && this.isConcurrentRotationError(e)) {
+        return this.handleConcurrentRotationRefresh(tokenState, readTokenState, session, e);
       }
 
-      this.log.error("OpenAI token refresh failed", {
+      this.log.error("Anthropic token refresh failed", {
         error: e instanceof Error ? e.message : String(e),
       });
-      return { ok: false, status: 502, error: "OpenAI token refresh failed" };
+      return { ok: false, status: 502, error: "Anthropic token refresh failed" };
     }
   }
 
@@ -73,33 +73,32 @@ export class OpenAITokenRefreshService {
     secrets: Record<string, string>,
     source: "repo" | "global",
     repoId: number
-  ): OpenAITokenState | null {
-    if (!secrets.OPENAI_OAUTH_REFRESH_TOKEN) {
+  ): AnthropicTokenState | null {
+    if (!secrets.ANTHROPIC_OAUTH_REFRESH_TOKEN) {
       return null;
     }
 
-    const cachedToken = secrets.OPENAI_OAUTH_ACCESS_TOKEN;
-    const expiresAt = parseInt(secrets.OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT || "0", 10);
+    const cachedToken = secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN;
+    const expiresAt = parseInt(secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT || "0", 10);
     const now = Date.now();
 
-    if (cachedToken && expiresAt - now > OPENAI_TOKEN_REFRESH_BUFFER_MS) {
+    if (cachedToken && expiresAt - now > ANTHROPIC_TOKEN_REFRESH_BUFFER_MS) {
       return {
         type: "cached",
         accessToken: cachedToken,
         expiresIn: Math.floor((expiresAt - now) / 1000),
-        accountId: secrets.OPENAI_OAUTH_ACCOUNT_ID,
       };
     }
 
     return {
       type: "refresh",
-      refreshToken: secrets.OPENAI_OAUTH_REFRESH_TOKEN,
+      refreshToken: secrets.ANTHROPIC_OAUTH_REFRESH_TOKEN,
       source,
       repoId,
     };
   }
 
-  private async readTokenState(session: SessionRow): Promise<OpenAITokenState | null> {
+  private async readTokenState(session: SessionRow): Promise<AnthropicTokenState | null> {
     const repoId = await this.ensureRepoId(session);
 
     const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
@@ -115,11 +114,12 @@ export class OpenAITokenRefreshService {
   }
 
   private async attemptRefresh(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     session: SessionRow
-  ): Promise<OpenAITokenRefreshResult> {
-    const tokens = await refreshOpenAIToken(tokenState.refreshToken);
-    const accountId = extractOpenAIAccountId(tokens);
+  ): Promise<AnthropicTokenRefreshResult> {
+    const tokens = this.oauthConfig
+      ? await refreshAnthropicToken(tokenState.refreshToken, this.oauthConfig)
+      : await refreshAnthropicToken(tokenState.refreshToken);
     const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
     let refreshTokenPersisted = false;
 
@@ -127,12 +127,12 @@ export class OpenAITokenRefreshService {
       await this.writeRotatedRefreshToken(tokenState, session, tokens.refresh_token);
       refreshTokenPersisted = true;
 
-      this.log.info("OpenAI refresh token rotated", {
+      this.log.info("Anthropic refresh token rotated", {
         source: tokenState.source,
         repo_id: tokenState.repoId,
       });
     } catch (e) {
-      this.log.error("OPENAI_OAUTH_REFRESH_TOKEN_PERSIST_FAILED_AFTER_ROTATION", {
+      this.log.error("ANTHROPIC_OAUTH_REFRESH_TOKEN_PERSIST_FAILED_AFTER_ROTATION", {
         source: tokenState.source,
         repo_id: tokenState.repoId,
         credential_state: "previous_refresh_token_invalid",
@@ -142,24 +142,17 @@ export class OpenAITokenRefreshService {
 
     if (refreshTokenPersisted) {
       try {
-        const cacheSecrets: Record<string, string> = {
-          OPENAI_OAUTH_ACCESS_TOKEN: tokens.access_token,
-          OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(expiresAt),
-        };
+        await this.writeTokenSecrets(tokenState, session, {
+          ANTHROPIC_OAUTH_ACCESS_TOKEN: tokens.access_token,
+          ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(expiresAt),
+        });
 
-        if (accountId) {
-          cacheSecrets.OPENAI_OAUTH_ACCOUNT_ID = accountId;
-        }
-
-        await this.writeTokenSecrets(tokenState, session, cacheSecrets);
-
-        this.log.info("OpenAI access token cached", {
+        this.log.info("Anthropic access token cached", {
           source: tokenState.source,
           repo_id: tokenState.repoId,
-          has_account_id: !!accountId,
         });
       } catch (e) {
-        this.log.warn("Failed to cache OpenAI access token after refresh", {
+        this.log.warn("Failed to cache Anthropic access token after refresh", {
           source: tokenState.source,
           repo_id: tokenState.repoId,
           error: e instanceof Error ? e.message : String(e),
@@ -171,12 +164,28 @@ export class OpenAITokenRefreshService {
       ok: true,
       accessToken: tokens.access_token,
       expiresIn: tokens.expires_in,
-      accountId,
     };
   }
 
+  private isConcurrentRotationError(error: AnthropicTokenRefreshError): boolean {
+    if (error.status === 401) {
+      return true;
+    }
+
+    if (error.status !== 400) {
+      return false;
+    }
+
+    try {
+      const body = JSON.parse(error.body) as { error?: unknown };
+      return body.error === "invalid_grant";
+    } catch {
+      return error.body.includes("invalid_grant");
+    }
+  }
+
   private async writeTokenSecrets(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     session: SessionRow,
     secrets: Record<string, string>
   ): Promise<void> {
@@ -190,7 +199,7 @@ export class OpenAITokenRefreshService {
   }
 
   private async writeRotatedRefreshToken(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     session: SessionRow,
     refreshToken: string
   ): Promise<void> {
@@ -199,7 +208,7 @@ export class OpenAITokenRefreshService {
     for (let attempt = 1; attempt <= ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS; attempt++) {
       try {
         await this.writeTokenSecrets(tokenState, session, {
-          OPENAI_OAUTH_REFRESH_TOKEN: refreshToken,
+          ANTHROPIC_OAUTH_REFRESH_TOKEN: refreshToken,
         });
         return;
       } catch (e) {
@@ -215,12 +224,14 @@ export class OpenAITokenRefreshService {
     throw lastError;
   }
 
-  private async handleUnauthorizedRefresh(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    readTokenState: () => Promise<OpenAITokenState | null>,
-    session: SessionRow
-  ): Promise<OpenAITokenRefreshResult> {
-    this.log.warn("OpenAI refresh got 401, checking for concurrent rotation", {
+  private async handleConcurrentRotationRefresh(
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
+    readTokenState: () => Promise<AnthropicTokenState | null>,
+    session: SessionRow,
+    error: AnthropicTokenRefreshError
+  ): Promise<AnthropicTokenRefreshResult> {
+    this.log.warn("Anthropic refresh failed, checking for concurrent rotation", {
+      status: error.status,
       source: tokenState.source,
     });
 
@@ -235,7 +246,6 @@ export class OpenAITokenRefreshService {
           ok: true,
           accessToken: reread.accessToken,
           expiresIn: reread.expiresIn,
-          accountId: reread.accountId,
         };
       }
 
@@ -244,17 +254,18 @@ export class OpenAITokenRefreshService {
         return this.attemptRefresh(reread, session);
       }
 
-      this.log.error("OpenAI refresh token rejected and no newer token was found", {
+      this.log.error("Anthropic refresh token rejected and no newer token was found", {
+        status: error.status,
         source: tokenState.source,
         repo_id: tokenState.repoId,
-        action: "re-run OpenAI OAuth login",
+        action: "re-run Anthropic OAuth login",
       });
     } catch (retryErr) {
-      this.log.error("Retry after 401 also failed", {
+      this.log.error("Retry after Anthropic refresh failure also failed", {
         error: retryErr instanceof Error ? retryErr.message : String(retryErr),
       });
     }
 
-    return { ok: false, status: 401, error: "OpenAI token refresh failed: unauthorized" };
+    return { ok: false, status: error.status, error: "Anthropic token refresh failed" };
   }
 }

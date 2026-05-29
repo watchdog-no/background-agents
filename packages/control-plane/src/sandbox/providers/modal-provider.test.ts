@@ -464,6 +464,37 @@ describe("ModalSandboxProvider", () => {
       expect(result.status).toBe("created");
       expect(result.createdAt).toBe(1234567890);
     });
+
+    it("passes Anthropic OAuth flag through to the Modal client", async () => {
+      const client = createMockModalClient();
+      const provider = new ModalSandboxProvider(client);
+
+      await provider.createSandbox({ ...testConfig, anthropicOauthEnabled: true });
+
+      expect(client.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ anthropicOauthEnabled: true }),
+        undefined
+      );
+    });
+
+    it("filters Anthropic OAuth token env vars before calling Modal", async () => {
+      const client = createMockModalClient();
+      const provider = new ModalSandboxProvider(client);
+
+      await provider.createSandbox({
+        ...testConfig,
+        userEnvVars: {
+          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
+          ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
+          CUSTOM_SECRET: "value",
+        },
+      });
+
+      expect(client.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ userEnvVars: { CUSTOM_SECRET: "value" } }),
+        undefined
+      );
+    });
   });
 
   describe("HTTP status handling", () => {

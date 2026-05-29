@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.sandbox.manager import SandboxManager
+from src.sandbox.manager import ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS, SandboxManager
 
 
 def _fake_sandbox_create(captured):
@@ -220,6 +220,31 @@ async def test_user_env_vars_injected(monkeypatch):
     # System vars still present
     assert env["IMAGE_BUILD_MODE"] == "true"
     assert env["REPO_OWNER"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_oauth_env_vars_are_filtered(monkeypatch):
+    """Build sandboxes must not receive control-plane OAuth credential material."""
+    captured = {}
+    monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.create", _fake_sandbox_create(captured))
+
+    manager = SandboxManager()
+    await manager.create_build_sandbox(
+        repo_owner="acme",
+        repo_name="my-repo",
+        user_env_vars={
+            **{
+                key: f"value-{index}"
+                for index, key in enumerate(ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS)
+            },
+            "NPM_TOKEN": "tok_abc",
+        },
+    )
+
+    env = captured["env"]
+    for key in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS:
+        assert key not in env
+    assert env["NPM_TOKEN"] == "tok_abc"
 
 
 @pytest.mark.asyncio

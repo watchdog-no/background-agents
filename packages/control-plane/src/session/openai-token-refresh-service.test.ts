@@ -15,7 +15,16 @@ const mockState = vi.hoisted(() => ({
     name: string;
     secrets: Record<string, string>;
   }>,
+  repoWriteAttempts: [] as Array<{
+    repoId: number;
+    owner: string;
+    name: string;
+    secrets: Record<string, string>;
+  }>,
   globalWrites: [] as Array<Record<string, string>>,
+  globalWriteAttempts: [] as Array<Record<string, string>>,
+  failRepoWritesForKeys: new Set<string>(),
+  failGlobalWritesForKeys: new Set<string>(),
 }));
 
 vi.mock("../auth/openai", () => {
@@ -48,6 +57,10 @@ vi.mock("../db/repo-secrets", () => ({
       name: string,
       secrets: Record<string, string>
     ): Promise<void> {
+      mockState.repoWriteAttempts.push({ repoId, owner, name, secrets });
+      if (Object.keys(secrets).some((key) => mockState.failRepoWritesForKeys.has(key))) {
+        throw new Error("repo write failed");
+      }
       mockState.repoWrites.push({ repoId, owner, name, secrets });
       const existing = mockState.repoSecrets.get(repoId) ?? {};
       mockState.repoSecrets.set(repoId, { ...existing, ...secrets });
@@ -62,6 +75,10 @@ vi.mock("../db/global-secrets", () => ({
     }
 
     async setSecrets(secrets: Record<string, string>): Promise<void> {
+      mockState.globalWriteAttempts.push(secrets);
+      if (Object.keys(secrets).some((key) => mockState.failGlobalWritesForKeys.has(key))) {
+        throw new Error("global write failed");
+      }
       mockState.globalWrites.push(secrets);
       mockState.globalSecrets = { ...mockState.globalSecrets, ...secrets };
     }
@@ -113,7 +130,11 @@ describe("OpenAITokenRefreshService", () => {
     mockState.repoSecrets.clear();
     mockState.globalSecrets = {};
     mockState.repoWrites = [];
+    mockState.repoWriteAttempts = [];
     mockState.globalWrites = [];
+    mockState.globalWriteAttempts = [];
+    mockState.failRepoWritesForKeys.clear();
+    mockState.failGlobalWritesForKeys.clear();
     mockState.refreshImpl.mockReset();
   });
 
@@ -194,12 +215,14 @@ describe("OpenAITokenRefreshService", () => {
       accountId: "acct_new",
     });
     expect(mockState.refreshImpl).toHaveBeenCalledWith("refresh-old");
-    expect(mockState.repoWrites).toHaveLength(1);
+    expect(mockState.repoWrites).toHaveLength(2);
     expect(mockState.repoWrites[0].repoId).toBe(repoId);
     expect(mockState.repoWrites[0].owner).toBe("acme");
     expect(mockState.repoWrites[0].name).toBe("web");
     expect(mockState.repoWrites[0].secrets.OPENAI_OAUTH_REFRESH_TOKEN).toBe("refresh-new");
-    expect(mockState.repoWrites[0].secrets.OPENAI_OAUTH_ACCESS_TOKEN).toBe("access-new");
+    expect(mockState.repoWrites[0].secrets.OPENAI_OAUTH_ACCESS_TOKEN).toBeUndefined();
+    expect(mockState.repoWrites[1].secrets.OPENAI_OAUTH_ACCESS_TOKEN).toBe("access-new");
+    expect(mockState.repoWrites[1].secrets.OPENAI_OAUTH_ACCOUNT_ID).toBe("acct_new");
   });
 
   it("uses cached token after concurrent rotation when refresh gets 401", async () => {

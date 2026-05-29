@@ -14,16 +14,17 @@ browser (only key names are visible in the UI).
    repository
 4. Click **Add secret**, enter a key and value, then click **Save**
 
-That's it — the next sandbox you launch will have the secret available as an environment variable.
+That's it — the next sandbox you launch will have the secret available as an environment variable,
+unless the key is a control-plane-only credential such as Anthropic OAuth refresh-token material.
 
 ---
 
 ## Global vs. Repository Secrets
 
-| Scope          | Applies to        | Use case                                                              |
-| -------------- | ----------------- | --------------------------------------------------------------------- |
-| **Global**     | All repositories  | API keys shared across projects (`ANTHROPIC_API_KEY`, `DATABASE_URL`) |
-| **Repository** | One specific repo | Repo-specific credentials (`STRIPE_SECRET_KEY`, `AWS_ACCESS_KEY_ID`)  |
+| Scope          | Applies to        | Use case                                                                             |
+| -------------- | ----------------- | ------------------------------------------------------------------------------------ |
+| **Global**     | All repositories  | Credentials shared across projects (`ANTHROPIC_OAUTH_REFRESH_TOKEN`, `DATABASE_URL`) |
+| **Repository** | One specific repo | Repo-specific credentials (`STRIPE_SECRET_KEY`, `AWS_ACCESS_KEY_ID`)                 |
 
 **Precedence**: Repository secrets override global secrets with the same key. When viewing a
 repository's secrets, inherited global keys are shown in a read-only section with a "Global" badge.
@@ -32,15 +33,18 @@ If you override a global key at the repo level, the global entry shows "(overrid
 ### When to use global secrets
 
 Use global secrets for keys that every session needs regardless of which repository it runs against.
-The most common example:
+The most common examples:
 
-| Key                 | Description                                                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY` | Required for Claude models when using the **Daytona** sandbox provider (Modal injects this automatically via its own secrets mechanism) |
+| Key                             | Description                                                              |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Claude subscription OAuth token for the default Anthropic model path.    |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | ChatGPT subscription OAuth token for OpenAI models.                      |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.                   |
+| `ANTHROPIC_API_KEY`             | Optional metered Claude API fallback when OAuth is intentionally unused. |
 
-> **Daytona users**: If you plan to use Claude models, you must add `ANTHROPIC_API_KEY` as a global
-> secret after deploying. Without it, Claude sessions will fail with "Model not found." See
-> [Getting Started — Daytona](GETTING_STARTED.md#daytona) for details.
+> **Daytona users**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN`
+> as a global secret after deploying. Add `ANTHROPIC_API_KEY` only if you intentionally use metered
+> API billing. See [Getting Started - Daytona](GETTING_STARTED.md#daytona) for details.
 
 ### When to use repository secrets
 
@@ -93,7 +97,9 @@ Certain keys are reserved for system use and cannot be set as secrets:
 
 `PYTHONUNBUFFERED`, `SANDBOX_ID`, `CONTROL_PLANE_URL`, `SANDBOX_AUTH_TOKEN`, `REPO_OWNER`,
 `REPO_NAME`, `GITHUB_APP_TOKEN`, `SESSION_CONFIG`, `RESTORED_FROM_SNAPSHOT`,
-`OPENCODE_CONFIG_CONTENT`, `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `PWD`, `LANG`
+`OPENCODE_CONFIG_CONTENT`, `ANTHROPIC_OAUTH_ENABLED`, `ANTHROPIC_OAUTH_AUTHORIZE_URL`,
+`ANTHROPIC_OAUTH_CLIENT_ID`, `ANTHROPIC_OAUTH_TOKEN_URL`, `ANTHROPIC_OAUTH_REDIRECT_URI`,
+`ANTHROPIC_OAUTH_SCOPES`, `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `PWD`, `LANG`
 
 If you try to save a reserved key, the UI will show a validation error.
 
@@ -103,21 +109,25 @@ If you try to save a reserved key, the UI will show a validation error.
 
 - Secrets are encrypted with **AES-256-GCM** before being stored in the database
 - Values are **never returned by the API** after saving — only key names are visible
-- Secrets are decrypted at sandbox creation time and injected as environment variables
+- Secrets are generally decrypted at sandbox creation time and injected as environment variables
+- Anthropic OAuth refresh tokens and cached access-token secrets are control-plane-only; sandboxes
+  receive only a non-secret enabled flag and short-lived access tokens through the internal refresh
+  endpoint
 - System variables (set by the control plane) always take precedence over user-defined secrets
 
 ---
 
 ## Common Examples
 
-| Key                          | Scope  | Purpose                                               |
-| ---------------------------- | ------ | ----------------------------------------------------- |
-| `ANTHROPIC_API_KEY`          | Global | Claude API access (required for Daytona provider)     |
-| `OPENAI_OAUTH_REFRESH_TOKEN` | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md)) |
-| `OPENAI_OAUTH_ACCOUNT_ID`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md)) |
-| `DATABASE_URL`               | Repo   | Database connection string                            |
-| `AWS_ACCESS_KEY_ID`          | Repo   | AWS credentials for a specific project                |
-| `STRIPE_SECRET_KEY`          | Repo   | Stripe API key for a specific project                 |
+| Key                             | Scope  | Purpose                                                                 |
+| ------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md))         |
+| `ANTHROPIC_API_KEY`             | Global | Optional metered Claude API fallback when OAuth is intentionally unused |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                   |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                   |
+| `DATABASE_URL`                  | Repo   | Database connection string                                              |
+| `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                                  |
+| `STRIPE_SECRET_KEY`             | Repo   | Stripe API key for a specific project                                   |
 
 ---
 
@@ -126,8 +136,8 @@ If you try to save a reserved key, the UI will show a validation error.
 ### "Model not found" errors (Daytona provider)
 
 If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
-add your `ANTHROPIC_API_KEY` as a global secret in Settings. Unlike Modal, the Daytona provider does
-not inject LLM API keys automatically.
+confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
+`ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
 
 ### Secret not appearing in sandbox
 

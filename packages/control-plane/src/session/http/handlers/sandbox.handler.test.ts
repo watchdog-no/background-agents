@@ -16,6 +16,8 @@ function createHandler() {
   const getSession = vi.fn<() => SessionRow | null>();
   const refreshOpenAIToken = vi.fn();
   const isOpenAISecretsConfigured = vi.fn();
+  const refreshAnthropicToken = vi.fn();
+  const isAnthropicSecretsConfigured = vi.fn();
   const getScmCredentials = vi.fn();
   const broadcast = vi.fn();
   const generateId = vi.fn(() => "participant-1");
@@ -37,6 +39,8 @@ function createHandler() {
     getSession,
     refreshOpenAIToken,
     isOpenAISecretsConfigured,
+    refreshAnthropicToken,
+    isAnthropicSecretsConfigured,
     getScmCredentials,
     broadcast,
     generateId,
@@ -53,6 +57,8 @@ function createHandler() {
     getSession,
     refreshOpenAIToken,
     isOpenAISecretsConfigured,
+    refreshAnthropicToken,
+    isAnthropicSecretsConfigured,
     getScmCredentials,
     broadcast,
     generateId,
@@ -394,6 +400,68 @@ describe("createSandboxHandler", () => {
       account_id: "acct_123",
     });
     expect(refreshOpenAIToken).toHaveBeenCalledWith(session);
+  });
+
+  it("returns 404 when anthropic token refresh has no session", async () => {
+    const { handler, getSession } = createHandler();
+    getSession.mockReturnValue(null);
+
+    const response = await handler.anthropicTokenRefresh();
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "No session" });
+  });
+
+  it("returns 500 when anthropic secrets are not configured", async () => {
+    const { handler, getSession, isAnthropicSecretsConfigured } = createHandler();
+    getSession.mockReturnValue({} as SessionRow);
+    isAnthropicSecretsConfigured.mockReturnValue(false);
+
+    const response = await handler.anthropicTokenRefresh();
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Secrets not configured" });
+  });
+
+  it("returns anthropic access token payload on success", async () => {
+    const { handler, getSession, isAnthropicSecretsConfigured, refreshAnthropicToken } =
+      createHandler();
+    const session = { id: "session-1" } as SessionRow;
+    getSession.mockReturnValue(session);
+    isAnthropicSecretsConfigured.mockReturnValue(true);
+    refreshAnthropicToken.mockResolvedValue({
+      ok: true,
+      accessToken: "access-token",
+      expiresIn: 3600,
+    });
+
+    const response = await handler.anthropicTokenRefresh();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      access_token: "access-token",
+      expires_in: 3600,
+    });
+    expect(refreshAnthropicToken).toHaveBeenCalledWith(session);
+  });
+
+  it("returns mapped service error from anthropic token refresh", async () => {
+    const { handler, getSession, isAnthropicSecretsConfigured, refreshAnthropicToken } =
+      createHandler();
+    const session = { id: "session-1" } as SessionRow;
+    getSession.mockReturnValue(session);
+    isAnthropicSecretsConfigured.mockReturnValue(true);
+    refreshAnthropicToken.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "Anthropic token refresh failed",
+    });
+
+    const response = await handler.anthropicTokenRefresh();
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "Anthropic token refresh failed" });
+    expect(refreshAnthropicToken).toHaveBeenCalledWith(session);
   });
 
   it("returns 404 when scm credentials have no session", async () => {

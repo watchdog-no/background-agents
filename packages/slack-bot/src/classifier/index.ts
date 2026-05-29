@@ -175,14 +175,12 @@ function extractStructuredResponse(response: Anthropic.Messages.Message): LLMRes
  * Repository classifier class.
  */
 export class RepoClassifier {
-  private client: Anthropic;
+  private client: Anthropic | null;
   private env: Env;
 
   constructor(env: Env) {
     this.env = env;
-    this.client = new Anthropic({
-      apiKey: env.ANTHROPIC_API_KEY,
-    });
+    this.client = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;
   }
 
   /**
@@ -227,6 +225,16 @@ export class RepoClassifier {
           needsClarification: false,
         };
       }
+    }
+
+    if (!this.client) {
+      return {
+        repo: null,
+        confidence: "low",
+        reasoning: "Repository classifier is not configured. Please select a repository.",
+        alternatives: repos.slice(0, 5),
+        needsClarification: true,
+      };
     }
 
     // Use LLM for classification

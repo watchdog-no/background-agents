@@ -215,9 +215,22 @@ variable "linear_api_key" {
 # =============================================================================
 
 variable "anthropic_api_key" {
-  description = "Anthropic API key for Claude"
+  description = "Optional Anthropic API key for metered Claude fallback and bot classifiers"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "anthropic_oauth_client_id" {
+  description = "Optional Claude subscription OAuth public client ID override"
+  type        = string
+  default     = ""
+}
+
+variable "anthropic_oauth_token_url" {
+  description = "Optional Claude subscription OAuth token endpoint override"
+  type        = string
+  default     = ""
 }
 
 # =============================================================================

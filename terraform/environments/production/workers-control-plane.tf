@@ -75,6 +75,12 @@ module "control_plane_worker" {
       { name = "DAYTONA_API_URL", value = var.daytona_api_url },
       { name = "DAYTONA_BASE_SNAPSHOT", value = var.daytona_base_snapshot },
     ] : [],
+    var.anthropic_oauth_client_id != "" ? [
+      { name = "ANTHROPIC_OAUTH_CLIENT_ID", value = var.anthropic_oauth_client_id },
+    ] : [],
+    var.anthropic_oauth_token_url != "" ? [
+      { name = "ANTHROPIC_OAUTH_TOKEN_URL", value = var.anthropic_oauth_token_url },
+    ] : [],
     local.use_daytona_backend && var.daytona_target != "" ? [
       { name = "DAYTONA_TARGET", value = var.daytona_target },
     ] : []

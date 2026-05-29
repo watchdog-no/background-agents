@@ -12,6 +12,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/dist/**",
       "**/.next/**",
+      "**/.open-next/**",
       "**/build/**",
       "**/.wrangler/**",
       "**/coverage/**",
@@ -61,6 +62,27 @@ export default tseslint.config(
         { prefer: "type-imports", fixStyle: "separate-type-imports" },
       ],
       // Allow console in backend/server code - disable per-file if needed
+      "no-console": "off",
+    },
+  },
+
+  // Node.js helper scripts
+  {
+    files: ["scripts/**/*.{js,mjs,cjs}"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        ...globals.node,
+        ...globals.es2022,
+        console: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+      },
+    },
+    rules: {
       "no-console": "off",
     },
   },

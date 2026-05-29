@@ -215,6 +215,39 @@ describe("DaytonaSandboxProvider", () => {
       expect(envVars.SANDBOX_ID).toBe("sandbox-456");
     });
 
+    it("sets non-secret Anthropic OAuth flag as a system env var", async () => {
+      const client = createMockClient();
+      const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);
+
+      await provider.createSandbox({
+        ...baseCreateConfig,
+        anthropicOauthEnabled: true,
+        userEnvVars: { ANTHROPIC_OAUTH_ENABLED: "false" },
+      });
+
+      const envVars = (client.createSandbox as ReturnType<typeof vi.fn>).mock.calls[0][0].env;
+      expect(envVars.ANTHROPIC_OAUTH_ENABLED).toBe("true");
+    });
+
+    it("filters Anthropic OAuth token env vars defensively", async () => {
+      const client = createMockClient();
+      const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);
+
+      await provider.createSandbox({
+        ...baseCreateConfig,
+        userEnvVars: {
+          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
+          ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
+          CUSTOM_SECRET: "value",
+        },
+      });
+
+      const envVars = (client.createSandbox as ReturnType<typeof vi.fn>).mock.calls[0][0].env;
+      expect(envVars.ANTHROPIC_OAUTH_REFRESH_TOKEN).toBeUndefined();
+      expect(envVars.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBeUndefined();
+      expect(envVars.CUSTOM_SECRET).toBe("value");
+    });
+
     it("builds labels correctly", async () => {
       const client = createMockClient();
       const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);

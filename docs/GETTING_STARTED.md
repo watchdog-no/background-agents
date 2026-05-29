@@ -173,18 +173,24 @@ Create an R2 API Token:
 
 The control plane calls the Daytona REST API directly — no shim service to deploy.
 
-> **Important**: Unlike Modal, the Daytona provider does not automatically inject LLM API keys into
-> sandboxes. If you plan to use Claude models, add `ANTHROPIC_API_KEY` as a **global secret** in
-> Settings > Secrets after deploying. See [Secrets Management](SECRETS.md) for details.
+> **Important**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a
+> **global secret** in Settings > Secrets after deploying. Add `ANTHROPIC_API_KEY` only if you
+> intentionally use metered API billing. See [Secrets Management](SECRETS.md) for details.
 
 ### Anthropic
 
-1. Go to [Anthropic Console](https://console.anthropic.com)
-2. Create an API key
-3. Note the **API Key** (starts with `sk-ant-`)
+Claude subscription OAuth is the default Anthropic model path. Use
+[`docs/ANTHROPIC_MODELS.md`](ANTHROPIC_MODELS.md) to capture an `ANTHROPIC_OAUTH_REFRESH_TOKEN` and
+save it as a global or repo secret.
+
+An `ANTHROPIC_API_KEY` is only needed for deployments that intentionally use metered API billing.
 
 > **Want to use your OpenAI ChatGPT subscription?** See [Using OpenAI Models](OPENAI_MODELS.md) for
 > setup instructions (can be configured after deployment).
+
+> **Want to use your Claude Pro/Max subscription?** See
+> [Using Claude Subscription Models](ANTHROPIC_MODELS.md) for setup instructions (can be configured
+> after deployment).
 
 ---
 
@@ -677,7 +683,9 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `ENABLE_SLACK_BOT`            | `true` to deploy Slack bot, `false` to skip (default: `true`)                 |
 | `SLACK_BOT_TOKEN`             | Slack bot token (required if enabled)                                         |
 | `SLACK_SIGNING_SECRET`        | Slack signing secret (required if enabled)                                    |
-| `ANTHROPIC_API_KEY`           | Anthropic API key                                                             |
+| `ANTHROPIC_API_KEY`           | Optional Anthropic API key for metered fallback and bot classifiers           |
+| `ANTHROPIC_OAUTH_CLIENT_ID`   | Optional Claude subscription OAuth public client ID override                  |
+| `ANTHROPIC_OAUTH_TOKEN_URL`   | Optional Claude subscription OAuth token endpoint override                    |
 | `TOKEN_ENCRYPTION_KEY`        | Generated encryption key (OAuth tokens)                                       |
 | `REPO_SECRETS_ENCRYPTION_KEY` | Generated encryption key (repo secrets)                                       |
 | `INTERNAL_CALLBACK_SECRET`    | Generated callback secret                                                     |
@@ -699,7 +707,7 @@ Instead of adding secrets one by one, create a `.secrets` file (don't commit thi
 ```
 CLOUDFLARE_API_TOKEN=your-token
 CLOUDFLARE_ACCOUNT_ID=your-account-id
-ANTHROPIC_API_KEY=sk-ant-...
+TOKEN_ENCRYPTION_KEY=your-generated-key
 # ... add all secrets
 ```
 
@@ -839,13 +847,13 @@ If the bot doesn't see the original message when tagged in a thread reply:
 
 ### "Model not found" errors (Daytona provider)
 
-If sessions fail with "Model not found" when using `sandbox_provider = "daytona"`, the required LLM
-API key is likely missing. Unlike Modal (which injects keys automatically), Daytona requires you to
-add them as global secrets:
+If sessions fail with "Model not found" when using `sandbox_provider = "daytona"`, the Claude OAuth
+refresh token or optional API-key fallback is likely missing. Add the required credential as a
+global secret:
 
 1. Go to **Settings > Secrets** in the web app
 2. Select **All Repositories (Global)** from the scope dropdown
-3. Add the key for your chosen provider (e.g., `ANTHROPIC_API_KEY` for Claude models)
+3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path
 4. Click **Save**
 
 See [Secrets Management](SECRETS.md) for more on global and repository secrets.

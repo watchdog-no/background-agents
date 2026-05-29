@@ -156,9 +156,9 @@ The GitHub Actions workflow (`.github/workflows/terraform.yml`) automates:
 | Pull Request  | `terraform plan` with PR comment |
 | Merge to main | `terraform apply` (auto-approve) |
 
-### Required GitHub Secrets
+### GitHub Secrets
 
-Add these secrets to your repository settings:
+Add the secrets your deployment needs to your repository settings:
 
 ```
 # Deployment
@@ -191,8 +191,12 @@ GH_APP_INSTALLATION_ID
 SLACK_BOT_TOKEN
 SLACK_SIGNING_SECRET
 
-# API Keys
+# API Keys (optional metered Claude fallback / bot classifiers)
 ANTHROPIC_API_KEY
+
+# Anthropic OAuth overrides (optional; public-client config)
+ANTHROPIC_OAUTH_CLIENT_ID
+ANTHROPIC_OAUTH_TOKEN_URL
 
 # Security Secrets
 TOKEN_ENCRYPTION_KEY

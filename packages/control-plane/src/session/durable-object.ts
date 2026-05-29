@@ -62,6 +62,7 @@ import { RepoSecretsStore } from "../db/repo-secrets";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import { mergeSecrets } from "../db/secrets-validation";
 import { OpenAITokenRefreshService } from "./openai-token-refresh-service";
+import { AnthropicTokenRefreshService } from "./anthropic-token-refresh-service";
 import { ScmCredentialsService } from "./scm-credentials-service";
 import { ParticipantService, getAvatarUrl } from "./participant-service";
 import { UserScmTokenStore } from "../db/user-scm-tokens";
@@ -176,6 +177,7 @@ export class SessionDO extends DurableObject<Env> {
     unarchive: (request) => this.sessionLifecycleHandler.unarchive(request),
     verifySandboxToken: (request) => this.sandboxHandler.verifySandboxToken(request),
     openaiTokenRefresh: () => this.sandboxHandler.openaiTokenRefresh(),
+    anthropicTokenRefresh: () => this.sandboxHandler.anthropicTokenRefresh(),
     scmCredentials: () => this.sandboxHandler.scmCredentials(),
     spawnContext: () => this.childSessionsHandler.getSpawnContext(),
     childSummary: () => this.childSessionsHandler.getChildSummary(),
@@ -387,6 +389,25 @@ export class SessionDO extends DurableObject<Env> {
           return service.refresh(session);
         },
         isOpenAISecretsConfigured: () =>
+          Boolean(this.env.DB && this.env.REPO_SECRETS_ENCRYPTION_KEY),
+        refreshAnthropicToken: async (session) => {
+          const oauthConfig =
+            this.env.ANTHROPIC_OAUTH_CLIENT_ID || this.env.ANTHROPIC_OAUTH_TOKEN_URL
+              ? {
+                  clientId: this.env.ANTHROPIC_OAUTH_CLIENT_ID,
+                  tokenUrl: this.env.ANTHROPIC_OAUTH_TOKEN_URL,
+                }
+              : undefined;
+          const service = new AnthropicTokenRefreshService(
+            this.env.DB!,
+            this.env.REPO_SECRETS_ENCRYPTION_KEY!,
+            (sessionRow) => this.ensureRepoId(sessionRow),
+            this.log,
+            oauthConfig
+          );
+          return service.refresh(session);
+        },
+        isAnthropicSecretsConfigured: () =>
           Boolean(this.env.DB && this.env.REPO_SECRETS_ENCRYPTION_KEY),
         getScmCredentials: () =>
           new ScmCredentialsService(this.sourceControlProvider, this.log).getCredentials(),
