@@ -110,14 +110,14 @@ If you try to save a reserved key, the UI will show a validation error.
 
 ## Common Examples
 
-| Key                          | Scope  | Purpose                                               |
-| ---------------------------- | ------ | ----------------------------------------------------- |
-| `ANTHROPIC_API_KEY`          | Global | Claude API access (required for Daytona provider)     |
-| `OPENAI_OAUTH_REFRESH_TOKEN` | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md)) |
-| `OPENAI_OAUTH_ACCOUNT_ID`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md)) |
-| `DATABASE_URL`               | Repo   | Database connection string                            |
-| `AWS_ACCESS_KEY_ID`          | Repo   | AWS credentials for a specific project                |
-| `STRIPE_SECRET_KEY`          | Repo   | Stripe API key for a specific project                 |
+| Key                          | Scope  | Purpose                                                                                  |
+| ---------------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`          | Global | Claude API access (fallback when OAuth is not configured; required for Daytona provider) |
+| `OPENAI_OAUTH_REFRESH_TOKEN` | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                                    |
+| `OPENAI_OAUTH_ACCOUNT_ID`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                                    |
+| `DATABASE_URL`               | Repo   | Database connection string                                                               |
+| `AWS_ACCESS_KEY_ID`          | Repo   | AWS credentials for a specific project                                                   |
+| `STRIPE_SECRET_KEY`          | Repo   | Stripe API key for a specific project                                                    |
 
 ---
 

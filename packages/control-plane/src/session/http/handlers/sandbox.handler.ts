@@ -2,6 +2,7 @@ import type { Logger } from "../../../logger";
 import type { SessionArtifact } from "@open-inspect/shared";
 import type { ParticipantRole, SandboxEvent, ServerMessage } from "../../../types";
 import type { OpenAITokenRefreshResult } from "../../openai-token-refresh-service";
+import type { AnthropicTokenRefreshResult } from "../../anthropic-token-refresh-service";
 import type { ScmCredentialsResult } from "../../scm-credentials-service";
 import type { SessionRepository } from "../../repository";
 import type { SandboxRow, SessionRow } from "../../types";
@@ -26,6 +27,8 @@ export interface SandboxHandlerDeps {
   getSession: () => SessionRow | null;
   refreshOpenAIToken: (session: SessionRow) => Promise<OpenAITokenRefreshResult>;
   isOpenAISecretsConfigured: () => boolean;
+  refreshAnthropicToken: (session: SessionRow) => Promise<AnthropicTokenRefreshResult>;
+  isAnthropicSecretsConfigured: () => boolean;
   getScmCredentials: () => Promise<ScmCredentialsResult>;
   broadcast: (message: ServerMessage) => void;
   generateId: () => string;
@@ -46,6 +49,7 @@ export interface SandboxHandler {
   addParticipant: (request: Request) => Promise<Response>;
   verifySandboxToken: (request: Request) => Promise<Response>;
   openaiTokenRefresh: () => Promise<Response>;
+  anthropicTokenRefresh: () => Promise<Response>;
   scmCredentials: () => Promise<Response>;
 }
 
@@ -186,6 +190,30 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
           access_token: result.accessToken,
           expires_in: result.expiresIn,
           account_id: result.accountId,
+        },
+        { status: 200 }
+      );
+    },
+
+    async anthropicTokenRefresh(): Promise<Response> {
+      const session = deps.getSession();
+      if (!session) {
+        return Response.json({ error: "No session" }, { status: 404 });
+      }
+
+      if (!deps.isAnthropicSecretsConfigured()) {
+        return Response.json({ error: "Secrets not configured" }, { status: 500 });
+      }
+
+      const result = await deps.refreshAnthropicToken(session);
+      if (!result.ok) {
+        return Response.json({ error: result.error }, { status: result.status });
+      }
+
+      return Response.json(
+        {
+          access_token: result.accessToken,
+          expires_in: result.expiresIn,
         },
         { status: 200 }
       );

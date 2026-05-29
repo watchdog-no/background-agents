@@ -542,6 +542,47 @@ class SandboxSupervisor:
         if installed_any:
             self.log.info("opencode.skills_installed", skills_path=str(skills_dest))
 
+    def _write_opencode_auth_entry(self, provider: str, entry: dict) -> None:
+        """Merge one provider entry into OpenCode's auth.json (atomic, 0o600).
+
+        Reads any existing auth.json, updates the single ``provider`` key, and
+        rewrites so multiple providers (e.g. openai + anthropic) can coexist.
+        """
+        auth_dir = Path.home() / ".local" / "share" / "opencode"
+        auth_dir.mkdir(parents=True, exist_ok=True)
+
+        auth_file = auth_dir / "auth.json"
+        tmp_file = auth_dir / ".auth.json.tmp"
+
+        existing: dict = {}
+        if auth_file.exists():
+            try:
+                existing = json.loads(auth_file.read_text())
+                if not isinstance(existing, dict):
+                    existing = {}
+            except (OSError, ValueError):
+                existing = {}
+
+        existing[provider] = entry
+
+        # Write to a temp file created with 0o600 from the start, then
+        # atomically rename so the target is never world-readable. On any
+        # failure, remove the temp file so a partially-written, secret-bearing
+        # auth.json.tmp is never left on disk.
+        try:
+            fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                # O_TRUNC reuses a pre-existing temp file's mode, so enforce
+                # 0o600 explicitly before writing the secret-bearing payload.
+                os.fchmod(fd, 0o600)
+                os.write(fd, json.dumps(existing).encode())
+            finally:
+                os.close(fd)
+            tmp_file.replace(auth_file)
+        except OSError:
+            tmp_file.unlink(missing_ok=True)
+            raise
+
     def _setup_openai_oauth(self) -> None:
         """Write OpenCode auth.json for ChatGPT OAuth if refresh token is configured."""
         refresh_token = os.environ.get("OPENAI_OAUTH_REFRESH_TOKEN")
@@ -549,9 +590,6 @@ class SandboxSupervisor:
             return
 
         try:
-            auth_dir = Path.home() / ".local" / "share" / "opencode"
-            auth_dir.mkdir(parents=True, exist_ok=True)
-
             openai_entry = {
                 "type": "oauth",
                 "refresh": "managed-by-control-plane",
@@ -563,21 +601,31 @@ class SandboxSupervisor:
             if account_id:
                 openai_entry["accountId"] = account_id
 
-            auth_file = auth_dir / "auth.json"
-            tmp_file = auth_dir / ".auth.json.tmp"
-
-            # Write to a temp file created with 0o600 from the start, then
-            # atomically rename so the target is never world-readable.
-            fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                os.write(fd, json.dumps({"openai": openai_entry}).encode())
-            finally:
-                os.close(fd)
-            tmp_file.replace(auth_file)
+            self._write_opencode_auth_entry("openai", openai_entry)
 
             self.log.info("openai_oauth.setup")
         except Exception as e:
             self.log.warn("openai_oauth.setup_error", exc=e)
+
+    def _setup_anthropic_oauth(self) -> None:
+        """Write OpenCode auth.json for Claude OAuth if refresh token is configured."""
+        refresh_token = os.environ.get("ANTHROPIC_OAUTH_REFRESH_TOKEN")
+        if not refresh_token:
+            return
+
+        try:
+            anthropic_entry = {
+                "type": "oauth",
+                "refresh": "managed-by-control-plane",
+                "access": "",
+                "expires": 0,
+            }
+
+            self._write_opencode_auth_entry("anthropic", anthropic_entry)
+
+            self.log.info("anthropic_oauth.setup")
+        except Exception as e:
+            self.log.warn("anthropic_oauth.setup_error", exc=e)
 
     async def start_code_server(self) -> None:
         """Start code-server for browser-based VS Code editing."""
@@ -816,6 +864,7 @@ class SandboxSupervisor:
     async def start_opencode(self) -> None:
         """Start OpenCode server with configuration."""
         self._setup_openai_oauth()
+        self._setup_anthropic_oauth()
         self.log.info("opencode.start")
 
         # Build OpenCode config from session settings
@@ -856,6 +905,14 @@ class SandboxSupervisor:
             plugin_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy(plugin_source, plugin_dir / "codex-auth-plugin.js")
             self.log.info("openai_oauth.plugin_deployed")
+
+        # Deploy anthropic auth proxy plugin if Anthropic OAuth is configured
+        anthropic_plugin_source = Path("/app/sandbox_runtime/plugins/anthropic-auth-plugin.js")
+        if anthropic_plugin_source.exists() and os.environ.get("ANTHROPIC_OAUTH_REFRESH_TOKEN"):
+            plugin_dir = opencode_dir / "plugins"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(anthropic_plugin_source, plugin_dir / "anthropic-auth-plugin.js")
+            self.log.info("anthropic_oauth.plugin_deployed")
 
         env = {
             **os.environ,

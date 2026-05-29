@@ -186,6 +186,10 @@ The control plane calls the Daytona REST API directly — no shim service to dep
 > **Want to use your OpenAI ChatGPT subscription?** See [Using OpenAI Models](OPENAI_MODELS.md) for
 > setup instructions (can be configured after deployment).
 
+> **Want to use your Claude Pro/Max subscription?** See
+> [Using Claude Subscription Models](ANTHROPIC_MODELS.md) for setup instructions (can be configured
+> after deployment).
+
 ---
 
 ## Step 3: Create GitHub App
