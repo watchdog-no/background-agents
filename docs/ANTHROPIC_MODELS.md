@@ -14,6 +14,7 @@ Anthropic model path.
 | Claude Opus 4.5   | `claude-opus-4-5`   | Most capable; complex reasoning. |
 | Claude Opus 4.6   | `claude-opus-4-6`   | Most capable; complex reasoning. |
 | Claude Opus 4.7   | `claude-opus-4-7`   | Most capable; complex reasoning. |
+| Claude Opus 4.8   | `claude-opus-4-8`   | Most capable; complex reasoning. |
 
 ## Setup
 

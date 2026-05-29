@@ -242,6 +242,31 @@ class TestBuildPromptRequestBody:
             "outputConfig": {"effort": "medium"},
         }
 
+    def test_with_opus_4_8_xhigh_adaptive_thinking(self, bridge: AgentBridge):
+        """Opus 4.8 should pass xhigh as an adaptive output effort."""
+        body = bridge._build_prompt_request_body(
+            "Hello",
+            "anthropic/claude-opus-4-8",
+            reasoning_effort="xhigh",
+        )
+
+        assert body["model"]["options"] == {
+            "thinking": {"type": "adaptive"},
+            "outputConfig": {"effort": "xhigh"},
+        }
+
+    def test_with_opus_4_7_xhigh_keeps_current_behavior(self, bridge: AgentBridge):
+        """Opus 4.7 stays scoped to the existing adaptive efforts."""
+        body = bridge._build_prompt_request_body(
+            "Hello",
+            "anthropic/claude-opus-4-7",
+            reasoning_effort="xhigh",
+        )
+
+        assert body["model"]["options"] == {
+            "thinking": {"type": "adaptive"},
+        }
+
     def test_with_sonnet_4_6_adaptive_thinking(self, bridge: AgentBridge):
         """Sonnet 4.6 should use adaptive thinking instead of manual budgets."""
         body = bridge._build_prompt_request_body(
