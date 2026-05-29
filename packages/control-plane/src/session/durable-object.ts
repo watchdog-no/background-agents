@@ -391,11 +391,19 @@ export class SessionDO extends DurableObject<Env> {
         isOpenAISecretsConfigured: () =>
           Boolean(this.env.DB && this.env.REPO_SECRETS_ENCRYPTION_KEY),
         refreshAnthropicToken: async (session) => {
+          const oauthConfig =
+            this.env.ANTHROPIC_OAUTH_CLIENT_ID || this.env.ANTHROPIC_OAUTH_TOKEN_URL
+              ? {
+                  clientId: this.env.ANTHROPIC_OAUTH_CLIENT_ID,
+                  tokenUrl: this.env.ANTHROPIC_OAUTH_TOKEN_URL,
+                }
+              : undefined;
           const service = new AnthropicTokenRefreshService(
             this.env.DB!,
             this.env.REPO_SECRETS_ENCRYPTION_KEY!,
             (sessionRow) => this.ensureRepoId(sessionRow),
-            this.log
+            this.log,
+            oauthConfig
           );
           return service.refresh(session);
         },

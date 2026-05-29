@@ -1,4 +1,8 @@
-import { refreshAnthropicToken, AnthropicTokenRefreshError } from "../auth/anthropic";
+import {
+  refreshAnthropicToken,
+  AnthropicTokenRefreshError,
+  type AnthropicOAuthConfig,
+} from "../auth/anthropic";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import type { Env } from "../types";
@@ -20,7 +24,8 @@ export class AnthropicTokenRefreshService {
     private readonly db: Env["DB"],
     private readonly encryptionKey: string,
     private readonly ensureRepoId: (session: SessionRow) => Promise<number>,
-    private readonly log: Logger
+    private readonly log: Logger,
+    private readonly oauthConfig?: AnthropicOAuthConfig
   ) {}
 
   async refresh(session: SessionRow): Promise<AnthropicTokenRefreshResult> {
@@ -110,7 +115,9 @@ export class AnthropicTokenRefreshService {
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     session: SessionRow
   ): Promise<AnthropicTokenRefreshResult> {
-    const tokens = await refreshAnthropicToken(tokenState.refreshToken);
+    const tokens = this.oauthConfig
+      ? await refreshAnthropicToken(tokenState.refreshToken, this.oauthConfig)
+      : await refreshAnthropicToken(tokenState.refreshToken);
     const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
 
     try {

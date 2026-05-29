@@ -147,11 +147,15 @@ linear_client_secret = ""    # OAuth Application Client Secret
 linear_webhook_secret = ""   # Webhook Signing Secret from the application config
 
 # =============================================================================
-# API Keys
+# Anthropic model access
 # =============================================================================
 
-# Anthropic API key for Claude
-# From: https://console.anthropic.com/
+# Claude subscription OAuth is the default Anthropic path for coding sessions.
+# Leave these unset unless Anthropic issues different public OAuth values for your deployment.
+# anthropic_oauth_client_id = ""
+# anthropic_oauth_token_url = ""
+
+# Optional metered Anthropic API fallback and bot classifier key.
 anthropic_api_key = ""
 
 # =============================================================================

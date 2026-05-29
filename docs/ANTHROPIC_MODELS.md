@@ -1,7 +1,8 @@
 # Using Claude Subscription Models
 
 Open-Inspect can run coding sessions against Claude models using a **Claude Pro/Max subscription**
-OAuth token instead of metered, pay-per-token API billing.
+OAuth token instead of metered, pay-per-token API billing. In our deployment, this is the default
+Anthropic model path.
 
 ## Supported Models
 
@@ -26,6 +27,22 @@ node scripts/claude-oauth-login.mjs
 
 This prints a `claude.ai` OAuth URL. Open it in a browser, authorize, and paste the resulting code
 back into the terminal. The script then prints a **refresh token**. Copy it.
+
+The helper uses Claude Code-compatible public PKCE defaults. They are public-client parameters, not
+Open-Inspect secrets. If Anthropic issues different OAuth values for this deployment, override them
+when running the helper:
+
+```bash
+ANTHROPIC_OAUTH_CLIENT_ID="..." \
+ANTHROPIC_OAUTH_TOKEN_URL="..." \
+ANTHROPIC_OAUTH_REDIRECT_URI="..." \
+ANTHROPIC_OAUTH_SCOPES="..." \
+node scripts/claude-oauth-login.mjs
+```
+
+Set matching `anthropic_oauth_client_id` and `anthropic_oauth_token_url` Terraform variables if the
+control plane also needs to use non-default OAuth values. Do not add those values as repo/global
+secrets; they are reserved system configuration keys.
 
 Alternatively, if you already use Claude in a local tool (such as `opencode` or the Claude Code
 CLI), you can read the refresh token from that tool's local `auth.json`.
@@ -56,8 +73,8 @@ When starting a session, pick one of the supported Claude models from the model 
    persists the new value automatically.
 5. Tokens are resolved **repo-first, then global**: a repo-scoped token overrides the global one.
 
-If no OAuth refresh token is configured, the system falls back to the `ANTHROPIC_API_KEY` secret
-(metered API billing).
+If no OAuth refresh token is configured, the system can fall back to the `ANTHROPIC_API_KEY` secret
+for deployments that intentionally use metered API billing.
 
 ## Troubleshooting
 

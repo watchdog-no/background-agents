@@ -51,9 +51,14 @@ describe("validateKey", () => {
     expect(() => validateKey("path")).toThrow(SecretsValidationError);
   });
 
-  it("allows Anthropic OAuth refresh token but reserves the sandbox flag", () => {
+  it("allows Anthropic OAuth refresh token but reserves system Anthropic OAuth keys", () => {
     expect(() => validateKey("ANTHROPIC_OAUTH_REFRESH_TOKEN")).not.toThrow();
     expect(() => validateKey("ANTHROPIC_OAUTH_ENABLED")).toThrow(SecretsValidationError);
+    expect(() => validateKey("ANTHROPIC_OAUTH_AUTHORIZE_URL")).toThrow(SecretsValidationError);
+    expect(() => validateKey("ANTHROPIC_OAUTH_CLIENT_ID")).toThrow(SecretsValidationError);
+    expect(() => validateKey("ANTHROPIC_OAUTH_TOKEN_URL")).toThrow(SecretsValidationError);
+    expect(() => validateKey("ANTHROPIC_OAUTH_REDIRECT_URI")).toThrow(SecretsValidationError);
+    expect(() => validateKey("ANTHROPIC_OAUTH_SCOPES")).toThrow(SecretsValidationError);
   });
 });
 

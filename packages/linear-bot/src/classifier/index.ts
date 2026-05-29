@@ -190,6 +190,17 @@ export async function classifyRepo(
     };
   }
 
+  if (!env.ANTHROPIC_API_KEY) {
+    return {
+      repo: null,
+      confidence: "low",
+      reasoning:
+        "Repository classifier is not configured. Please reply with the repository name (e.g., `owner/repo`).",
+      alternatives: repos.slice(0, 5),
+      needsClarification: true,
+    };
+  }
+
   try {
     const prompt = await buildClassificationPrompt(
       env,

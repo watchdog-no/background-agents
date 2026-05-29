@@ -51,12 +51,16 @@ module "slack_bot_worker" {
     { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.2" },
   ]
 
-  secrets = [
-    { name = "SLACK_BOT_TOKEN", value = var.slack_bot_token },
-    { name = "SLACK_SIGNING_SECRET", value = var.slack_signing_secret },
-    { name = "ANTHROPIC_API_KEY", value = var.anthropic_api_key },
-    { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
-  ]
+  secrets = concat(
+    [
+      { name = "SLACK_BOT_TOKEN", value = var.slack_bot_token },
+      { name = "SLACK_SIGNING_SECRET", value = var.slack_signing_secret },
+      { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
+    ],
+    var.anthropic_api_key != "" ? [
+      { name = "ANTHROPIC_API_KEY", value = var.anthropic_api_key },
+    ] : []
+  )
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]

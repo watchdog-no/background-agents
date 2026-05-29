@@ -11,17 +11,39 @@
 //
 // No external dependencies: uses node:crypto, node:readline/promises, and the
 // global fetch. Run with: node scripts/claude-oauth-login.mjs
+//
+// Optional public-client overrides:
+//   ANTHROPIC_OAUTH_AUTHORIZE_URL
+//   ANTHROPIC_OAUTH_TOKEN_URL
+//   ANTHROPIC_OAUTH_CLIENT_ID
+//   ANTHROPIC_OAUTH_REDIRECT_URI
+//   ANTHROPIC_OAUTH_SCOPES
 
 import { randomBytes, createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-// Verified Claude OAuth constants (public PKCE client — no secret).
-const AUTHORIZE_ENDPOINT = "https://claude.ai/oauth/authorize";
-const TOKEN_ENDPOINT = "https://console.anthropic.com/v1/oauth/token";
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const SCOPES = "org:create_api_key user:profile user:inference";
+// Claude Code-compatible public PKCE defaults. These are public-client
+// parameters, not Open-Inspect secrets; override with ANTHROPIC_OAUTH_* env vars
+// if Anthropic issues different values for this deployment.
+const DEFAULT_AUTHORIZE_ENDPOINT = "https://claude.ai/oauth/authorize";
+const DEFAULT_TOKEN_ENDPOINT = "https://console.anthropic.com/v1/oauth/token";
+const DEFAULT_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const DEFAULT_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+const DEFAULT_SCOPES = "org:create_api_key user:profile user:inference";
+
+function envOrDefault(name, fallback) {
+  return process.env[name]?.trim() || fallback;
+}
+
+const AUTHORIZE_ENDPOINT = envOrDefault(
+  "ANTHROPIC_OAUTH_AUTHORIZE_URL",
+  DEFAULT_AUTHORIZE_ENDPOINT
+);
+const TOKEN_ENDPOINT = envOrDefault("ANTHROPIC_OAUTH_TOKEN_URL", DEFAULT_TOKEN_ENDPOINT);
+const CLIENT_ID = envOrDefault("ANTHROPIC_OAUTH_CLIENT_ID", DEFAULT_CLIENT_ID);
+const REDIRECT_URI = envOrDefault("ANTHROPIC_OAUTH_REDIRECT_URI", DEFAULT_REDIRECT_URI);
+const SCOPES = envOrDefault("ANTHROPIC_OAUTH_SCOPES", DEFAULT_SCOPES);
 
 /** base64url-encode a Buffer without padding. */
 function base64url(buffer) {

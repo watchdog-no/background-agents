@@ -31,7 +31,10 @@ vi.mock("../auth/anthropic", () => {
 
   return {
     AnthropicTokenRefreshError: MockAnthropicTokenRefreshError,
-    refreshAnthropicToken: (refreshToken: string) => mockState.refreshImpl(refreshToken),
+    refreshAnthropicToken: (refreshToken: string, config?: unknown) =>
+      config === undefined
+        ? mockState.refreshImpl(refreshToken)
+        : mockState.refreshImpl(refreshToken, config),
   };
 });
 
@@ -195,6 +198,35 @@ describe("AnthropicTokenRefreshService", () => {
     expect(mockState.repoWrites[0].name).toBe("web");
     expect(mockState.repoWrites[0].secrets.ANTHROPIC_OAUTH_REFRESH_TOKEN).toBe("refresh-new");
     expect(mockState.repoWrites[0].secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBe("access-new");
+  });
+
+  it("passes configured OAuth client settings to token refresh", async () => {
+    const repoId = 123;
+    const oauthConfig = {
+      clientId: "custom-client-id",
+      tokenUrl: "https://oauth.example.test/token",
+    };
+    mockState.repoSecrets.set(repoId, {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-old",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+    mockState.refreshImpl.mockResolvedValue({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+      expires_in: 1800,
+    });
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      createLogger(),
+      oauthConfig
+    );
+
+    await service.refresh(createSession());
+
+    expect(mockState.refreshImpl).toHaveBeenCalledWith("refresh-old", oauthConfig);
   });
 
   it("uses cached token after concurrent rotation when refresh gets 401", async () => {

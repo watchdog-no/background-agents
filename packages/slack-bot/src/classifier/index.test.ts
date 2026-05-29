@@ -150,4 +150,19 @@ describe("RepoClassifier", () => {
     expect(result.reasoning).toContain("structured model output");
     expect(result.alternatives).toHaveLength(2);
   });
+
+  it("asks for clarification without calling provider when classifier key is missing", async () => {
+    const classifier = new RepoClassifier({
+      CLASSIFICATION_MODEL: "claude-haiku-4-5",
+    } as Env);
+
+    const result = await classifier.classify("frontend UI issue in web app");
+
+    expect(result.repo).toBeNull();
+    expect(result.confidence).toBe("low");
+    expect(result.needsClarification).toBe(true);
+    expect(result.reasoning).toContain("not configured");
+    expect(result.alternatives).toHaveLength(2);
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+  });
 });

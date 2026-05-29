@@ -2,8 +2,17 @@
  * Anthropic OAuth token refresh utilities.
  */
 
-const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+export const DEFAULT_ANTHROPIC_OAUTH_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+export const DEFAULT_ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+export interface AnthropicOAuthConfig {
+  /**
+   * Public OAuth client ID. Defaults to the Claude Code-compatible public PKCE
+   * client used by our internal subscription-auth flow.
+   */
+  clientId?: string;
+  tokenUrl?: string;
+}
 
 export interface AnthropicTokenResponse {
   access_token: string;
@@ -24,8 +33,14 @@ export class AnthropicTokenRefreshError extends Error {
 /**
  * Refresh an Anthropic OAuth access token using a refresh token.
  */
-export async function refreshAnthropicToken(refreshToken: string): Promise<AnthropicTokenResponse> {
-  const response = await fetch(ANTHROPIC_TOKEN_URL, {
+export async function refreshAnthropicToken(
+  refreshToken: string,
+  config: AnthropicOAuthConfig = {}
+): Promise<AnthropicTokenResponse> {
+  const tokenUrl = config.tokenUrl?.trim() || DEFAULT_ANTHROPIC_OAUTH_TOKEN_URL;
+  const clientId = config.clientId?.trim() || DEFAULT_ANTHROPIC_OAUTH_CLIENT_ID;
+
+  const response = await fetch(tokenUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -33,7 +48,7 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<Anthr
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      client_id: ANTHROPIC_CLIENT_ID,
+      client_id: clientId,
     }).toString(),
   });
 

@@ -18,6 +18,11 @@ describe("prepareSandboxOAuthEnv", () => {
       ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
       ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
       ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "123",
+      ANTHROPIC_OAUTH_AUTHORIZE_URL: "https://oauth.example.test/authorize",
+      ANTHROPIC_OAUTH_CLIENT_ID: "public-client-id",
+      ANTHROPIC_OAUTH_TOKEN_URL: "https://oauth.example.test/token",
+      ANTHROPIC_OAUTH_REDIRECT_URI: "https://oauth.example.test/callback",
+      ANTHROPIC_OAUTH_SCOPES: "user:inference",
       DATABASE_URL: "postgres://example",
     });
 

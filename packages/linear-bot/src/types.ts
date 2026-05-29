@@ -29,7 +29,7 @@ export interface Env {
   // Secrets
   LINEAR_WEBHOOK_SECRET: string;
   LINEAR_API_KEY?: string; // kept for backward compat / fallback
-  ANTHROPIC_API_KEY: string;
+  ANTHROPIC_API_KEY?: string;
   INTERNAL_CALLBACK_SECRET?: string;
   LOG_LEVEL?: string;
 }

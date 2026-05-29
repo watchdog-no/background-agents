@@ -470,14 +470,17 @@ already mint a fresh fallback token on restore.
 
 You can configure environment variables (API keys, credentials) at global or per-repository scope:
 
-- **Global secrets** apply to all repositories (e.g., `ANTHROPIC_API_KEY`)
+- **Global secrets** apply to all repositories (e.g., `ANTHROPIC_OAUTH_REFRESH_TOKEN`)
 - **Repository secrets** apply to a single repo and override global secrets with the same key
 - Stored encrypted (AES-256-GCM) in D1 database
-- Injected into sandboxes at startup
+- Generally injected into sandboxes at startup
+- Anthropic OAuth refresh tokens and cached access-token secrets stay control-plane-only; sandboxes
+  receive a non-secret enabled flag and request short-lived access tokens through an internal
+  endpoint
 - Never exposed to clients (only key names are visible)
 
-> **Daytona users**: LLM API keys (e.g., `ANTHROPIC_API_KEY` for Claude models) must be added as
-> global secrets. Modal injects these automatically via its own secrets mechanism.
+> **Daytona users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the default Claude
+> subscription path. Add `ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
 
 See [Secrets Management](./SECRETS.md) for setup instructions.
 

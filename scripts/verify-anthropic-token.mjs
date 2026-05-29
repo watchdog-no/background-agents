@@ -17,15 +17,26 @@
  * Usage:
  *   node scripts/verify-anthropic-token.mjs .env-tmp
  *   ANTHROPIC_OAUTH_REFRESH_TOKEN=sk-ant-ort-... node scripts/verify-anthropic-token.mjs
+ *
+ * Optional public-client overrides:
+ *   ANTHROPIC_OAUTH_TOKEN_URL=...
+ *   ANTHROPIC_OAUTH_CLIENT_ID=...
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+const DEFAULT_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const DEFAULT_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const BETA = "oauth-2025-04-20";
 const MODEL = process.env.VERIFY_MODEL || "claude-sonnet-4-6";
+
+function envOrDefault(name, fallback) {
+  return process.env[name]?.trim() || fallback;
+}
+
+const TOKEN_URL = envOrDefault("ANTHROPIC_OAUTH_TOKEN_URL", DEFAULT_TOKEN_URL);
+const CLIENT_ID = envOrDefault("ANTHROPIC_OAUTH_CLIENT_ID", DEFAULT_CLIENT_ID);
 
 function mask(s) {
   if (!s) return "(missing)";

@@ -175,8 +175,10 @@ Choose the AI model that fits your task, with per-session reasoning effort contr
 | OpenAI       | GPT 5.2, GPT 5.4, GPT 5.5, GPT 5.2 Codex, 5.3 Codex, 5.3 Codex Spark |
 | OpenCode Zen | Kimi K2.5, MiniMax M2.5, GLM 5 (opt-in)                              |
 
-OpenAI models work with your existing ChatGPT subscription via OAuth — no separate API key needed.
-See **[docs/OPENAI_MODELS.md](docs/OPENAI_MODELS.md)** for setup instructions.
+Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
+work with your existing ChatGPT subscription via OAuth. See
+**[docs/ANTHROPIC_MODELS.md](docs/ANTHROPIC_MODELS.md)** and
+**[docs/OPENAI_MODELS.md](docs/OPENAI_MODELS.md)** for setup instructions.
 
 ### Client Integrations
 

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { refreshAnthropicToken, AnthropicTokenRefreshError } from "./anthropic";
+import {
+  DEFAULT_ANTHROPIC_OAUTH_CLIENT_ID,
+  DEFAULT_ANTHROPIC_OAUTH_TOKEN_URL,
+  refreshAnthropicToken,
+  AnthropicTokenRefreshError,
+} from "./anthropic";
 import type { AnthropicTokenResponse } from "./anthropic";
 
 describe("anthropic", () => {
@@ -28,12 +33,34 @@ describe("anthropic", () => {
       expect(globalThis.fetch).toHaveBeenCalledOnce();
 
       const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(url).toBe("https://console.anthropic.com/v1/oauth/token");
+      expect(url).toBe(DEFAULT_ANTHROPIC_OAUTH_TOKEN_URL);
       expect(init.method).toBe("POST");
       expect(init.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
       expect(init.body).toContain("grant_type=refresh_token");
       expect(init.body).toContain("refresh_token=rt_old");
-      expect(init.body).toContain("client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+      expect(init.body).toContain(`client_id=${DEFAULT_ANTHROPIC_OAUTH_CLIENT_ID}`);
+    });
+
+    it("uses configured OAuth endpoint and client ID", async () => {
+      const mockTokens: AnthropicTokenResponse = {
+        access_token: "acc_123",
+        refresh_token: "rt_new",
+        expires_in: 3600,
+      };
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockTokens),
+      } as unknown as Response);
+
+      await refreshAnthropicToken("rt_old", {
+        tokenUrl: "https://oauth.example.test/token",
+        clientId: "custom-client-id",
+      });
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(url).toBe("https://oauth.example.test/token");
+      expect(init.body).toContain("client_id=custom-client-id");
     });
 
     it("throws AnthropicTokenRefreshError on 401 with status and body", async () => {
