@@ -181,6 +181,7 @@ class TestAnthropicAuthPluginSetup:
                       input: 3,
                       output: 15,
                       cache: {{ read: 0.3, write: 3.75 }},
+                      billing: {{ unit: "tokens" }},
                       tiers: [
                         {{
                           input: 6,
@@ -210,6 +211,7 @@ class TestAnthropicAuthPluginSetup:
             "input": 0,
             "output": 0,
             "cache": {"read": 0, "write": 0},
+            "billing": {"unit": "tokens"},
             "tiers": [
                 {
                     "input": 0,
@@ -219,3 +221,270 @@ class TestAnthropicAuthPluginSetup:
                 }
             ],
         }
+
+    def test_provider_models_hook_handles_missing_models(self):
+        """OAuth model cost override should tolerate missing provider metadata."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = f"""
+            import {{ AnthropicAuthProxy }} from {json.dumps(plugin_path.as_uri())};
+
+            const plugin = await AnthropicAuthProxy({{
+              client: {{ auth: {{ set: async () => {{}} }} }},
+            }});
+
+            const models = await plugin.provider.models(
+              {{ id: "anthropic" }},
+              {{ auth: {{ type: "oauth", refresh: "sentinel", access: "", expires: 0 }} }}
+            );
+
+            console.log(JSON.stringify(models));
+        """
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert json.loads(result.stdout) == {}
+
+    def test_fetch_hook_strips_api_keys_and_sets_oauth_headers(self):
+        """OAuth Anthropic fetches must not leak dummy API-key credentials upstream."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = """
+            import { AnthropicAuthProxy } from PLUGIN_URI;
+
+            const assert = (condition, message) => {
+              if (!condition) throw new Error(message);
+            };
+
+            process.env.CONTROL_PLANE_URL = "https://cp.example.com";
+            process.env.SANDBOX_AUTH_TOKEN = "sandbox-token";
+            process.env.SESSION_CONFIG = JSON.stringify({ sessionId: "sess-1" });
+
+            const upstreamHeaders = [];
+            let refreshCalls = 0;
+
+            globalThis.fetch = async (requestInput, init = {}) => {
+              const url =
+                requestInput instanceof URL
+                  ? requestInput.href
+                  : typeof requestInput === "string"
+                    ? requestInput
+                    : requestInput.url;
+
+              if (url === "https://cp.example.com/sessions/sess-1/anthropic-token-refresh") {
+                refreshCalls += 1;
+                return new Response(
+                  JSON.stringify({ access_token: "oauth-access", expires_in: 3600 }),
+                  { status: 200, headers: { "content-type": "application/json" } }
+                );
+              }
+
+              upstreamHeaders.push(Object.fromEntries(new Headers(init.headers).entries()));
+              return new Response("ok", { status: 200 });
+            };
+
+            const plugin = await AnthropicAuthProxy({
+              client: { auth: { set: async () => {} } },
+            });
+            const loader = await plugin.auth.loader(
+              async () => ({ type: "oauth", refresh: "sentinel", access: "", expires: 0 }),
+              { models: { "claude-test": { cost: {} } } }
+            );
+
+            const cases = [
+              new Headers([
+                ["authorization", "Bearer stale"],
+                ["x-api-key", "opencode-oauth-dummy-key"],
+                ["anthropic-beta", "tools-2025-01-01"],
+              ]),
+              [
+                ["Authorization", "Bearer stale"],
+                ["X-Api-Key", "opencode-oauth-dummy-key"],
+                ["anthropic-beta", "oauth-2025-04-20"],
+              ],
+              {
+                Authorization: "Bearer stale",
+                "X-Api-Key": "opencode-oauth-dummy-key",
+              },
+            ];
+
+            for (const headers of cases) {
+              await loader.fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers,
+              });
+            }
+
+            assert(refreshCalls === 1, `expected one refresh call, got ${refreshCalls}`);
+            assert(upstreamHeaders.length === 3, "expected three upstream calls");
+
+            for (const headers of upstreamHeaders) {
+              assert(headers.authorization === "Bearer oauth-access", "authorization not replaced");
+              assert(!("x-api-key" in headers), "x-api-key leaked upstream");
+            }
+
+            assert(
+              upstreamHeaders[0]["anthropic-beta"] === "tools-2025-01-01, oauth-2025-04-20",
+              "Headers beta value was not appended"
+            );
+            assert(
+              upstreamHeaders[1]["anthropic-beta"] === "oauth-2025-04-20",
+              "array beta value was duplicated or clobbered"
+            );
+            assert(
+              upstreamHeaders[2]["anthropic-beta"] === "oauth-2025-04-20",
+              "plain-object beta value was not set"
+            );
+
+            console.log("ok");
+        """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.strip() == "ok"
+
+    def test_set_auth_failure_is_logged_but_nonfatal(self):
+        """OpenCode auth persistence failures should not be silent."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = """
+            import { AnthropicAuthProxy } from PLUGIN_URI;
+
+            const assert = (condition, message) => {
+              if (!condition) throw new Error(message);
+            };
+
+            process.env.CONTROL_PLANE_URL = "https://cp.example.com";
+            process.env.SANDBOX_AUTH_TOKEN = "sandbox-token";
+            process.env.SESSION_CONFIG = JSON.stringify({ sessionId: "sess-1" });
+
+            const warnings = [];
+            console.warn = (...args) => warnings.push(args[0]);
+
+            globalThis.fetch = async (requestInput, init = {}) => {
+              const url =
+                requestInput instanceof URL
+                  ? requestInput.href
+                  : typeof requestInput === "string"
+                    ? requestInput
+                    : requestInput.url;
+
+              if (url === "https://cp.example.com/sessions/sess-1/anthropic-token-refresh") {
+                return new Response(
+                  JSON.stringify({ access_token: "oauth-access", expires_in: 3600 }),
+                  { status: 200, headers: { "content-type": "application/json" } }
+                );
+              }
+
+              return new Response("ok", { status: 200 });
+            };
+
+            const plugin = await AnthropicAuthProxy({
+              client: { auth: { set: async () => { throw new Error("auth store unavailable"); } } },
+            });
+            const loader = await plugin.auth.loader(
+              async () => ({ type: "oauth", refresh: "sentinel", access: "", expires: 0 }),
+              { models: { "claude-test": { cost: {} } } }
+            );
+
+            await loader.fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: {},
+            });
+
+            assert(
+              warnings.includes("anthropic_oauth.set_auth_failed"),
+              "setAuth failure was not logged"
+            );
+            console.log("ok");
+        """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.strip() == "ok"
+
+    def test_refresh_errors_include_actionable_status_semantics(self):
+        """Terminal control-plane refresh errors should explain the required action."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = """
+            import { AnthropicAuthProxy } from PLUGIN_URI;
+
+            const assert = (condition, message) => {
+              if (!condition) throw new Error(message);
+            };
+
+            process.env.CONTROL_PLANE_URL = "https://cp.example.com";
+            process.env.SANDBOX_AUTH_TOKEN = "sandbox-token";
+            process.env.SESSION_CONFIG = JSON.stringify({ sessionId: "sess-1" });
+
+            globalThis.fetch = async () =>
+              new Response("ANTHROPIC_OAUTH_REFRESH_TOKEN not configured", { status: 404 });
+
+            const plugin = await AnthropicAuthProxy({
+              client: { auth: { set: async () => {} } },
+            });
+            const loader = await plugin.auth.loader(
+              async () => ({ type: "oauth", refresh: "sentinel", access: "", expires: 0 }),
+              { models: { "claude-test": { cost: {} } } }
+            );
+
+            try {
+              await loader.fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {},
+              });
+              throw new Error("expected refresh failure");
+            } catch (err) {
+              assert(
+                err.message.includes("not configured for this repository or globally"),
+                `unexpected error: ${err.message}`
+              );
+            }
+
+            console.log("ok");
+        """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.strip() == "ok"

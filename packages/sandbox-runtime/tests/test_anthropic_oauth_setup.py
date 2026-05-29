@@ -4,6 +4,8 @@ import json
 import os
 from unittest.mock import patch
 
+import pytest
+
 from sandbox_runtime.entrypoint import SandboxSupervisor
 
 
@@ -85,13 +87,14 @@ class TestAnthropicOauthSetup:
         mode = _auth_file(tmp_path).stat().st_mode & 0o777
         assert mode == 0o600
 
-    def test_does_not_crash_on_write_failure(self, tmp_path):
+    def test_raises_on_write_failure(self, tmp_path):
         sup = _make_supervisor()
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=OSError("disk full")),
+            pytest.raises(OSError, match="disk full"),
         ):
             sup._setup_anthropic_oauth()
 
@@ -108,6 +111,7 @@ class TestAnthropicOauthSetup:
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=fail_on_tmp),
+            pytest.raises(OSError, match="disk full"),
         ):
             sup._setup_anthropic_oauth()
 

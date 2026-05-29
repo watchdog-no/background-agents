@@ -10,6 +10,8 @@ import type { Logger } from "../logger";
 import type { SessionRow } from "./types";
 
 const ANTHROPIC_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS = 3;
+const ROTATED_REFRESH_TOKEN_PERSIST_RETRY_DELAY_MS = 100;
 
 type AnthropicTokenState =
   | { type: "cached"; accessToken: string; expiresIn: number }
@@ -119,34 +121,43 @@ export class AnthropicTokenRefreshService {
       ? await refreshAnthropicToken(tokenState.refreshToken, this.oauthConfig)
       : await refreshAnthropicToken(tokenState.refreshToken);
     const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
+    let refreshTokenPersisted = false;
 
     try {
-      const secretsToWrite: Record<string, string> = {
-        ANTHROPIC_OAUTH_REFRESH_TOKEN: tokens.refresh_token,
-        ANTHROPIC_OAUTH_ACCESS_TOKEN: tokens.access_token,
-        ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(expiresAt),
-      };
+      await this.writeRotatedRefreshToken(tokenState, session, tokens.refresh_token);
+      refreshTokenPersisted = true;
 
-      if (tokenState.source === "repo") {
-        const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-        await repoStore.setSecrets(
-          tokenState.repoId,
-          session.repo_owner,
-          session.repo_name,
-          secretsToWrite
-        );
-      } else {
-        const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
-        await globalStore.setSecrets(secretsToWrite);
-      }
-
-      this.log.info("Anthropic tokens rotated and cached", {
+      this.log.info("Anthropic refresh token rotated", {
         source: tokenState.source,
+        repo_id: tokenState.repoId,
       });
     } catch (e) {
-      this.log.error("Failed to store rotated Anthropic tokens", {
+      this.log.error("ANTHROPIC_OAUTH_REFRESH_TOKEN_PERSIST_FAILED_AFTER_ROTATION", {
+        source: tokenState.source,
+        repo_id: tokenState.repoId,
+        credential_state: "previous_refresh_token_invalid",
         error: e instanceof Error ? e.message : String(e),
       });
+    }
+
+    if (refreshTokenPersisted) {
+      try {
+        await this.writeTokenSecrets(tokenState, session, {
+          ANTHROPIC_OAUTH_ACCESS_TOKEN: tokens.access_token,
+          ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(expiresAt),
+        });
+
+        this.log.info("Anthropic access token cached", {
+          source: tokenState.source,
+          repo_id: tokenState.repoId,
+        });
+      } catch (e) {
+        this.log.warn("Failed to cache Anthropic access token after refresh", {
+          source: tokenState.source,
+          repo_id: tokenState.repoId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     return {
@@ -171,6 +182,46 @@ export class AnthropicTokenRefreshService {
     } catch {
       return error.body.includes("invalid_grant");
     }
+  }
+
+  private async writeTokenSecrets(
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
+    session: SessionRow,
+    secrets: Record<string, string>
+  ): Promise<void> {
+    if (tokenState.source === "repo") {
+      const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
+      await repoStore.setSecrets(tokenState.repoId, session.repo_owner, session.repo_name, secrets);
+    } else {
+      const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
+      await globalStore.setSecrets(secrets);
+    }
+  }
+
+  private async writeRotatedRefreshToken(
+    tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
+    session: SessionRow,
+    refreshToken: string
+  ): Promise<void> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS; attempt++) {
+      try {
+        await this.writeTokenSecrets(tokenState, session, {
+          ANTHROPIC_OAUTH_REFRESH_TOKEN: refreshToken,
+        });
+        return;
+      } catch (e) {
+        lastError = e;
+        if (attempt < ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, ROTATED_REFRESH_TOKEN_PERSIST_RETRY_DELAY_MS * attempt)
+          );
+        }
+      }
+    }
+
+    throw lastError;
   }
 
   private async handleConcurrentRotationRefresh(
@@ -202,6 +253,13 @@ export class AnthropicTokenRefreshService {
         this.log.info("Detected concurrent token rotation, retrying");
         return this.attemptRefresh(reread, session);
       }
+
+      this.log.error("Anthropic refresh token rejected and no newer token was found", {
+        status: error.status,
+        source: tokenState.source,
+        repo_id: tokenState.repoId,
+        action: "re-run Anthropic OAuth login",
+      });
     } catch (retryErr) {
       this.log.error("Retry after Anthropic refresh failure also failed", {
         error: retryErr instanceof Error ? retryErr.message : String(retryErr),

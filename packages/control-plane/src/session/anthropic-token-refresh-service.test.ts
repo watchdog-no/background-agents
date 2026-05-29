@@ -15,7 +15,16 @@ const mockState = vi.hoisted(() => ({
     name: string;
     secrets: Record<string, string>;
   }>,
+  repoWriteAttempts: [] as Array<{
+    repoId: number;
+    owner: string;
+    name: string;
+    secrets: Record<string, string>;
+  }>,
   globalWrites: [] as Array<Record<string, string>>,
+  globalWriteAttempts: [] as Array<Record<string, string>>,
+  failRepoWritesForKeys: new Set<string>(),
+  failGlobalWritesForKeys: new Set<string>(),
 }));
 
 vi.mock("../auth/anthropic", () => {
@@ -50,6 +59,10 @@ vi.mock("../db/repo-secrets", () => ({
       name: string,
       secrets: Record<string, string>
     ): Promise<void> {
+      mockState.repoWriteAttempts.push({ repoId, owner, name, secrets });
+      if (Object.keys(secrets).some((key) => mockState.failRepoWritesForKeys.has(key))) {
+        throw new Error("repo write failed");
+      }
       mockState.repoWrites.push({ repoId, owner, name, secrets });
       const existing = mockState.repoSecrets.get(repoId) ?? {};
       mockState.repoSecrets.set(repoId, { ...existing, ...secrets });
@@ -64,6 +77,10 @@ vi.mock("../db/global-secrets", () => ({
     }
 
     async setSecrets(secrets: Record<string, string>): Promise<void> {
+      mockState.globalWriteAttempts.push(secrets);
+      if (Object.keys(secrets).some((key) => mockState.failGlobalWritesForKeys.has(key))) {
+        throw new Error("global write failed");
+      }
       mockState.globalWrites.push(secrets);
       mockState.globalSecrets = { ...mockState.globalSecrets, ...secrets };
     }
@@ -115,7 +132,11 @@ describe("AnthropicTokenRefreshService", () => {
     mockState.repoSecrets.clear();
     mockState.globalSecrets = {};
     mockState.repoWrites = [];
+    mockState.repoWriteAttempts = [];
     mockState.globalWrites = [];
+    mockState.globalWriteAttempts = [];
+    mockState.failRepoWritesForKeys.clear();
+    mockState.failGlobalWritesForKeys.clear();
     mockState.refreshImpl.mockReset();
   });
 
@@ -192,12 +213,13 @@ describe("AnthropicTokenRefreshService", () => {
       expiresIn: 1800,
     });
     expect(mockState.refreshImpl).toHaveBeenCalledWith("refresh-old");
-    expect(mockState.repoWrites).toHaveLength(1);
+    expect(mockState.repoWrites).toHaveLength(2);
     expect(mockState.repoWrites[0].repoId).toBe(repoId);
     expect(mockState.repoWrites[0].owner).toBe("acme");
     expect(mockState.repoWrites[0].name).toBe("web");
     expect(mockState.repoWrites[0].secrets.ANTHROPIC_OAUTH_REFRESH_TOKEN).toBe("refresh-new");
-    expect(mockState.repoWrites[0].secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBe("access-new");
+    expect(mockState.repoWrites[0].secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBeUndefined();
+    expect(mockState.repoWrites[1].secrets.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBe("access-new");
   });
 
   it("passes configured OAuth client settings to token refresh", async () => {
@@ -227,6 +249,81 @@ describe("AnthropicTokenRefreshService", () => {
     await service.refresh(createSession());
 
     expect(mockState.refreshImpl).toHaveBeenCalledWith("refresh-old", oauthConfig);
+  });
+
+  it("falls back to global refresh token when repo token is missing", async () => {
+    const repoId = 123;
+    mockState.globalSecrets = {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "global-refresh-old",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    };
+    mockState.refreshImpl.mockResolvedValue({
+      access_token: "global-access-new",
+      refresh_token: "global-refresh-new",
+      expires_in: 1800,
+    });
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      createLogger()
+    );
+
+    const result = await service.refresh(createSession());
+
+    expect(result).toEqual({
+      ok: true,
+      accessToken: "global-access-new",
+      expiresIn: 1800,
+    });
+    expect(mockState.refreshImpl).toHaveBeenCalledWith("global-refresh-old");
+    expect(mockState.repoWrites).toHaveLength(0);
+    expect(mockState.globalWrites).toHaveLength(2);
+    expect(mockState.globalWrites[0].ANTHROPIC_OAUTH_REFRESH_TOKEN).toBe("global-refresh-new");
+    expect(mockState.globalWrites[1].ANTHROPIC_OAUTH_ACCESS_TOKEN).toBe("global-access-new");
+  });
+
+  it("keeps the rotated refresh token when optional access-token cache write fails", async () => {
+    const repoId = 123;
+    const logger = createLogger();
+    mockState.repoSecrets.set(repoId, {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-old",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+    mockState.failRepoWritesForKeys.add("ANTHROPIC_OAUTH_ACCESS_TOKEN");
+    mockState.refreshImpl.mockResolvedValue({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+      expires_in: 1800,
+    });
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      logger
+    );
+
+    const result = await service.refresh(createSession());
+
+    expect(result).toEqual({
+      ok: true,
+      accessToken: "access-new",
+      expiresIn: 1800,
+    });
+    expect(mockState.repoWriteAttempts).toHaveLength(2);
+    expect(mockState.repoWrites).toHaveLength(1);
+    expect(mockState.repoSecrets.get(repoId)?.ANTHROPIC_OAUTH_REFRESH_TOKEN).toBe("refresh-new");
+    expect(mockState.repoSecrets.get(repoId)?.ANTHROPIC_OAUTH_ACCESS_TOKEN).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to cache Anthropic access token after refresh",
+      {
+        source: "repo",
+        repo_id: repoId,
+        error: "repo write failed",
+      }
+    );
   });
 
   it("uses cached token after concurrent rotation when refresh gets 401", async () => {
@@ -301,5 +398,91 @@ describe("AnthropicTokenRefreshService", () => {
       expiresIn: expect.any(Number),
     });
     expect(mockState.refreshImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries with a concurrently rotated refresh token when no access token is cached", async () => {
+    vi.useFakeTimers();
+
+    const repoId = 123;
+    mockState.repoSecrets.set(repoId, {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-stale",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+
+    mockState.refreshImpl
+      .mockImplementationOnce(async () => {
+        mockState.repoSecrets.set(repoId, {
+          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-rotated",
+          ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+        });
+        throw new AnthropicTokenRefreshError("invalid grant", 400, '{"error":"invalid_grant"}');
+      })
+      .mockResolvedValueOnce({
+        access_token: "access-after-retry",
+        refresh_token: "refresh-after-retry",
+        expires_in: 1800,
+      });
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      createLogger()
+    );
+
+    const promise = service.refresh(createSession());
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toEqual({
+      ok: true,
+      accessToken: "access-after-retry",
+      expiresIn: 1800,
+    });
+    expect(mockState.refreshImpl).toHaveBeenNthCalledWith(1, "refresh-stale");
+    expect(mockState.refreshImpl).toHaveBeenNthCalledWith(2, "refresh-rotated");
+    expect(mockState.repoSecrets.get(repoId)?.ANTHROPIC_OAUTH_REFRESH_TOKEN).toBe(
+      "refresh-after-retry"
+    );
+  });
+
+  it("logs revoked refresh tokens distinctly when no concurrent rotation is found", async () => {
+    vi.useFakeTimers();
+
+    const repoId = 123;
+    const logger = createLogger();
+    mockState.repoSecrets.set(repoId, {
+      ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-revoked",
+      ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+    mockState.refreshImpl.mockRejectedValueOnce(
+      new AnthropicTokenRefreshError("unauthorized", 401, "unauthorized")
+    );
+
+    const service = new AnthropicTokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => repoId,
+      logger
+    );
+
+    const promise = service.refresh(createSession());
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await promise;
+
+    expect(result).toEqual({
+      ok: false,
+      status: 401,
+      error: "Anthropic token refresh failed",
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      "Anthropic refresh token rejected and no newer token was found",
+      {
+        status: 401,
+        source: "repo",
+        repo_id: repoId,
+        action: "re-run Anthropic OAuth login",
+      }
+    );
   });
 });

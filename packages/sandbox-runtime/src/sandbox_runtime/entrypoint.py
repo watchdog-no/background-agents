@@ -604,8 +604,9 @@ class SandboxSupervisor:
             self._write_opencode_auth_entry("openai", openai_entry)
 
             self.log.info("openai_oauth.setup")
-        except Exception as e:
-            self.log.warn("openai_oauth.setup_error", exc=e)
+        except OSError as e:
+            self.log.error("openai_oauth.setup_error", exc=e)
+            raise
 
     def _setup_anthropic_oauth(self) -> None:
         """Write OpenCode auth.json for Claude OAuth if control plane enables it."""
@@ -623,8 +624,9 @@ class SandboxSupervisor:
             self._write_opencode_auth_entry("anthropic", anthropic_entry)
 
             self.log.info("anthropic_oauth.setup")
-        except Exception as e:
-            self.log.warn("anthropic_oauth.setup_error", exc=e)
+        except OSError as e:
+            self.log.error("anthropic_oauth.setup_error", exc=e)
+            raise
 
     async def start_code_server(self) -> None:
         """Start code-server for browser-based VS Code editing."""

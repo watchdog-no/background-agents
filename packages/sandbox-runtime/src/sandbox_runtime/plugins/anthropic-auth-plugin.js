@@ -19,25 +19,29 @@ let cachedAccessToken = null;
 let cachedExpiresAt = 0;
 
 function zeroCost(cost = {}) {
+  const cache = cost.cache && typeof cost.cache === "object" ? cost.cache : {};
   const base = {
+    ...cost,
     input: 0,
     output: 0,
-    cache: { read: 0, write: 0 },
+    cache: { ...cache, read: 0, write: 0 },
   };
 
   if (Array.isArray(cost.tiers)) {
     base.tiers = cost.tiers.map((tierCost) => ({
-      ...base,
-      tier: tierCost.tier,
+      ...tierCost,
+      input: 0,
+      output: 0,
+      cache: {
+        ...(tierCost.cache && typeof tierCost.cache === "object" ? tierCost.cache : {}),
+        read: 0,
+        write: 0,
+      },
     }));
   }
 
   if (cost.experimentalOver200K) {
-    base.experimentalOver200K = {
-      input: 0,
-      output: 0,
-      cache: { read: 0, write: 0 },
-    };
+    base.experimentalOver200K = zeroCost(cost.experimentalOver200K);
   }
 
   return base;
@@ -79,10 +83,26 @@ async function refreshViaControlPlane() {
 
   if (!response.ok) {
     const body = (await response.text()).slice(0, 200);
-    throw new Error(`Token refresh failed (${response.status}): ${body}`);
+    throw new Error(formatRefreshError(response.status, body));
   }
 
   return response.json();
+}
+
+function formatRefreshError(status, body) {
+  if (status === 404) {
+    return `Anthropic OAuth is not configured for this repository or globally (${status}): ${body}`;
+  }
+
+  if (status === 400 || status === 401) {
+    return `Anthropic OAuth refresh token was rejected; re-run the Anthropic OAuth login script (${status}): ${body}`;
+  }
+
+  if (status >= 500) {
+    return `Anthropic OAuth token refresh is temporarily unavailable (${status}): ${body}`;
+  }
+
+  return `Anthropic OAuth token refresh failed (${status}): ${body}`;
 }
 
 async function ensureAccessToken(getAuth, setAuth) {
@@ -110,8 +130,9 @@ async function ensureAccessToken(getAuth, setAuth) {
       access: result.access_token,
       expires: cachedExpiresAt,
     });
-  } catch {
+  } catch (err) {
     // Non-fatal: the in-memory cache is the source of truth
+    console.warn("anthropic_oauth.set_auth_failed", err);
   }
 
   return { accessToken: cachedAccessToken };
@@ -203,9 +224,10 @@ export const AnthropicAuthProxy = async (input) => {
       id: "anthropic",
       async models(provider, ctx) {
         if (ctx?.auth && ctx.auth.type !== "oauth") return provider.models;
+        const models = provider.models ?? {};
 
         return Object.fromEntries(
-          Object.entries(provider.models).map(([modelId, model]) => [
+          Object.entries(models).map(([modelId, model]) => [
             modelId,
             {
               ...model,

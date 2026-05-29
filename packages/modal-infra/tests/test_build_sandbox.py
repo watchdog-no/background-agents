@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.sandbox.manager import SandboxManager
+from src.sandbox.manager import ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS, SandboxManager
 
 
 def _fake_sandbox_create(captured):
@@ -233,19 +233,17 @@ async def test_anthropic_oauth_env_vars_are_filtered(monkeypatch):
         repo_owner="acme",
         repo_name="my-repo",
         user_env_vars={
-            "ANTHROPIC_OAUTH_REFRESH_TOKEN": "refresh-token",
-            "ANTHROPIC_OAUTH_ACCESS_TOKEN": "access-token",
-            "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT": "123",
-            "ANTHROPIC_OAUTH_ENABLED": "true",
+            **{
+                key: f"value-{index}"
+                for index, key in enumerate(ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS)
+            },
             "NPM_TOKEN": "tok_abc",
         },
     )
 
     env = captured["env"]
-    assert "ANTHROPIC_OAUTH_REFRESH_TOKEN" not in env
-    assert "ANTHROPIC_OAUTH_ACCESS_TOKEN" not in env
-    assert "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT" not in env
-    assert "ANTHROPIC_OAUTH_ENABLED" not in env
+    for key in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS:
+        assert key not in env
     assert env["NPM_TOKEN"] == "tok_abc"
 
 

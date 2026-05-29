@@ -445,6 +445,25 @@ describe("createSandboxHandler", () => {
     expect(refreshAnthropicToken).toHaveBeenCalledWith(session);
   });
 
+  it("returns mapped service error from anthropic token refresh", async () => {
+    const { handler, getSession, isAnthropicSecretsConfigured, refreshAnthropicToken } =
+      createHandler();
+    const session = { id: "session-1" } as SessionRow;
+    getSession.mockReturnValue(session);
+    isAnthropicSecretsConfigured.mockReturnValue(true);
+    refreshAnthropicToken.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "Anthropic token refresh failed",
+    });
+
+    const response = await handler.anthropicTokenRefresh();
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "Anthropic token refresh failed" });
+    expect(refreshAnthropicToken).toHaveBeenCalledWith(session);
+  });
+
   it("returns 404 when scm credentials have no session", async () => {
     const { handler, getSession, getScmCredentials } = createHandler();
     getSession.mockReturnValue(null);
