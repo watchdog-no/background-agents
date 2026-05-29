@@ -41,7 +41,7 @@ DEFAULT_REPO_NAME = "watchdog-monorepo"
 DEFAULT_PROMPT = "Please use the /code-review skill to review PR 658 in watchdog-monorepo."
 DEFAULT_MODEL = "openai/gpt-5.5"
 DEFAULT_REASONING_EFFORT = "xhigh"
-DEFAULT_OPENCODE_VERSION = "1.15.10"
+DEFAULT_OPENCODE_VERSION = "1.15.12"
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "openinspect-local-smoke"
 
 

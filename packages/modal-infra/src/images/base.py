@@ -25,10 +25,10 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 
 # OpenCode version to install.
 #
-# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.10 preserves the
-# legacy `/event` SSE payload shape and restores eager event subscription after
-# the 1.14.42+ HTTP API migration.
-OPENCODE_VERSION = "1.15.10"
+# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 keeps the OpenAI
+# WebSocket response timeouts active and retries failed OpenAI WebSocket streams
+# before falling back, fixing dropped/hung OpenAI responses seen on 1.15.10.
+OPENCODE_VERSION = "1.15.12"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"
@@ -59,6 +59,7 @@ CTX7_VERSION = "0.4.4"
 # v54: install schpet/linear-cli for agent-side Linear access
 # v55: install ctx7 (Context7) for agent-side library documentation
 # v56: adopt upstream host-scoped SCM credential broker (PR #679)
+# v57: upgrade OpenCode to 1.15.12 for the OpenAI WebSocket response fix
 
 # Base image with all development tools
 base_image = (

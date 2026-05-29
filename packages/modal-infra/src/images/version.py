@@ -1,3 +1,3 @@
 """Sandbox image version constants."""
 
-CACHE_BUSTER = "v56-scm-broker"
+CACHE_BUSTER = "v57-opencode-1-15-12"
