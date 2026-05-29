@@ -885,9 +885,13 @@ class AgentBridge:
     ANTHROPIC_ADAPTIVE_THINKING_MODELS: ClassVar[set[str]] = {
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-4-8",
         "claude-sonnet-4-6",
     }
     ANTHROPIC_ADAPTIVE_EFFORTS: ClassVar[set[str]] = {"low", "medium", "high", "max"}
+    ANTHROPIC_XHIGH_ADAPTIVE_THINKING_MODELS: ClassVar[set[str]] = {
+        "claude-opus-4-8",
+    }
 
     def _build_prompt_request_body(
         self,
@@ -927,7 +931,10 @@ class AgentBridge:
                         anthropic_options: dict[str, Any] = {
                             "thinking": {"type": "adaptive"},
                         }
-                        if reasoning_effort in self.ANTHROPIC_ADAPTIVE_EFFORTS:
+                        if reasoning_effort in self.ANTHROPIC_ADAPTIVE_EFFORTS or (
+                            reasoning_effort == "xhigh"
+                            and model_id in self.ANTHROPIC_XHIGH_ADAPTIVE_THINKING_MODELS
+                        ):
                             anthropic_options["outputConfig"] = {"effort": reasoning_effort}
                         model_spec["options"] = anthropic_options
                     else:
