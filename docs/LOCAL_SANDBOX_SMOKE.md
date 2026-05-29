@@ -31,7 +31,7 @@ cd packages/sandbox-runtime
 
 uv run python scripts/local_prompt_smoke.py \
   --force \
-  --opencode-version 1.15.10
+  --opencode-version 1.15.12
 ```
 
 Defaults:
@@ -60,7 +60,7 @@ uv run python scripts/local_prompt_smoke.py \
   --force \
   --no-clean-opencode \
   --repo-source ~/projects/watchdog/watchdog-monorepo \
-  --opencode-version 1.15.10
+  --opencode-version 1.15.12
 ```
 
 This preserves the cloned repo's `.opencode` content if the source has committed or copied state. In
