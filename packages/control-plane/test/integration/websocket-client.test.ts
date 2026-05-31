@@ -1,31 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
-import { initNamedSession, openClientWs, collectMessages, seedEvents, queryDO } from "./helpers";
-
-const DEFAULT_WAIT_FOR_SANDBOX_STATUS_TIMEOUT_MS = 3000;
-
-// Session init fires a background warmSandbox() which, with no Modal in the test
-// env, fails fast and sets the sandbox status to "failed". Tests that seed a
-// specific status must wait for that spawn to settle first, otherwise it races
-// and overwrites the seeded value.
-async function waitForSandboxStatus(
-  stub: DurableObjectStub,
-  status: string,
-  timeoutMs = DEFAULT_WAIT_FOR_SANDBOX_STATUS_TIMEOUT_MS
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastStatus: string | undefined;
-  while (Date.now() < deadline) {
-    const rows = await queryDO<{ status: string }>(stub, "SELECT status FROM sandbox");
-    lastStatus = rows[0]?.status;
-    if (lastStatus === status) return;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-
-  throw new Error(
-    `Timed out after ${timeoutMs}ms waiting for sandbox status "${status}"; last status was "${lastStatus ?? "missing"}"`
-  );
-}
+import {
+  initNamedSession,
+  openClientWs,
+  collectMessages,
+  seedEvents,
+  queryDO,
+  waitForSandboxStatus,
+} from "./helpers";
 
 describe("Client WebSocket (via SELF.fetch)", () => {
   it("upgrade returns 101 with webSocket", async () => {
