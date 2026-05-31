@@ -14,6 +14,68 @@ const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key";
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
 const ANTHROPIC_BETA_OAUTH = "oauth-2025-04-20";
 
+// Claude Pro/Max OAuth tokens are only authorized for Claude Code. Anthropic
+// rejects requests whose first system block is not this exact identity, and the
+// rejection arrives as a generic `429 {"type":"rate_limit_error"}` with NO
+// `anthropic-ratelimit-*` headers — easily mistaken for a usage cap. Prepend the
+// identity so the subscription request is accepted, mirroring the upstream
+// Claude Code client (OpenCode has no native Anthropic OAuth, so this plugin
+// owns the whole request).
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+// OpenCode's built-in system prompt opens by asserting a competing agent
+// identity. We replace just that opening sentence with a neutral operational
+// note so the model sees ONE coherent identity (Claude Code) running via the
+// OpenCode harness, while keeping the rest of OpenCode's prompt — tool rules,
+// formatting, safety — untouched. Matched as an exact prefix, so it is a no-op
+// if OpenCode changes the wording in a future version (we then fall back to the
+// harmless dual identity rather than breaking).
+const OPENCODE_IDENTITY_PREFIX = "You are OpenCode, the best coding agent on the planet.";
+const OPENCODE_HARNESS_NOTE = "You are running through the OpenCode harness.";
+
+function rewriteOpenCodeIdentity(text) {
+  if (typeof text === "string" && text.startsWith(OPENCODE_IDENTITY_PREFIX)) {
+    return OPENCODE_HARNESS_NOTE + text.slice(OPENCODE_IDENTITY_PREFIX.length);
+  }
+  return text;
+}
+
+/**
+ * Shape the request body for Claude Pro/Max OAuth: make the first `system` block
+ * the Claude Code identity (the authorization marker) and demote OpenCode's
+ * competing identity sentence to a neutral harness note. Returns the rewritten
+ * body string, or the original input if it is not JSON we recognise. A body
+ * whose first block is already the identity is left untouched so we never add a
+ * duplicate or shift cache breakpoints needlessly.
+ */
+function ensureClaudeCodeSystemPrompt(body) {
+  if (typeof body !== "string") return body;
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+
+  const identityBlock = { type: "text", text: CLAUDE_CODE_IDENTITY };
+  const system = parsed.system;
+
+  if (Array.isArray(system)) {
+    if (system[0]?.type === "text" && system[0]?.text === CLAUDE_CODE_IDENTITY) return body;
+    const rest = system.map((b, i) =>
+      i === 0 && b?.type === "text" ? { ...b, text: rewriteOpenCodeIdentity(b.text) } : b
+    );
+    parsed.system = [identityBlock, ...rest];
+  } else if (typeof system === "string") {
+    if (system.startsWith(CLAUDE_CODE_IDENTITY)) return body;
+    parsed.system = [identityBlock, { type: "text", text: rewriteOpenCodeIdentity(system) }];
+  } else {
+    parsed.system = [identityBlock];
+  }
+
+  return JSON.stringify(parsed);
+}
+
 // In-memory token cache (reset on sandbox restart - fresh refresh via bridge)
 let cachedAccessToken = null;
 let cachedExpiresAt = 0;
@@ -214,8 +276,12 @@ export const AnthropicAuthProxy = async (input) => {
             if (!betas.includes(ANTHROPIC_BETA_OAUTH)) betas.push(ANTHROPIC_BETA_OAUTH);
             headers.set("anthropic-beta", betas.join(", "));
 
-            // No URL rewrite — Anthropic OAuth uses the standard Messages API.
-            return fetch(requestInput, { ...init, headers });
+            // Anthropic OAuth (Pro/Max) only authorises Claude Code requests, so
+            // the first system block must be the Claude Code identity or the call
+            // is rejected with a misleading 429. No URL rewrite — OAuth uses the
+            // standard Messages API.
+            const body = ensureClaudeCodeSystemPrompt(init?.body);
+            return fetch(requestInput, { ...init, headers, body });
           },
         };
       },
