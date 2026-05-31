@@ -38,6 +38,10 @@ export interface SecretMetadata {
   updatedAt: number;
 }
 
+export interface SecretWithValue extends SecretMetadata {
+  value: string;
+}
+
 export function normalizeKey(key: string): string {
   return key.toUpperCase();
 }

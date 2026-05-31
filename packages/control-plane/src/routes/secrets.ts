@@ -96,7 +96,7 @@ async function handleSetRepoSecrets(
 }
 
 /**
- * List secret keys for a repository.
+ * List secrets for a repository.
  */
 async function handleListRepoSecrets(
   _request: Request,
@@ -123,8 +123,8 @@ async function handleListRepoSecrets(
 
   try {
     const [secrets, globalSecrets] = await Promise.all([
-      store.listSecretKeys(resolved.repoId),
-      globalStore.listSecretKeys().catch((e) => {
+      store.listSecrets(resolved.repoId),
+      globalStore.listSecrets().catch((e) => {
         logger.warn("Failed to fetch global secrets for repo list", {
           error: e instanceof Error ? e.message : String(e),
         });
@@ -299,7 +299,7 @@ async function handleListGlobalSecrets(
   const store = new GlobalSecretsStore(env.DB, env.REPO_SECRETS_ENCRYPTION_KEY);
 
   try {
-    const secrets = await store.listSecretKeys();
+    const secrets = await store.listSecrets();
 
     logger.info("global.secrets_listed", {
       event: "global.secrets_listed",

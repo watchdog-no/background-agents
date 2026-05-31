@@ -8,7 +8,7 @@ import {
   validateKey,
   validateValue,
 } from "./secrets-validation";
-import type { SecretMetadata } from "./secrets-validation";
+import type { SecretMetadata, SecretWithValue } from "./secrets-validation";
 
 const log = createLogger("global-secrets");
 
@@ -91,6 +91,35 @@ export class GlobalSecretsStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  async listSecrets(): Promise<SecretWithValue[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT key, encrypted_value, created_at, updated_at FROM global_secrets ORDER BY key"
+      )
+      .all<{ key: string; encrypted_value: string; created_at: number; updated_at: number }>();
+
+    const rows = result.results || [];
+    return Promise.all(
+      rows.map(async (row) => {
+        try {
+          const value = await decryptToken(row.encrypted_value, this.encryptionKey);
+          return {
+            key: row.key,
+            value,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          };
+        } catch (e) {
+          log.error("Failed to decrypt global secret", {
+            key: row.key,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          throw new Error(`Failed to decrypt global secret '${row.key}'`);
+        }
+      })
+    );
   }
 
   async getDecryptedSecrets(): Promise<Record<string, string>> {

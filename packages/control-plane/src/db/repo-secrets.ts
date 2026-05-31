@@ -8,9 +8,9 @@ import {
   validateKey,
   validateValue,
 } from "./secrets-validation";
-import type { SecretMetadata } from "./secrets-validation";
+import type { SecretMetadata, SecretWithValue } from "./secrets-validation";
 
-export type { SecretMetadata } from "./secrets-validation";
+export type { SecretMetadata, SecretWithValue } from "./secrets-validation";
 
 const log = createLogger("repo-secrets");
 
@@ -105,6 +105,37 @@ export class RepoSecretsStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+  }
+
+  async listSecrets(repoId: number): Promise<SecretWithValue[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT key, encrypted_value, created_at, updated_at FROM repo_secrets WHERE repo_id = ? ORDER BY key"
+      )
+      .bind(repoId)
+      .all<{ key: string; encrypted_value: string; created_at: number; updated_at: number }>();
+
+    const rows = result.results || [];
+    return Promise.all(
+      rows.map(async (row) => {
+        try {
+          const value = await decryptToken(row.encrypted_value, this.encryptionKey);
+          return {
+            key: row.key,
+            value,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          };
+        } catch (e) {
+          log.error("Failed to decrypt secret", {
+            repo_id: repoId,
+            key: row.key,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          throw new Error(`Failed to decrypt secret '${row.key}'`);
+        }
+      })
+    );
   }
 
   async getDecryptedSecrets(repoId: number): Promise<Record<string, string>> {

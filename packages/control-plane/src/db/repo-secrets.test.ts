@@ -38,6 +38,8 @@ type RepoSecretRow = {
 const QUERY_PATTERNS = {
   SELECT_EXISTING_KEYS: /^SELECT key FROM repo_secrets/,
   SELECT_KEYS_WITH_METADATA: /^SELECT key, created_at, updated_at FROM repo_secrets/,
+  SELECT_SECRETS_WITH_VALUES:
+    /^SELECT key, encrypted_value, created_at, updated_at FROM repo_secrets/,
   SELECT_KEYS_WITH_VALUES: /^SELECT key, encrypted_value FROM repo_secrets/,
   UPSERT_SECRET: /^INSERT INTO repo_secrets/,
   DELETE_SECRET: /^DELETE FROM repo_secrets/,
@@ -64,6 +66,19 @@ class FakeD1Database {
         .sort((a, b) => a.key.localeCompare(b.key))
         .map((row) => ({
           key: row.key,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        }));
+    }
+
+    if (QUERY_PATTERNS.SELECT_SECRETS_WITH_VALUES.test(normalized)) {
+      const repoId = args[0] as number;
+      return Array.from(this.rows.values())
+        .filter((row) => row.repo_id === repoId)
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .map((row) => ({
+          key: row.key,
+          encrypted_value: row.encrypted_value,
           created_at: row.created_at,
           updated_at: row.updated_at,
         }));
@@ -227,6 +242,16 @@ describe("RepoSecretsStore", () => {
     const keys = await store.listSecretKeys(1);
     expect(keys.map((k) => k.key)).toEqual(["ALPHA", "BETA"]);
     expect(keys[0].createdAt).toBeTypeOf("number");
+  });
+
+  it("lists decrypted values with metadata", async () => {
+    await store.setSecrets(1, "Owner", "Repo", { ALPHA: "1", BETA: "2" });
+    const secrets = await store.listSecrets(1);
+    expect(secrets).toEqual([
+      expect.objectContaining({ key: "ALPHA", value: "1" }),
+      expect.objectContaining({ key: "BETA", value: "2" }),
+    ]);
+    expect(secrets[0].createdAt).toBeTypeOf("number");
   });
 
   it("deletes secrets by key", async () => {

@@ -1,11 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ClipboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+} from "react";
 import useSWR, { mutate } from "swr";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { normalizeKey, parseMaybeEnvContent, type ParsedEnvEntry } from "@/lib/env-paste";
 
@@ -45,18 +54,20 @@ type SecretRow = {
   id: string;
   key: string;
   value: string;
+  originalValue: string | null;
   existing: boolean;
 };
 
-type GlobalSecretMeta = {
+type SecretMeta = {
   key: string;
+  value: string;
   createdAt: number;
   updatedAt: number;
 };
 
 interface SecretsResponse {
-  secrets: { key: string }[];
-  globalSecrets?: GlobalSecretMeta[];
+  secrets: SecretMeta[];
+  globalSecrets?: SecretMeta[];
 }
 
 function validateKey(value: string): string | null {
@@ -80,9 +91,71 @@ function createRow(partial?: Partial<SecretRow>): SecretRow {
     id,
     key: "",
     value: "",
+    originalValue: null,
     existing: false,
     ...partial,
   };
+}
+
+function SecretValueField({
+  value,
+  revealed,
+  onToggleReveal,
+  onChange,
+  onPaste,
+  disabled,
+  readOnly,
+  placeholder,
+  label,
+}: {
+  value: string;
+  revealed: boolean;
+  onToggleReveal: () => void;
+  onChange?: (event: ChangeEvent<HTMLInputElement>) => void;
+  onPaste?: (event: ClipboardEvent<HTMLInputElement>) => void;
+  disabled?: boolean;
+  readOnly?: boolean;
+  placeholder: string;
+  label: string;
+}) {
+  const title = revealed ? "Hide value" : "Show value";
+
+  return (
+    <div className="flex flex-1 min-w-[200px] items-center gap-1">
+      <Input
+        type={revealed ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        disabled={disabled}
+        readOnly={readOnly}
+        onPaste={onPaste}
+        aria-label={label}
+        className="min-w-0 flex-1 h-auto px-2 py-1 text-xs font-mono"
+      />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onToggleReveal}
+            disabled={disabled}
+            aria-label={title}
+            title={title}
+            className="h-7 w-7 flex-shrink-0"
+          >
+            {revealed ? (
+              <EyeOffIcon className="w-3.5 h-3.5" />
+            ) : (
+              <EyeIcon className="w-3.5 h-3.5" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{title}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
 }
 
 export function SecretsEditor({
@@ -97,6 +170,8 @@ export function SecretsEditor({
   scope?: "repo" | "global";
 }) {
   const [rows, setRows] = useState<SecretRow[]>([]);
+  const [revealedRowIds, setRevealedRowIds] = useState<Set<string>>(() => new Set());
+  const [revealedGlobalKeys, setRevealedGlobalKeys] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -118,13 +193,20 @@ export function SecretsEditor({
   useEffect(() => {
     if (!Array.isArray(secrets)) {
       setRows([]);
+      setRevealedRowIds(new Set());
       return;
     }
     setRows(
-      secrets.map((secret: { key: string }) =>
-        createRow({ key: secret.key, value: "", existing: true })
+      secrets.map((secret) =>
+        createRow({
+          key: secret.key,
+          value: secret.value,
+          originalValue: secret.value,
+          existing: true,
+        })
       )
     );
+    setRevealedRowIds(new Set());
   }, [secrets]);
 
   // Show fetch errors to the user
@@ -134,8 +216,12 @@ export function SecretsEditor({
     }
   }, [fetchError]);
 
-  const globalRows: GlobalSecretMeta[] =
+  const globalRows: SecretMeta[] =
     !isGlobal && Array.isArray(secretsData?.globalSecrets) ? secretsData.globalSecrets : [];
+
+  useEffect(() => {
+    setRevealedGlobalKeys(new Set());
+  }, [secretsData?.globalSecrets]);
 
   const existingKeySet = useMemo(() => {
     return new Set(rows.filter((row) => row.existing).map((row) => normalizeKey(row.key)));
@@ -188,6 +274,31 @@ export function SecretsEditor({
     });
   }, []);
 
+  const toggleRowReveal = useCallback((rowId: string) => {
+    setRevealedRowIds((current) => {
+      const next = new Set(current);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleGlobalReveal = useCallback((key: string) => {
+    const normalizedKey = normalizeKey(key);
+    setRevealedGlobalKeys((current) => {
+      const next = new Set(current);
+      if (next.has(normalizedKey)) {
+        next.delete(normalizedKey);
+      } else {
+        next.add(normalizedKey);
+      }
+      return next;
+    });
+  }, []);
+
   const handlePasteIntoRow = useCallback(
     (event: ClipboardEvent<HTMLInputElement>) => {
       const pastedText = event.clipboardData.getData("text");
@@ -225,6 +336,11 @@ export function SecretsEditor({
 
     if (!row.existing || !row.key) {
       setRows((current) => current.filter((item) => item.id !== row.id));
+      setRevealedRowIds((current) => {
+        const next = new Set(current);
+        next.delete(row.id);
+        return next;
+      });
       return;
     }
 
@@ -255,58 +371,67 @@ export function SecretsEditor({
 
     setError("");
 
-    const entries = rows
-      .filter((row) => row.value.trim().length > 0)
-      .map((row) => ({
-        key: normalizeKey(row.key),
-        value: row.value,
-        existing: row.existing,
-      }));
+    const enteredRows = rows.filter(
+      (row) => row.key.trim().length > 0 || row.value.trim().length > 0
+    );
 
-    if (entries.length === 0) {
+    if (enteredRows.length === 0) {
       toast("No changes to save");
       return;
     }
 
     const uniqueKeys = new Set<string>();
-    let totalSize = 0;
 
-    for (const entry of entries) {
-      const keyError = validateKey(entry.key);
+    for (const row of enteredRows) {
+      const key = normalizeKey(row.key);
+      const keyError = validateKey(key);
       if (keyError) {
         setError(keyError);
         return;
       }
-      if (uniqueKeys.has(entry.key)) {
-        setError(`Duplicate key '${entry.key}'`);
+      if (uniqueKeys.has(key)) {
+        setError(`Duplicate key '${key}'`);
         return;
       }
-      uniqueKeys.add(entry.key);
+      uniqueKeys.add(key);
 
-      const valueSize = getUtf8Size(entry.value);
+      if (row.value.trim().length === 0) {
+        setError(
+          row.existing
+            ? `Enter a value for '${key}' or delete the secret`
+            : "Enter a value for new secrets or remove the empty row"
+        );
+        return;
+      }
+
+      const valueSize = getUtf8Size(row.value);
       if (valueSize > MAX_VALUE_SIZE) {
-        setError(`Value for '${entry.key}' exceeds ${MAX_VALUE_SIZE} bytes`);
+        setError(`Value for '${key}' exceeds ${MAX_VALUE_SIZE} bytes`);
         return;
       }
-      totalSize += valueSize;
     }
 
-    if (totalSize > MAX_TOTAL_VALUE_SIZE) {
-      setError(`Total secret size exceeds ${MAX_TOTAL_VALUE_SIZE} bytes`);
-      return;
-    }
-
-    const netNew = entries.filter((entry) => !existingKeySet.has(entry.key)).length;
+    const netNew = enteredRows.filter((row) => !existingKeySet.has(normalizeKey(row.key))).length;
     if (existingKeySet.size + netNew > MAX_SECRETS_PER_SCOPE) {
       setError(`Would exceed ${MAX_SECRETS_PER_SCOPE} secrets limit`);
       return;
     }
 
-    const hasIncompleteNewRow = rows.some(
-      (row) => !row.existing && row.key.trim().length > 0 && row.value.trim().length === 0
-    );
-    if (hasIncompleteNewRow) {
-      setError("Enter a value for new secrets or remove the empty row");
+    const changedEntries = enteredRows
+      .filter((row) => !row.existing || row.value !== row.originalValue)
+      .map((row) => ({
+        key: normalizeKey(row.key),
+        value: row.value,
+      }));
+
+    if (changedEntries.length === 0) {
+      toast("No changes to save");
+      return;
+    }
+
+    const totalSize = changedEntries.reduce((sum, entry) => sum + getUtf8Size(entry.value), 0);
+    if (totalSize > MAX_TOTAL_VALUE_SIZE) {
+      setError(`Total secret size exceeds ${MAX_TOTAL_VALUE_SIZE} bytes`);
       return;
     }
 
@@ -314,7 +439,7 @@ export function SecretsEditor({
 
     try {
       const payload: Record<string, string> = {};
-      for (const entry of entries) {
+      for (const entry of changedEntries) {
         payload[entry.key] = entry.value;
       }
 
@@ -340,153 +465,163 @@ export function SecretsEditor({
   };
 
   const descriptionText = isGlobal
-    ? "Secrets apply to all repositories."
-    : `Values are never shown after save. Secrets apply to ${repoLabel || "the selected repo"}.`;
+    ? "Secrets apply to all repositories. Values are masked by default."
+    : `Secrets apply to ${repoLabel || "the selected repo"}. Values are masked by default.`;
 
   return (
-    <div className="mt-4 rounded-md border border-border bg-background p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Secrets</h3>
-          <p className="text-xs text-muted-foreground">{descriptionText}</p>
+    <TooltipProvider>
+      <div className="mt-4 rounded-md border border-border bg-background p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Secrets</h3>
+            <p className="text-xs text-muted-foreground">{descriptionText}</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={handleAddRow}
+            disabled={!ready || disabled}
+          >
+            Add secret
+          </Button>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={handleAddRow}
-          disabled={!ready || disabled}
-        >
-          Add secret
-        </Button>
-      </div>
 
-      {!ready && (
-        <p className="text-xs text-muted-foreground">Select a repository to manage secrets.</p>
-      )}
+        {!ready && (
+          <p className="text-xs text-muted-foreground">Select a repository to manage secrets.</p>
+        )}
 
-      {ready && (
-        <>
-          {loading && <p className="text-xs text-muted-foreground">Loading secrets...</p>}
+        {ready && (
+          <>
+            {loading && <p className="text-xs text-muted-foreground">Loading secrets...</p>}
 
-          {!loading && rows.length === 0 && globalRows.length === 0 && (
-            <p className="text-xs text-muted-foreground">
-              {isGlobal ? "No global secrets set." : "No secrets set for this repo."}
-            </p>
-          )}
+            {!loading && rows.length === 0 && globalRows.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                {isGlobal ? "No global secrets set." : "No secrets set for this repo."}
+              </p>
+            )}
 
-          <div className="space-y-2">
-            {rows.map((row) => (
-              <div key={row.id} className="flex flex-col gap-2 border border-border-muted p-2">
-                <div className="flex flex-wrap gap-2">
-                  <Input
-                    type="text"
-                    value={row.key}
-                    onChange={(e) => {
-                      const keyValue = e.target.value;
-                      setRows((current) =>
-                        current.map((item) =>
-                          item.id === row.id ? { ...item, key: keyValue } : item
-                        )
-                      );
-                    }}
-                    onBlur={(e) => {
-                      const normalized = normalizeKey(e.target.value);
-                      setRows((current) =>
-                        current.map((item) =>
-                          item.id === row.id ? { ...item, key: normalized } : item
-                        )
-                      );
-                    }}
-                    placeholder="KEY_NAME"
-                    disabled={disabled || row.existing}
-                    onPaste={handlePasteIntoRow}
-                    className="flex-1 min-w-[160px] h-auto px-2 py-1 text-xs"
-                  />
-                  <Input
-                    type="password"
-                    value={row.value}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setRows((current) =>
-                        current.map((item) => (item.id === row.id ? { ...item, value: val } : item))
-                      );
-                    }}
-                    placeholder={row.existing ? "••••••••" : "value"}
-                    disabled={disabled}
-                    onPaste={handlePasteIntoRow}
-                    className="flex-1 min-w-[200px] h-auto px-2 py-1 text-xs"
-                  />
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="xs"
-                    onClick={() => handleDeleteRow(row)}
-                    disabled={disabled || deletingKey === normalizeKey(row.key)}
-                  >
-                    {deletingKey === normalizeKey(row.key) ? "Deleting..." : "Delete"}
-                  </Button>
-                </div>
-                {row.existing && (
-                  <p className="text-xs text-muted-foreground">
-                    To update, enter a new value and save.
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Inherited global secrets (repo scope only) */}
-          {!isGlobal && globalRows.length > 0 && (
-            <div className="mt-4">
-              <p className="text-xs text-muted-foreground mb-2">Inherited from global scope</p>
-              <div className="space-y-2">
-                {globalRows.map((g) => {
-                  const overridden = existingKeySet.has(g.key);
-                  return (
-                    <div
-                      key={g.key}
-                      className={`flex flex-wrap items-center gap-2 border border-border-muted p-2 ${
-                        overridden ? "opacity-40" : "opacity-70"
-                      }`}
+            <div className="space-y-2">
+              {rows.map((row) => (
+                <div key={row.id} className="flex flex-col gap-2 border border-border-muted p-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Input
+                      type="text"
+                      value={row.key}
+                      onChange={(e) => {
+                        const keyValue = e.target.value;
+                        setRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, key: keyValue } : item
+                          )
+                        );
+                      }}
+                      onBlur={(e) => {
+                        const normalized = normalizeKey(e.target.value);
+                        setRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, key: normalized } : item
+                          )
+                        );
+                      }}
+                      placeholder="KEY_NAME"
+                      disabled={disabled || row.existing}
+                      onPaste={handlePasteIntoRow}
+                      className="flex-1 min-w-[160px] h-auto px-2 py-1 text-xs"
+                    />
+                    <SecretValueField
+                      value={row.value}
+                      revealed={revealedRowIds.has(row.id)}
+                      onToggleReveal={() => toggleRowReveal(row.id)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setRows((current) =>
+                          current.map((item) =>
+                            item.id === row.id ? { ...item, value: val } : item
+                          )
+                        );
+                      }}
+                      placeholder={row.existing ? "••••••••" : "value"}
+                      disabled={disabled}
+                      onPaste={handlePasteIntoRow}
+                      label={`Value for ${row.key || "new secret"}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="xs"
+                      onClick={() => handleDeleteRow(row)}
+                      disabled={disabled || deletingKey === normalizeKey(row.key)}
                     >
-                      <Badge variant="info">Global</Badge>
-                      <span className="text-xs text-foreground font-mono">{g.key}</span>
-                      <Input
-                        type="password"
-                        value=""
-                        placeholder="••••••••"
-                        disabled
-                        className="flex-1 min-w-[200px] h-auto px-2 py-1 text-xs"
-                      />
-                      {overridden && (
-                        <span className="text-xs text-muted-foreground">(overridden by repo)</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      {deletingKey === normalizeKey(row.key) ? "Deleting..." : "Delete"}
+                    </Button>
+                  </div>
+                  {row.existing && (
+                    <p className="text-xs text-muted-foreground">
+                      Edit the value and save to update.
+                    </p>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
 
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+            {/* Inherited global secrets (repo scope only) */}
+            {!isGlobal && globalRows.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-muted-foreground mb-2">Inherited from global scope</p>
+                <div className="space-y-2">
+                  {globalRows.map((g) => {
+                    const normalizedKey = normalizeKey(g.key);
+                    const overridden = existingKeySet.has(normalizedKey);
+                    return (
+                      <div
+                        key={g.key}
+                        className={`flex flex-wrap items-center gap-2 border border-border-muted p-2 ${
+                          overridden ? "opacity-40" : "opacity-70"
+                        }`}
+                      >
+                        <Badge variant="info">Global</Badge>
+                        <span className="text-xs text-foreground font-mono">{g.key}</span>
+                        <SecretValueField
+                          value={g.value}
+                          revealed={revealedGlobalKeys.has(normalizedKey)}
+                          onToggleReveal={() => toggleGlobalReveal(g.key)}
+                          placeholder="••••••••"
+                          disabled={disabled}
+                          readOnly
+                          label={`Inherited global value for ${g.key}`}
+                        />
+                        {overridden && (
+                          <span className="text-xs text-muted-foreground">
+                            (overridden by repo)
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-          <div className="mt-3 flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              onClick={handleSave}
-              disabled={disabled || saving || !ready}
-            >
-              {saving ? "Saving..." : "Save secrets"}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Keys are automatically uppercased. Paste a `.env` block into either field to import.
-            </span>
-          </div>
-        </>
-      )}
-    </div>
+            {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+
+            <div className="mt-3 flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={handleSave}
+                disabled={disabled || saving || !ready}
+              >
+                {saving ? "Saving..." : "Save secrets"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Keys are automatically uppercased. Paste a `.env` block into either field to import.
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

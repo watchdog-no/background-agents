@@ -110,7 +110,7 @@ for that provider.
 | `/repos`                           | GET    | List repositories    |
 | `/repos/:owner/:name/metadata`     | GET    | Get repo metadata    |
 | `/repos/:owner/:name/metadata`     | PUT    | Update repo metadata |
-| `/repos/:owner/:name/secrets`      | GET    | List secret keys     |
+| `/repos/:owner/:name/secrets`      | GET    | List secrets         |
 | `/repos/:owner/:name/secrets`      | PUT    | Upsert secrets       |
 | `/repos/:owner/:name/secrets/:key` | DELETE | Delete a secret      |
 

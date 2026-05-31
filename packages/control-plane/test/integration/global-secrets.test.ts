@@ -72,8 +72,9 @@ describe("Global secrets API", () => {
 
       const response = await SELF.fetch("https://test.local/secrets", { headers });
       expect(response.status).toBe(200);
-      const body = await response.json<{ secrets: Array<{ key: string }> }>();
+      const body = await response.json<{ secrets: Array<{ key: string; value: string }> }>();
       expect(body.secrets.map((s) => s.key)).toEqual(["ALPHA", "BETA"]);
+      expect(body.secrets.map((s) => s.value)).toEqual(["1", "2"]);
     });
 
     it("returns empty list when no secrets exist", async () => {
