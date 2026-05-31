@@ -477,7 +477,7 @@ You can configure environment variables (API keys, credentials) at global or per
 - Anthropic OAuth refresh tokens and cached access-token secrets stay control-plane-only; sandboxes
   receive a non-secret enabled flag and request short-lived access tokens through an internal
   endpoint
-- Never exposed to clients (only key names are visible)
+- Visible to authenticated Settings users with values masked by default
 
 > **Daytona users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the default Claude
 > subscription path. Add `ANTHROPIC_API_KEY` only if you intentionally use metered API billing.

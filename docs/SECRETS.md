@@ -1,8 +1,8 @@
 # Secrets Management
 
 Open-Inspect lets you store environment variables — API keys, database URLs, credentials — and
-inject them into every sandbox automatically. Secrets are encrypted at rest and never exposed to the
-browser (only key names are visible in the UI).
+inject them into every sandbox automatically. Secrets are encrypted at rest and masked by default in
+the UI.
 
 ---
 
@@ -70,8 +70,8 @@ automatically parse it and populate multiple rows — useful for bulk imports.
 
 ### Updating a secret
 
-Existing secret values are masked (`••••••••`). To update a value, type a new value into the field
-and click **Save**. To keep the current value, leave the field empty.
+Existing secret values are masked by default. Reveal a value to inspect it, or edit the value and
+click **Save** to update it.
 
 ### Deleting a secret
 
@@ -108,7 +108,7 @@ If you try to save a reserved key, the UI will show a validation error.
 ## Security
 
 - Secrets are encrypted with **AES-256-GCM** before being stored in the database
-- Values are **never returned by the API** after saving — only key names are visible
+- Values are returned only to authenticated Settings users and are masked by default in the UI
 - Secrets are generally decrypted at sandbox creation time and injected as environment variables
 - Anthropic OAuth refresh tokens and cached access-token secrets are control-plane-only; sandboxes
   receive only a non-secret enabled flag and short-lived access tokens through the internal refresh
