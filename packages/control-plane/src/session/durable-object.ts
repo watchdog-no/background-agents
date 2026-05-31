@@ -618,7 +618,8 @@ export class SessionDO extends DurableObject<Env> {
 
             const modalClient = createModalClient(
               this.env.MODAL_API_SECRET,
-              this.env.MODAL_WORKSPACE
+              this.env.MODAL_WORKSPACE,
+              this.env.MODAL_ENVIRONMENT_WEB_SUFFIX
             );
             return createModalProvider(modalClient);
           })();
@@ -1747,6 +1748,7 @@ export class SessionDO extends DurableObject<Env> {
     if (resolveSandboxBackendName(this.env.SANDBOX_PROVIDER) !== "modal") return null;
     return buildModalSandboxDashboardUrl({
       workspace: this.env.MODAL_WORKSPACE,
+      environment: this.env.MODAL_ENVIRONMENT,
       providerObjectId,
     });
   }

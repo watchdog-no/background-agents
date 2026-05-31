@@ -44,6 +44,7 @@ import {
 
 import {
   getValidModelOrDefault,
+  isCanonicalUserId,
   isValidModel,
   isValidReasoningEffort,
   VALID_MODELS,
@@ -74,6 +75,7 @@ import { secretsRoutes } from "./routes/secrets";
 import { automationRoutes } from "./routes/automations";
 import { mcpServerRoutes } from "./routes/mcp-servers";
 import { analyticsRoutes } from "./routes/analytics";
+import { providerIdentityRoutes } from "./routes/provider-identities";
 import { handleSlackNotify } from "./routes/slack-notify";
 import { webhookRoutes } from "./webhooks";
 
@@ -94,6 +96,25 @@ const SESSION_STATUSES: SessionStatus[] = [
 function parseSessionStatus(value: string | null): SessionStatus | undefined {
   if (!value) return undefined;
   return SESSION_STATUSES.includes(value as SessionStatus) ? (value as SessionStatus) : undefined;
+}
+
+function parseCreatedByFilters(searchParams: URLSearchParams): string[] | Response {
+  const values = searchParams.getAll("createdBy");
+  const userIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (!isCanonicalUserId(value)) {
+      return error("Invalid createdBy", 400);
+    }
+
+    if (!seen.has(value)) {
+      seen.add(value);
+      userIds.push(value);
+    }
+  }
+
+  return userIds;
 }
 
 /**
@@ -212,7 +233,10 @@ function isSandboxAuthRoute(path: string): boolean {
 }
 
 function isScmAgnosticRoute(path: string): boolean {
-  return /^\/analytics\/(summary|timeseries|breakdown)$/.test(path);
+  return (
+    /^\/analytics\/(summary|timeseries|breakdown)$/.test(path) ||
+    /^\/provider-identities\/github\/[^/]+$/.test(path)
+  );
 }
 
 function isProviderImplementedRoute(provider: SourceControlProviderName, path: string): boolean {
@@ -536,6 +560,9 @@ const routes: Route[] = [
   // Analytics
   ...analyticsRoutes,
 
+  // Provider identities
+  ...providerIdentityRoutes,
+
   // Webhooks (public routes — auth handled per-route)
   ...webhookRoutes,
 ];
@@ -674,6 +701,7 @@ async function handleListSessions(
   const excludeStatusParam = url.searchParams.get("excludeStatus");
   const status = parseSessionStatus(statusParam);
   const excludeStatus = parseSessionStatus(excludeStatusParam);
+  const createdByUserIds = parseCreatedByFilters(url.searchParams);
 
   if (statusParam && !status) {
     return error("Invalid status", 400);
@@ -683,8 +711,18 @@ async function handleListSessions(
     return error("Invalid excludeStatus", 400);
   }
 
+  if (createdByUserIds instanceof Response) {
+    return createdByUserIds;
+  }
+
   const store = new SessionIndexStore(env.DB);
-  const result = await store.list({ status, excludeStatus, limit, offset });
+  const result = await store.list({
+    status,
+    excludeStatus,
+    createdByUserIds,
+    limit,
+    offset,
+  });
 
   return json({
     sessions: result.sessions,

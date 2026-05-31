@@ -54,6 +54,7 @@ export interface ListSessionsOptions {
   excludeStatus?: SessionStatus;
   repoOwner?: string;
   repoName?: string;
+  createdByUserIds?: readonly string[];
   limit?: number;
   offset?: number;
 }
@@ -131,7 +132,15 @@ export class SessionIndexStore {
   }
 
   async list(options: ListSessionsOptions = {}): Promise<ListSessionsResult> {
-    const { status, excludeStatus, repoOwner, repoName, limit = 50, offset = 0 } = options;
+    const {
+      status,
+      excludeStatus,
+      repoOwner,
+      repoName,
+      createdByUserIds,
+      limit = 50,
+      offset = 0,
+    } = options;
 
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -154,6 +163,11 @@ export class SessionIndexStore {
     if (repoName) {
       conditions.push("repo_name = ?");
       params.push(repoName.toLowerCase());
+    }
+
+    if (createdByUserIds?.length) {
+      conditions.push(`user_id IN (${createdByUserIds.map(() => "?").join(", ")})`);
+      params.push(...createdByUserIds);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
