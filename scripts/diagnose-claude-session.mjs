@@ -433,19 +433,43 @@ async function sendPrompt(base, sessionId, text) {
 
 // Wait until a NEW upstream /v1/messages record appears (after `sinceCount`),
 // then a little longer so its streamed usage is captured.
-async function waitForUpstream(records, sinceCount, timeoutMs = 60_000) {
+// Find the agent's upstream /v1/messages call (after `sinceCount`) and wait
+// until its stream has fully completed. Two things matter here:
+//   - OpenCode fires an auxiliary title-generation call (no tools) before the
+//     real agent call. We require tools so we report the actual agent request,
+//     not title generation.
+//   - `record.usage` is only set once the proxy finishes reading the stream, so
+//     we wait for it (or an error status) rather than a fixed grace period —
+//     otherwise the next prompt could be posted before the cache write lands.
+async function waitForUpstream(records, sinceCount, { requireTools = true, timeoutMs = 90_000 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  const isMatch = (r, i) =>
+    i >= sinceCount &&
+    typeof r.url === "string" &&
+    r.url.includes("/messages") &&
+    (!requireTools || (r.toolCount ?? 0) > 0);
   while (Date.now() < deadline) {
-    const rec = records.find(
-      (r, i) => i >= sinceCount && typeof r.url === "string" && r.url.includes("/messages")
-    );
-    if (rec && rec.status !== null) {
-      await new Promise((r) => setTimeout(r, 1500)); // let the stream finish for usage
+    const rec = records.find(isMatch);
+    // Stream is done once usage was captured (200) or it errored (>=400).
+    if (rec && (rec.usage || (typeof rec.status === "number" && rec.status >= 400))) {
       return rec;
     }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return records.find(isMatch) ?? null;
+}
+
+// Poll until the latest assistant message has text (the turn finished), so we
+// never send the cache-probe prompt mid-turn.
+async function waitForAssistantReply(base, sessionId, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  let text = null;
+  while (Date.now() < deadline) {
+    text = await readAssistantText(base, sessionId);
+    if (text) return text;
     await new Promise((r) => setTimeout(r, 500));
   }
-  return null;
+  return text;
 }
 
 async function readAssistantText(base, sessionId) {
@@ -600,7 +624,8 @@ async function main() {
     await sendPrompt(base, sessionId, PROMPT_1);
     const rec1 = await waitForUpstream(proxy.records, before);
     reportRecord("First prompt → Anthropic", rec1);
-    const reply1 = await readAssistantText(base, sessionId);
+    // Wait for the turn to finish (cache write complete) before probing the cache.
+    const reply1 = await waitForAssistantReply(base, sessionId);
     log(`  assistant reply    : ${JSON.stringify(reply1)}`);
 
     // Second chat — should READ the prompt cache (cache_read_input_tokens > 0)
@@ -609,7 +634,7 @@ async function main() {
     await sendPrompt(base, sessionId, PROMPT_2);
     const rec2 = await waitForUpstream(proxy.records, before);
     reportRecord("Second prompt → Anthropic", rec2);
-    const reply2 = await readAssistantText(base, sessionId);
+    const reply2 = await waitForAssistantReply(base, sessionId);
     log(`  assistant reply    : ${JSON.stringify(reply2)}`);
 
     // Full upstream log — every /v1/messages call OpenCode made (title

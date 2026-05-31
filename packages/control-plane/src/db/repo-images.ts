@@ -5,7 +5,11 @@ export interface RepoImageBuild {
   baseBranch: string;
 }
 
-export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v59-opencode-1-15-13";
+// MUST stay byte-identical to modal-infra's CACHE_BUSTER (images/version.py):
+// the Modal builder records repo images with sandbox_version = CACHE_BUSTER, and
+// getLatestReady()/markReady() below filter on this constant. Any drift means
+// freshly built repo images are never matched and sessions fall back to base.
+export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v60-opencode-1-15-13";
 
 export interface RepoImage {
   id: string;
