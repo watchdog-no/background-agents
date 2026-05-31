@@ -120,6 +120,13 @@ These run inside a real `workerd` runtime with Miniflare, using `defineWorkersCo
 Use conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`. Keep the subject
 under 72 characters. Use the PR body for details, not the commit message.
 
+### Pull requests
+
+- Use the same conventional-commit style for PR titles, for example
+  `feat: display secret values in settings`.
+- Do not prefix PR titles with agent/tool labels such as `[codex]`.
+- Open PRs as ready for review by default. Use draft only when explicitly requested.
+
 ## Key Gotchas
 
 - **Build order**: always build `@open-inspect/shared` before packages that depend on it.
