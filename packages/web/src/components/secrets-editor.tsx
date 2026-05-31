@@ -54,15 +54,17 @@ type SecretRow = {
   id: string;
   key: string;
   value: string;
-  originalValue: string | null;
   existing: boolean;
+  dirty: boolean;
+  decryptionFailed: boolean;
 };
 
 type SecretMeta = {
   key: string;
-  value: string;
+  value: string | null;
   createdAt: number;
   updatedAt: number;
+  decryptionFailed?: boolean;
 };
 
 interface SecretsResponse {
@@ -91,8 +93,9 @@ function createRow(partial?: Partial<SecretRow>): SecretRow {
     id,
     key: "",
     value: "",
-    originalValue: null,
     existing: false,
+    dirty: false,
+    decryptionFailed: false,
     ...partial,
   };
 }
@@ -200,9 +203,9 @@ export function SecretsEditor({
       secrets.map((secret) =>
         createRow({
           key: secret.key,
-          value: secret.value,
-          originalValue: secret.value,
+          value: secret.value ?? "",
           existing: true,
+          decryptionFailed: secret.decryptionFailed === true,
         })
       )
     );
@@ -248,6 +251,8 @@ export function SecretsEditor({
             ...next[existingIndex],
             key: normalizedKey,
             value: entry.value,
+            dirty: true,
+            decryptionFailed: false,
           };
           continue;
         }
@@ -261,12 +266,13 @@ export function SecretsEditor({
             ...next[emptyRowIndex],
             key: normalizedKey,
             value: entry.value,
+            dirty: true,
           };
           keyToIndex.set(normalizedKey, emptyRowIndex);
           continue;
         }
 
-        next.push(createRow({ key: normalizedKey, value: entry.value }));
+        next.push(createRow({ key: normalizedKey, value: entry.value, dirty: true }));
         keyToIndex.set(normalizedKey, next.length - 1);
       }
 
@@ -395,12 +401,8 @@ export function SecretsEditor({
       }
       uniqueKeys.add(key);
 
-      if (row.value.trim().length === 0) {
-        setError(
-          row.existing
-            ? `Enter a value for '${key}' or delete the secret`
-            : "Enter a value for new secrets or remove the empty row"
-        );
+      if (!row.existing && row.value.trim().length === 0) {
+        setError("Enter a value for new secrets or remove the empty row");
         return;
       }
 
@@ -418,7 +420,7 @@ export function SecretsEditor({
     }
 
     const changedEntries = enteredRows
-      .filter((row) => !row.existing || row.value !== row.originalValue)
+      .filter((row) => !row.existing || row.dirty)
       .map((row) => ({
         key: normalizeKey(row.key),
         value: row.value,
@@ -537,7 +539,9 @@ export function SecretsEditor({
                         const val = e.target.value;
                         setRows((current) =>
                           current.map((item) =>
-                            item.id === row.id ? { ...item, value: val } : item
+                            item.id === row.id
+                              ? { ...item, value: val, dirty: true, decryptionFailed: false }
+                              : item
                           )
                         );
                       }}
@@ -558,7 +562,9 @@ export function SecretsEditor({
                   </div>
                   {row.existing && (
                     <p className="text-xs text-muted-foreground">
-                      Edit the value and save to update.
+                      {row.decryptionFailed
+                        ? "Value could not be decrypted. Enter a new value and save."
+                        : "Edit the value and save to update."}
                     </p>
                   )}
                 </div>
@@ -583,7 +589,7 @@ export function SecretsEditor({
                         <Badge variant="info">Global</Badge>
                         <span className="text-xs text-foreground font-mono">{g.key}</span>
                         <SecretValueField
-                          value={g.value}
+                          value={g.value ?? ""}
                           revealed={revealedGlobalKeys.has(normalizedKey)}
                           onToggleReveal={() => toggleGlobalReveal(g.key)}
                           placeholder="••••••••"

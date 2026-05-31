@@ -127,12 +127,18 @@ export class RepoSecretsStore {
             updatedAt: row.updated_at,
           };
         } catch (e) {
-          log.error("Failed to decrypt secret", {
+          log.warn("Failed to decrypt secret while listing secrets", {
             repo_id: repoId,
             key: row.key,
             error: e instanceof Error ? e.message : String(e),
           });
-          throw new Error(`Failed to decrypt secret '${row.key}'`);
+          return {
+            key: row.key,
+            value: null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            decryptionFailed: true,
+          };
         }
       })
     );

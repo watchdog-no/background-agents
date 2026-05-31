@@ -39,7 +39,8 @@ export interface SecretMetadata {
 }
 
 export interface SecretWithValue extends SecretMetadata {
-  value: string;
+  value: string | null;
+  decryptionFailed?: boolean;
 }
 
 export function normalizeKey(key: string): string {

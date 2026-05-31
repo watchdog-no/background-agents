@@ -112,11 +112,17 @@ export class GlobalSecretsStore {
             updatedAt: row.updated_at,
           };
         } catch (e) {
-          log.error("Failed to decrypt global secret", {
+          log.warn("Failed to decrypt global secret while listing secrets", {
             key: row.key,
             error: e instanceof Error ? e.message : String(e),
           });
-          throw new Error(`Failed to decrypt global secret '${row.key}'`);
+          return {
+            key: row.key,
+            value: null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            decryptionFailed: true,
+          };
         }
       })
     );

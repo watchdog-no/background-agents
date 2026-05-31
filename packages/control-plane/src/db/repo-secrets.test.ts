@@ -56,6 +56,10 @@ class FakeD1Database {
     return new FakePreparedStatement(this, query);
   }
 
+  insertRaw(row: RepoSecretRow) {
+    this.rows.set(`${row.repo_id}:${row.key}`, row);
+  }
+
   all(query: string, args: unknown[]) {
     const normalized = normalizeQuery(query);
 
@@ -252,6 +256,32 @@ describe("RepoSecretsStore", () => {
       expect.objectContaining({ key: "BETA", value: "2" }),
     ]);
     expect(secrets[0].createdAt).toBeTypeOf("number");
+  });
+
+  it("keeps listing metadata when a value cannot decrypt", async () => {
+    await store.setSecrets(1, "Owner", "Repo", { ALPHA: "1" });
+    db.insertRaw({
+      repo_id: 1,
+      repo_owner: "owner",
+      repo_name: "repo",
+      key: "BROKEN",
+      encrypted_value: "not-encrypted",
+      created_at: 10,
+      updated_at: 11,
+    });
+
+    const secrets = await store.listSecrets(1);
+
+    expect(secrets).toEqual([
+      expect.objectContaining({ key: "ALPHA", value: "1" }),
+      expect.objectContaining({
+        key: "BROKEN",
+        value: null,
+        createdAt: 10,
+        updatedAt: 11,
+        decryptionFailed: true,
+      }),
+    ]);
   });
 
   it("deletes secrets by key", async () => {
