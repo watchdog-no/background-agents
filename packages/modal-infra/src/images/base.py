@@ -25,10 +25,11 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 
 # OpenCode version to install.
 #
-# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 keeps the OpenAI
-# WebSocket response timeouts active and retries failed OpenAI WebSocket streams
+# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 kept the OpenAI
+# WebSocket response timeouts active and retried failed OpenAI WebSocket streams
 # before falling back, fixing dropped/hung OpenAI responses seen on 1.15.10.
-OPENCODE_VERSION = "1.15.12"
+# 1.15.13 is the current pinned release.
+OPENCODE_VERSION = "1.15.13"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"
@@ -60,6 +61,10 @@ CTX7_VERSION = "0.4.4"
 # v55: install ctx7 (Context7) for agent-side library documentation
 # v56: adopt upstream host-scoped SCM credential broker (PR #679)
 # v57: upgrade OpenCode to 1.15.12 for the OpenAI WebSocket response fix
+# v58: add Claude Pro/Max subscription OAuth path
+# v59: add Claude Opus 4.8 model support
+# v60: upgrade OpenCode to 1.15.13; inject Claude Code identity in the Anthropic
+#      OAuth plugin so subscription requests are authorized (fixes spurious 429s)
 
 # Base image with all development tools
 base_image = (

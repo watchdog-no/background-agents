@@ -8,10 +8,11 @@ from daytona import CreateSnapshotParams, Daytona, Image
 
 # OpenCode version to install.
 #
-# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 keeps the OpenAI
-# WebSocket response timeouts active and retries failed OpenAI WebSocket streams
+# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 kept the OpenAI
+# WebSocket response timeouts active and retried failed OpenAI WebSocket streams
 # before falling back, fixing dropped/hung OpenAI responses seen on 1.15.10.
-OPENCODE_VERSION = "1.15.12"
+# 1.15.13 is the current pinned release.
+OPENCODE_VERSION = "1.15.13"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
 LINEAR_CLI_VERSION = "2.0.0"
