@@ -363,6 +363,12 @@ function setupSandbox(proxyPort, cpPort) {
     SESSION_CONFIG: JSON.stringify({ sessionId: SESSION_ID, provider: "anthropic", model: MODEL }),
   };
 
+  // Production never hands the sandbox the refresh token — it receives only the
+  // sentinel auth.json and the control-plane refresh endpoint. Strip the
+  // refresh-token env keys so this diagnostic mirrors that exactly (and so a
+  // token supplied via env isn't leaked into the process under test).
+  for (const key of KEY_NAMES) delete env[key];
+
   return { root, projectDir, dataHome, env };
 }
 
@@ -393,10 +399,33 @@ function startOpencode(projectDir, env, port) {
         "--print-logs",
       ];
   log(`  launching: ${cmd} ${args.join(" ")} (cwd=${projectDir})`);
-  const proc = spawn(cmd, args, { cwd: projectDir, env, stdio: ["ignore", "pipe", "pipe"] });
+  // detached:true puts the child in its own process group so cleanup can kill
+  // the whole group — `npx` only wraps the real `opencode serve` process, and
+  // killing the wrapper PID alone would orphan the server.
+  const proc = spawn(cmd, args, {
+    cwd: projectDir,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
   proc.stdout.on("data", (d) => process.stderr.write(`  [opencode] ${d}`));
   proc.stderr.on("data", (d) => process.stderr.write(`  [opencode] ${d}`));
   return proc;
+}
+
+// Kill the OpenCode child's entire process group (negative PID), falling back
+// to the single PID, so the npx-launched `opencode serve` server never leaks.
+function killOpencode(proc) {
+  if (!proc?.pid) return;
+  try {
+    process.kill(-proc.pid, "SIGKILL");
+  } catch {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 async function waitForOpencode(base, timeoutMs = 90_000) {
@@ -441,7 +470,11 @@ async function sendPrompt(base, sessionId, text) {
 //   - `record.usage` is only set once the proxy finishes reading the stream, so
 //     we wait for it (or an error status) rather than a fixed grace period —
 //     otherwise the next prompt could be posted before the cache write lands.
-async function waitForUpstream(records, sinceCount, { requireTools = true, timeoutMs = 90_000 } = {}) {
+async function waitForUpstream(
+  records,
+  sinceCount,
+  { requireTools = true, timeoutMs = 90_000 } = {}
+) {
   const deadline = Date.now() + timeoutMs;
   const isMatch = (r, i) =>
     i >= sinceCount &&
@@ -697,7 +730,7 @@ async function main() {
     console.error("\n✗ Diagnosis run failed:", e.message);
     exitCode = 1;
   } finally {
-    proc.kill("SIGKILL");
+    killOpencode(proc);
     proxy.server.close();
     cp.server.close();
     if (process.env.KEEP_TMP) {
