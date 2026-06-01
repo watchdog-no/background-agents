@@ -200,10 +200,17 @@ export interface AgentSessionWebhook {
   organizationId: string;
   webhookId: string;
   appUserId?: string;
+  // Linear delivers `promptContext` as a TOP-LEVEL field — a preformatted XML
+  // string of the issue, all relevant comment threads, and guidance. It is a
+  // sibling of `agentSession`, NOT nested inside it. See
+  // https://linear.app/developers/agent-interaction
+  promptContext?: string;
   agentSession: {
     id: string;
     issue?: AgentSessionWebhookIssue;
     comment?: { body: string };
+    // Older code read promptContext here; Linear never populates it at this
+    // level. Retained only so the legacy fallback path keeps type-checking.
     promptContext?: string;
   };
   agentActivity?: {

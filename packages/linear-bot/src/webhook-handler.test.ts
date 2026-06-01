@@ -4,7 +4,28 @@ import {
   buildPrompt,
   buildPromptContextPrompt,
   escapeHtml,
+  selectSessionPrompt,
+  MAX_FALLBACK_COMMENT_CHARS,
 } from "./webhook-handler";
+import type { AgentSessionWebhook } from "./types";
+
+const ISSUE = {
+  identifier: "ENG-123",
+  title: "Title",
+  description: "Description",
+  url: "https://linear.app/acme/issue/ENG-123/test",
+};
+
+function makeWebhook(overrides: Partial<AgentSessionWebhook>): AgentSessionWebhook {
+  return {
+    type: "AgentSessionEvent",
+    action: "created",
+    organizationId: "org-1",
+    webhookId: "wh-1",
+    agentSession: { id: "as-1" },
+    ...overrides,
+  };
+}
 
 describe("escapeHtml", () => {
   it("escapes & to &amp;", () => {
@@ -85,6 +106,77 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("<linear_issue_comment>");
     expect(prompt).toContain("Please <\\/linear_issue_comment> break out");
     expect(prompt).toContain("<linear_agent_instruction>");
+  });
+});
+
+describe("selectSessionPrompt", () => {
+  it("consumes top-level promptContext (the level Linear actually sends)", () => {
+    const webhook = makeWebhook({ promptContext: "FULL_LINEAR_CONTEXT_XML" });
+
+    const prompt = selectSessionPrompt(webhook, ISSUE, null);
+
+    expect(prompt).toContain("<linear_prompt_context>");
+    expect(prompt).toContain("FULL_LINEAR_CONTEXT_XML");
+    // Must NOT fall through to the lossy buildPrompt path.
+    expect(prompt).not.toContain("## Issue Title");
+  });
+
+  it("falls back to nested agentSession.promptContext when top-level is absent", () => {
+    const webhook = makeWebhook({ agentSession: { id: "as-1", promptContext: "NESTED_CTX" } });
+
+    const prompt = selectSessionPrompt(webhook, ISSUE, null);
+
+    expect(prompt).toContain("NESTED_CTX");
+  });
+
+  it("falls back to buildPrompt only when no promptContext is present anywhere", () => {
+    const webhook = makeWebhook({});
+
+    const prompt = selectSessionPrompt(webhook, ISSUE, null);
+
+    expect(prompt).toContain("## Issue Title");
+    expect(prompt).not.toContain("<linear_prompt_context>");
+  });
+});
+
+describe("buildPrompt comment fallback", () => {
+  it("keeps comment bodies far longer than the old 200-char cap", () => {
+    const longBody = "x".repeat(MAX_FALLBACK_COMMENT_CHARS - 1);
+    const prompt = buildPrompt(ISSUE, {
+      id: "issue-1",
+      identifier: "ENG-123",
+      title: "Title",
+      description: "Description",
+      url: ISSUE.url,
+      priority: 0,
+      priorityLabel: "No priority",
+      labels: [],
+      team: { id: "team-1", key: "ENG", name: "Engineering" },
+      comments: [{ body: longBody, user: { name: "Halvor" } }],
+    });
+
+    expect(prompt).toContain(longBody);
+    expect(prompt).not.toContain("[comment truncated]");
+    expect(MAX_FALLBACK_COMMENT_CHARS).toBeGreaterThan(200);
+  });
+
+  it("truncates only when a comment exceeds the cap, and marks it", () => {
+    const overLong = "y".repeat(MAX_FALLBACK_COMMENT_CHARS + 500);
+    const prompt = buildPrompt(ISSUE, {
+      id: "issue-1",
+      identifier: "ENG-123",
+      title: "Title",
+      description: "Description",
+      url: ISSUE.url,
+      priority: 0,
+      priorityLabel: "No priority",
+      labels: [],
+      team: { id: "team-1", key: "ENG", name: "Engineering" },
+      comments: [{ body: overLong, user: { name: "Halvor" } }],
+    });
+
+    expect(prompt).toContain("…[comment truncated]");
+    expect(prompt).not.toContain("y".repeat(MAX_FALLBACK_COMMENT_CHARS + 1));
   });
 });
 

@@ -242,6 +242,11 @@ export async function emitAgentActivity(
 
 // ─── Issue Details ───────────────────────────────────────────────────────────
 
+// `comments(orderBy: createdAt)` returns oldest-first, and buildPrompt keeps the
+// last N. Fetch a generous window so the genuinely most-recent comments are
+// present to slice from — at first:10 a busy issue would drop its newest ones.
+const COMMENT_FETCH_LIMIT = 50;
+
 /**
  * Fetch full issue details from Linear API.
  */
@@ -266,7 +271,7 @@ export async function fetchIssueDetails(
           project { id name }
           assignee { id name }
           team { id key name }
-          comments(first: 10, orderBy: createdAt) {
+          comments(first: ${COMMENT_FETCH_LIMIT}, orderBy: createdAt) {
             nodes {
               body
               user { name }
