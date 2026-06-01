@@ -39,6 +39,14 @@ import {
 
 const log = createLogger("handler");
 
+// Caps for the buildPrompt fallback (used only when Linear omits promptContext).
+// Generous on purpose: comments routinely carry the real instructions and the
+// verified fix, so the old 200-char/5-comment limits silently dropped the most
+// load-bearing context. fetchIssueDetails fetches MAX_FALLBACK_COMMENTS already,
+// ordered so the most recent survive.
+export const MAX_FALLBACK_COMMENTS = 10;
+export const MAX_FALLBACK_COMMENT_CHARS = 4000;
+
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -64,6 +72,25 @@ export function buildPromptContextPrompt(promptContext: string): string {
     "",
     "Please implement the changes described in this issue. Create a pull request when done.",
   ].join("\n");
+}
+
+/**
+ * Choose the session prompt. Linear's `promptContext` (full issue + every
+ * comment thread + guidance) is preferred and arrives TOP-LEVEL on the webhook;
+ * `agentSession.promptContext` is a legacy read Linear never populates. When
+ * both are absent we fall back to buildPrompt, which fetches and truncates a
+ * subset of comments itself.
+ */
+export function selectSessionPrompt(
+  webhook: AgentSessionWebhook,
+  issue: { identifier: string; title: string; description?: string | null; url: string },
+  issueDetails: LinearIssueDetails | null,
+  comment?: { body: string } | null
+): string {
+  const promptContext = webhook.promptContext ?? webhook.agentSession.promptContext;
+  return promptContext
+    ? buildPromptContextPrompt(promptContext)
+    : buildPrompt(issue, issueDetails, comment);
 }
 
 export function buildFollowUpPrompt(params: {
@@ -553,10 +580,7 @@ async function handleNewSession(
 
   // ─── Build and send prompt ────────────────────────────────────────────
 
-  // Prefer Linear's promptContext (includes issue, comments, guidance)
-  let prompt = webhook.agentSession.promptContext
-    ? buildPromptContextPrompt(webhook.agentSession.promptContext)
-    : buildPrompt(issue, issueDetails, comment);
+  let prompt = selectSessionPrompt(webhook, issue, issueDetails, comment);
 
   if (integrationConfig.issueSessionInstructions) {
     prompt += `\n\n## Additional Instructions\n\n${integrationConfig.issueSessionInstructions}`;
@@ -708,12 +732,13 @@ export function buildPrompt(
     // Include recent comments for context
     if (issueDetails.comments.length > 0) {
       parts.push("", "---", "**Recent comments:**");
-      for (const c of issueDetails.comments.slice(-5)) {
+      for (const c of issueDetails.comments.slice(-MAX_FALLBACK_COMMENTS)) {
         const author = c.user?.name || "Unknown";
-        parts.push(
-          `Comment by ${author}:`,
-          wrapUntrusted("linear_issue_comment", c.body.slice(0, 200))
-        );
+        const body =
+          c.body.length > MAX_FALLBACK_COMMENT_CHARS
+            ? `${c.body.slice(0, MAX_FALLBACK_COMMENT_CHARS)}\n…[comment truncated]`
+            : c.body;
+        parts.push(`Comment by ${author}:`, wrapUntrusted("linear_issue_comment", body));
       }
     }
   }

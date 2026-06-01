@@ -242,6 +242,13 @@ export async function emitAgentActivity(
 
 // ─── Issue Details ───────────────────────────────────────────────────────────
 
+// Fetch the TAIL of the comment connection (`last`, backward pagination) so the
+// genuinely most-recent comments are present — `first` returns the oldest, which
+// on a busy issue would drop the newest user instructions before buildPrompt
+// ever sees them. With `orderBy: createdAt` the page is still oldest-first within
+// itself, so buildPrompt's slice(-MAX_FALLBACK_COMMENTS) keeps the latest few.
+const COMMENT_FETCH_LIMIT = 50;
+
 /**
  * Fetch full issue details from Linear API.
  */
@@ -266,7 +273,7 @@ export async function fetchIssueDetails(
           project { id name }
           assignee { id name }
           team { id key name }
-          comments(first: 10, orderBy: createdAt) {
+          comments(last: ${COMMENT_FETCH_LIMIT}, orderBy: createdAt) {
             nodes {
               body
               user { name }
