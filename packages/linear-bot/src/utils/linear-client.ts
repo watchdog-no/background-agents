@@ -242,9 +242,11 @@ export async function emitAgentActivity(
 
 // ─── Issue Details ───────────────────────────────────────────────────────────
 
-// `comments(orderBy: createdAt)` returns oldest-first, and buildPrompt keeps the
-// last N. Fetch a generous window so the genuinely most-recent comments are
-// present to slice from — at first:10 a busy issue would drop its newest ones.
+// Fetch the TAIL of the comment connection (`last`, backward pagination) so the
+// genuinely most-recent comments are present — `first` returns the oldest, which
+// on a busy issue would drop the newest user instructions before buildPrompt
+// ever sees them. With `orderBy: createdAt` the page is still oldest-first within
+// itself, so buildPrompt's slice(-MAX_FALLBACK_COMMENTS) keeps the latest few.
 const COMMENT_FETCH_LIMIT = 50;
 
 /**
@@ -271,7 +273,7 @@ export async function fetchIssueDetails(
           project { id name }
           assignee { id name }
           team { id key name }
-          comments(first: ${COMMENT_FETCH_LIMIT}, orderBy: createdAt) {
+          comments(last: ${COMMENT_FETCH_LIMIT}, orderBy: createdAt) {
             nodes {
               body
               user { name }
