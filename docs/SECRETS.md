@@ -1,8 +1,8 @@
 # Secrets Management
 
-Open-Inspect lets you store environment variables — API keys, database URLs, credentials — and
-inject them into every sandbox automatically. Secrets are encrypted at rest and masked by default in
-the UI.
+Open-Inspect lets you store environment variables — API keys, database URLs, credentials — and use
+them in sandboxes and control-plane workflows. Secrets are encrypted at rest and masked by default
+in the UI.
 
 ---
 
@@ -15,7 +15,8 @@ the UI.
 4. Click **Add secret**, enter a key and value, then click **Save**
 
 That's it — the next sandbox you launch will have the secret available as an environment variable,
-unless the key is a control-plane-only credential such as Anthropic OAuth refresh-token material.
+unless the key is a control-plane-only credential such as OAuth token material or provider API keys
+reserved for control-plane classification.
 
 ---
 
@@ -32,19 +33,20 @@ If you override a global key at the repo level, the global entry shows "(overrid
 
 ### When to use global secrets
 
-Use global secrets for keys that every session needs regardless of which repository it runs against.
-The most common examples:
+Use global secrets for keys that apply regardless of which repository a session runs against,
+including control-plane credentials. The most common examples:
 
-| Key                             | Description                                                              |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Claude subscription OAuth token for the default Anthropic model path.    |
-| `OPENAI_OAUTH_REFRESH_TOKEN`    | ChatGPT subscription OAuth token for OpenAI models.                      |
-| `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.                   |
-| `ANTHROPIC_API_KEY`             | Optional metered Claude API fallback when OAuth is intentionally unused. |
+| Key                             | Description                                                           |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Claude subscription OAuth token for the default Anthropic model path. |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | ChatGPT subscription OAuth token for OpenAI models.                   |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.                |
+| `ANTHROPIC_API_KEY`             | Optional metered Claude API key for control-plane classification.     |
+| `OPENAI_API_KEY`                | Optional metered OpenAI API key for control-plane classification.     |
 
 > **Daytona users**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN`
-> as a global secret after deploying. Add `ANTHROPIC_API_KEY` only if you intentionally use metered
-> API billing. See [Getting Started - Daytona](GETTING_STARTED.md#daytona) for details.
+> as a global secret after deploying. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are not injected into
+> sandboxes, so coding agents keep using subscription OAuth instead of metered API auth.
 
 ### When to use repository secrets
 
@@ -109,25 +111,26 @@ If you try to save a reserved key, the UI will show a validation error.
 
 - Secrets are encrypted with **AES-256-GCM** before being stored in the database
 - Values are returned only to authenticated Settings users and are masked by default in the UI
-- Secrets are generally decrypted at sandbox creation time and injected as environment variables
-- Anthropic OAuth refresh tokens and cached access-token secrets are control-plane-only; sandboxes
-  receive only a non-secret enabled flag and short-lived access tokens through the internal refresh
-  endpoint
+- Most secrets are decrypted at sandbox creation time and injected as environment variables
+- Anthropic OAuth refresh tokens, cached access-token secrets, and provider API keys used for
+  classification are control-plane-only; sandboxes receive only a non-secret enabled flag and
+  short-lived access tokens through the internal refresh endpoint
 - System variables (set by the control plane) always take precedence over user-defined secrets
 
 ---
 
 ## Common Examples
 
-| Key                             | Scope  | Purpose                                                                 |
-| ------------------------------- | ------ | ----------------------------------------------------------------------- |
-| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md))         |
-| `ANTHROPIC_API_KEY`             | Global | Optional metered Claude API fallback when OAuth is intentionally unused |
-| `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                   |
-| `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))                   |
-| `DATABASE_URL`                  | Repo   | Database connection string                                              |
-| `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                                  |
-| `STRIPE_SECRET_KEY`             | Repo   | Stripe API key for a specific project                                   |
+| Key                             | Scope  | Purpose                                                         |
+| ------------------------------- | ------ | --------------------------------------------------------------- |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md)) |
+| `ANTHROPIC_API_KEY`             | Global | Optional Claude API key for control-plane classification        |
+| `OPENAI_API_KEY`                | Global | Optional OpenAI API key for control-plane classification        |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
+| `DATABASE_URL`                  | Repo   | Database connection string                                      |
+| `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                          |
+| `STRIPE_SECRET_KEY`             | Repo   | Stripe API key for a specific project                           |
 
 ---
 
@@ -136,13 +139,13 @@ If you try to save a reserved key, the UI will show a validation error.
 ### "Model not found" errors (Daytona provider)
 
 If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
-confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
-`ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
+confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Global
+`ANTHROPIC_API_KEY` is intentionally not injected into sandbox sessions.
 
 ### Secret not appearing in sandbox
 
 1. Verify the secret is saved under the correct scope (global or the specific repo)
-2. Check that the key isn't in the reserved keys list above
+2. Check that the key isn't in the reserved keys list above or a control-plane-only key
 3. New secrets only apply to **new** sandboxes — restart your session to pick up changes
 
 ### Key name was auto-changed

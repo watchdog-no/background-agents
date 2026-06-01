@@ -178,8 +178,9 @@ Create an R2 API Token:
 The control plane calls the Daytona REST API directly — no shim service to deploy.
 
 > **Important**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a
-> **global secret** in Settings > Secrets after deploying. Add `ANTHROPIC_API_KEY` only if you
-> intentionally use metered API billing. See [Secrets Management](SECRETS.md) for details.
+> **global secret** in Settings > Secrets after deploying. Global provider API keys are used only by
+> control-plane classification and are not injected into sandbox agents. See
+> [Secrets Management](SECRETS.md) for details.
 
 ### Anthropic
 
@@ -187,7 +188,8 @@ Claude subscription OAuth is the default Anthropic model path. Use
 [`docs/ANTHROPIC_MODELS.md`](ANTHROPIC_MODELS.md) to capture an `ANTHROPIC_OAUTH_REFRESH_TOKEN` and
 save it as a global or repo secret.
 
-An `ANTHROPIC_API_KEY` is only needed for deployments that intentionally use metered API billing.
+A Settings global `ANTHROPIC_API_KEY` is only needed for control-plane classification when you
+intentionally use metered API billing instead of OAuth for that small routing call.
 
 > **Want to use your OpenAI ChatGPT subscription?** See [Using OpenAI Models](OPENAI_MODELS.md) for
 > setup instructions (can be configured after deployment).
@@ -395,7 +397,7 @@ enable_github_bot      = false
 github_webhook_secret  = ""          # From Step 5 (required if enabled)
 github_bot_username    = ""          # e.g., "my-app[bot]" (your GitHub App's bot login)
 
-# API Keys
+# Modal metered Claude fallback (optional)
 anthropic_api_key = "sk-ant-..."
 
 # Security Secrets (from Step 5)
@@ -694,7 +696,7 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `ENABLE_SLACK_BOT`             | `true` to deploy Slack bot, `false` to skip (default: `true`)                               |
 | `SLACK_BOT_TOKEN`              | Slack bot token (required if enabled)                                                       |
 | `SLACK_SIGNING_SECRET`         | Slack signing secret (required if enabled)                                                  |
-| `ANTHROPIC_API_KEY`            | Optional Anthropic API key for metered fallback and bot classifiers                         |
+| `ANTHROPIC_API_KEY`            | Optional Anthropic API key passed to Modal as a metered Claude fallback                     |
 | `ANTHROPIC_OAUTH_CLIENT_ID`    | Optional Claude subscription OAuth public client ID override                                |
 | `ANTHROPIC_OAUTH_TOKEN_URL`    | Optional Claude subscription OAuth token endpoint override                                  |
 | `TOKEN_ENCRYPTION_KEY`         | Generated encryption key (OAuth tokens)                                                     |

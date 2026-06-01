@@ -474,13 +474,13 @@ You can configure environment variables (API keys, credentials) at global or per
 - **Repository secrets** apply to a single repo and override global secrets with the same key
 - Stored encrypted (AES-256-GCM) in D1 database
 - Generally injected into sandboxes at startup
-- Anthropic OAuth refresh tokens and cached access-token secrets stay control-plane-only; sandboxes
-  receive a non-secret enabled flag and request short-lived access tokens through an internal
-  endpoint
+- Anthropic OAuth refresh tokens, cached access-token secrets, and provider API keys used for
+  classification stay control-plane-only; sandboxes receive a non-secret enabled flag and request
+  short-lived access tokens through an internal endpoint
 - Visible to authenticated Settings users with values masked by default
 
 > **Daytona users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the default Claude
-> subscription path. Add `ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
+> subscription path. Global provider API keys are not injected into sandbox agents.
 
 See [Secrets Management](./SECRETS.md) for setup instructions.
 

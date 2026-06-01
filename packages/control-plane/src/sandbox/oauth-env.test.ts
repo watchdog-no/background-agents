@@ -80,7 +80,7 @@ describe("filterSandboxCredentialEnvVars", () => {
     ).toEqual({ CUSTOM_VAR: "value" });
   });
 
-  it("strips classifier model API keys so they never reach sandboxes", () => {
+  it("strips provider API keys so sandbox agents cannot bypass subscription OAuth", () => {
     expect(
       filterSandboxCredentialEnvVars({
         ANTHROPIC_API_KEY: "sk-ant-classifier",

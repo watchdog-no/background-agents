@@ -161,7 +161,7 @@ linear_webhook_secret = ""   # Webhook Signing Secret from the application confi
 # anthropic_oauth_client_id = ""
 # anthropic_oauth_token_url = ""
 
-# Optional metered Anthropic API fallback and bot classifier key.
+# Optional metered Anthropic API fallback for Modal.
 anthropic_api_key = ""
 
 # =============================================================================
