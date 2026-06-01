@@ -145,6 +145,13 @@ def format_finding_title(finding: dict[str, Any]) -> str:
     return f"[{priority_label(finding)}] {title}"
 
 
+def bare_title(finding: dict[str, Any]) -> str:
+    """Return the finding title without its leading [P0]-[P3] tag."""
+    title = str(finding.get("title", "")).strip()
+    match = PRIORITY_RE.match(title)
+    return match.group(2).strip() if match else title
+
+
 def compact_location(finding: dict[str, Any]) -> str:
     location = finding["code_location"]
     line_range = location["line_range"]
