@@ -14,7 +14,7 @@ import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
 
-const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.4-mini";
 
 /**
  * Build classification prompt from Linear issue context.

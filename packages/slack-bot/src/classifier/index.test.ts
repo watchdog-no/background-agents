@@ -45,7 +45,7 @@ const TEST_REPOS: RepoConfig[] = [
 ];
 
 const TEST_ENV = {
-  CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
+  CLASSIFICATION_MODEL: "openai/gpt-5.4-mini",
   INTERNAL_CALLBACK_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
@@ -88,7 +88,7 @@ describe("RepoClassifier", () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe("https://internal/classify");
     const sentBody = JSON.parse((init as RequestInit).body as string);
-    expect(sentBody.model).toBe("anthropic/claude-haiku-4-5");
+    expect(sentBody.model).toBe("openai/gpt-5.4-mini");
     expect(typeof sentBody.prompt).toBe("string");
   });
 

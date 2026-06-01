@@ -49,7 +49,7 @@ module "slack_bot_worker" {
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = "openai/gpt-5.5" },
     # Repo classification runs via the control-plane /classify endpoint.
-    { name = "CLASSIFICATION_MODEL", value = "anthropic/claude-haiku-4-5" },
+    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.4-mini" },
   ]
 
   secrets = [

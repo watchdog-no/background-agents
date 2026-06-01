@@ -8,7 +8,8 @@
  * before any session/sandbox exists.
  *
  * Credentials resolve **API-key-first** (fastest — no token-refresh round trip),
- * falling back to the global subscription OAuth token when no key is configured.
+ * falling back to the global subscription OAuth token when no key is configured
+ * or the stored key is rejected.
  */
 
 import type { Env } from "../types";
@@ -17,7 +18,6 @@ import {
   extractProviderAndModel,
   CLAUDE_CODE_IDENTITY,
   ANTHROPIC_OAUTH_BETA,
-  OPENAI_SUBSCRIPTION_MODEL_IDS,
 } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import { GlobalSecretsStore } from "../db/global-secrets";
@@ -32,8 +32,6 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENAI_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
-
-const OPENAI_SUBSCRIPTION_MODELS = new Set<string>(OPENAI_SUBSCRIPTION_MODEL_IDS);
 
 /** JSON schema for the structured classification result. */
 const CLASSIFY_INPUT_SCHEMA = {
@@ -300,27 +298,18 @@ async function classifyWithOpenAI(
   prompt: string,
   model: string
 ): Promise<ClassifyRawResult> {
-  // OAuth fallback only works for subscription-servable models (the Codex set);
-  // API-platform-only models (e.g. *-nano) require the key.
-  const oauthEligible = oauthSecretsConfigured(env) && OPENAI_SUBSCRIPTION_MODELS.has(model);
+  const oauthAvailable = oauthSecretsConfigured(env);
 
   const apiKey = await readGlobalSecret(env, "OPENAI_API_KEY");
   if (apiKey) {
     try {
       return await openaiRequest(prompt, model, { apiKey });
     } catch (e) {
-      if (!shouldFallbackToOAuth(e, oauthEligible)) throw e;
+      if (!shouldFallbackToOAuth(e, oauthAvailable)) throw e;
       log.warn("classify.api_key_rejected_falling_back_to_oauth", { provider: "openai" });
     }
   }
 
-  if (!OPENAI_SUBSCRIPTION_MODELS.has(model)) {
-    throw new ClassifyError(
-      "model_not_entitled",
-      `Model "${model}" is not available on the OpenAI subscription/OAuth backend and no OPENAI_API_KEY is configured`,
-      422
-    );
-  }
   const { accessToken, accountId } = await getOpenAIOAuthToken(env);
   return openaiRequest(prompt, model, { oauthToken: accessToken, accountId });
 }

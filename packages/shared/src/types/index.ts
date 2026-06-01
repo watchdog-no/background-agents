@@ -579,7 +579,6 @@ export interface ClassifyRawResult {
 export type ClassifyErrorReason =
   | "oauth_not_configured"
   | "oauth_unauthorized"
-  | "model_not_entitled"
   | "provider_error"
   | "invalid_request";
 

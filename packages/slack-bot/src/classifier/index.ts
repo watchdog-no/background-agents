@@ -17,7 +17,7 @@ import { createLogger } from "../logger";
 const log = createLogger("classifier");
 const CLASSIFY_REPO_TOOL_NAME = "classify_repository";
 const CONFIDENCE_LEVELS: ClassificationResult["confidence"][] = ["high", "medium", "low"];
-const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.4-mini";
 
 /**
  * Build the classification prompt for the LLM.

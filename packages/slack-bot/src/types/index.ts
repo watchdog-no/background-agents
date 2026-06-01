@@ -17,7 +17,7 @@ export interface Env {
   CONTROL_PLANE_URL: string;
   WEB_APP_URL: string;
   DEFAULT_MODEL: string;
-  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: anthropic/claude-haiku-4-5)
+  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.4-mini)
   APP_NAME?: string;
 
   // Secrets

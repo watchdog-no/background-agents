@@ -163,19 +163,27 @@ describe("POST /classify", () => {
     expect(call.headers["Authorization"]).toBe("Bearer sk-openai");
   });
 
-  it("does not fall back when a rejected OpenAI key is for a non-subscription model", async () => {
+  it("falls back to OpenAI OAuth when a stored API key is rejected", async () => {
     mockGetDecryptedSecrets.mockResolvedValue({ OPENAI_API_KEY: "sk-openai-bad" });
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ error: "bad key" }), { status: 401 })
-    );
+    mockFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "bad key" }), { status: 401 }))
+      .mockResolvedValueOnce(openaiFunctionResponse());
+    mockOpenAIRefreshGlobal.mockResolvedValue({
+      ok: true,
+      accessToken: "codex-token",
+      accountId: "acct-123",
+    });
 
-    // nano is API-platform-only — no OAuth fallback possible.
-    const res = await classify("openai/gpt-5.4-nano");
+    const res = await classify("openai/gpt-5.4-mini");
 
-    expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({ reason: "oauth_unauthorized" });
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockOpenAIRefreshGlobal).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(VALID_RESULT);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const fallback = lastFetch();
+    expect(fallback.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(fallback.headers["Authorization"]).toBe("Bearer codex-token");
+    expect(fallback.headers["ChatGPT-Account-Id"]).toBe("acct-123");
+    expect(fallback.body.model).toBe("gpt-5.4-mini");
   });
 
   it("falls back to OpenAI OAuth against the Codex backend with account headers", async () => {
@@ -186,7 +194,7 @@ describe("POST /classify", () => {
     });
     mockFetch.mockResolvedValue(openaiFunctionResponse());
 
-    const res = await classify("openai/gpt-5.2");
+    const res = await classify("openai/gpt-5.4-mini");
 
     expect(res.status).toBe(200);
     const call = lastFetch();
@@ -194,14 +202,22 @@ describe("POST /classify", () => {
     expect(call.headers["Authorization"]).toBe("Bearer codex-token");
     expect(call.headers["ChatGPT-Account-Id"]).toBe("acct-123");
     expect(call.headers["originator"]).toBe("opencode");
+    expect(call.body.model).toBe("gpt-5.4-mini");
   });
 
-  it("rejects a non-subscription model when no key is stored and only OAuth is available", async () => {
+  it("lets the Codex backend decide unsupported OpenAI OAuth models", async () => {
+    mockOpenAIRefreshGlobal.mockResolvedValue({ ok: true, accessToken: "codex-token" });
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "unsupported model" } }), { status: 400 })
+    );
+
     const res = await classify("openai/gpt-5.4-nano");
 
-    expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({ reason: "model_not_entitled" });
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ reason: "provider_error" });
+    const call = lastFetch();
+    expect(call.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(call.body.model).toBe("gpt-5.4-nano");
   });
 
   it("surfaces an OAuth-unauthorized failure with a reason code", async () => {
