@@ -84,6 +84,12 @@ should be considered "correct". Correct implies that existing code and tests wil
 patch is free of bugs and other blocking issues. Ignore non-blocking issues such as style,
 formatting, typos, documentation, and other nits.
 
+Be pragmatic and efficient in how you communicate. There is no fixed length for the
+overall_explanation -- keep it short and sweet and do not pad it. The author cares about issues to
+fix, not praise: do not enumerate strengths, restate what the patch does well, or narrate every
+check you ran. When the patch is correct, say so briefly and mention only residual risks worth
+watching.
+
 FORMATTING GUIDELINES: The finding description should be one paragraph.
 
 OUTPUT FORMAT:
@@ -105,7 +111,7 @@ OUTPUT FORMAT:
     }
   ],
   "overall_correctness": "patch is correct" | "patch is incorrect",
-  "overall_explanation": "<1-3 sentence explanation justifying the overall_correctness verdict>",
+  "overall_explanation": "<concise justification for the verdict, focused on issues or residual risk; do not enumerate strengths or narrate checks>",
   "overall_confidence_score": <float 0.0-1.0>
 }
 ```

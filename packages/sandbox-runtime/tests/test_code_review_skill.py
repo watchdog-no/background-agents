@@ -223,7 +223,10 @@ class GitHubPostingTests(unittest.TestCase):
         self.assertEqual(payload["commit_id"], "deadbeef")
         self.assertEqual(payload["comments"][0]["path"], "src/app.ts")
         self.assertEqual(payload["comments"][0]["line"], 2)
-        self.assertIn("[P1]", payload["comments"][0]["body"])
+        body = payload["comments"][0]["body"]
+        self.assertIn("https://img.shields.io/badge/P1-orange", body)
+        self.assertIn("Preserve the saved token", body)
+        self.assertNotIn("[P1]", body)
 
     def test_unpostable_finding_moves_to_review_body(self) -> None:
         diff = """diff --git a/src/other.ts b/src/other.ts

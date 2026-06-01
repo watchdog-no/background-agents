@@ -13,13 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from review_utils import (
+    bare_title,
     compact_location,
     format_finding_title,
     parse_review_output,
+    priority_label,
     priority_number,
 )
 
 HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+# Shields.io badge colors per priority, mirroring Codex's inline review style.
+PRIORITY_BADGE_COLORS = {0: "red", 1: "orange", 2: "yellow", 3: "blue"}
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> str:
@@ -109,7 +114,11 @@ def review_event(output: dict[str, Any], *, post_approve: bool) -> str:
 
 
 def comment_body(finding: dict[str, Any]) -> str:
-    return f"{format_finding_title(finding)}\n\n{str(finding['body']).strip()}"
+    label = priority_label(finding)
+    color = PRIORITY_BADGE_COLORS.get(priority_number(finding), "blue")
+    badge = f"![{label} Badge](https://img.shields.io/badge/{label}-{color}?style=flat)"
+    heading = f"**<sub><sub>{badge}</sub></sub>  {bare_title(finding)}**"
+    return f"{heading}\n\n{str(finding['body']).strip()}"
 
 
 def review_body(output: dict[str, Any], unposted: list[dict[str, Any]]) -> str:
