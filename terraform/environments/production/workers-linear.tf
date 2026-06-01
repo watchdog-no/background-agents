@@ -46,8 +46,12 @@ module "linear_bot_worker" {
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = "openai/gpt-5.5" },
-    # Repo classification runs via the control-plane /classify endpoint.
-    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.4-mini" },
+    # Repo classification runs in-Worker via the control-plane /classify
+    # endpoint. Must be an Anthropic model: OpenAI subscription OAuth routes to
+    # the chatgpt.com Codex backend, which Cloudflare edge-blocks (403) from
+    # Worker egress IPs. The Anthropic OAuth path hits api.anthropic.com, which
+    # is reachable from Workers.
+    { name = "CLASSIFICATION_MODEL", value = "anthropic/claude-haiku-4-5" },
     { name = "LINEAR_CLIENT_ID", value = var.linear_client_id },
     { name = "WORKER_URL", value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" },
   ]

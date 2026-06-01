@@ -17,7 +17,10 @@ import { createLogger } from "../logger";
 const log = createLogger("classifier");
 const CLASSIFY_REPO_TOOL_NAME = "classify_repository";
 const CONFIDENCE_LEVELS: ClassificationResult["confidence"][] = ["high", "medium", "low"];
-const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.4-mini";
+// Anthropic, not OpenAI: the /classify endpoint runs inside a Cloudflare Worker,
+// and OpenAI subscription OAuth routes to the chatgpt.com Codex backend, which
+// edge-blocks Worker egress (403). The Anthropic OAuth path uses api.anthropic.com.
+const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
 
 /**
  * Build the classification prompt for the LLM.
