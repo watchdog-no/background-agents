@@ -17,14 +17,13 @@ export interface Env {
   CONTROL_PLANE_URL: string;
   WEB_APP_URL: string;
   DEFAULT_MODEL: string;
-  CLASSIFICATION_MODEL: string;
+  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.4-mini)
   APP_NAME?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   SLACK_APP_TOKEN?: string;
-  ANTHROPIC_API_KEY?: string;
   CONTROL_PLANE_API_KEY?: string;
   INTERNAL_CALLBACK_SECRET?: string; // For verifying callbacks from control-plane
   LOG_LEVEL?: string;

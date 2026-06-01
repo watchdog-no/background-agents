@@ -1,11 +1,14 @@
 /**
  * Repository classifier for the Slack bot.
  *
- * Uses an LLM to classify which repository a Slack message refers to,
- * based on message content, thread context, and channel information.
+ * Builds the classification prompt and delegates the LLM call to the
+ * control-plane `POST /classify` endpoint, which owns the subscription OAuth
+ * credentials (and any API-key fallback). The bot matches the returned repo id
+ * against its own repo list and decides whether clarification is needed.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { buildInternalAuthHeaders } from "@open-inspect/shared";
+import type { ClassifyRawResult, ClassifyErrorResponse } from "@open-inspect/shared";
 import type { Env, RepoConfig, ThreadContext, ClassificationResult } from "../types";
 import type { ConfidenceLevel } from "@open-inspect/shared";
 import { getAvailableRepos, buildRepoDescriptions, getReposByChannel } from "./repos";
@@ -14,36 +17,7 @@ import { createLogger } from "../logger";
 const log = createLogger("classifier");
 const CLASSIFY_REPO_TOOL_NAME = "classify_repository";
 const CONFIDENCE_LEVELS: ClassificationResult["confidence"][] = ["high", "medium", "low"];
-
-const CLASSIFY_REPO_TOOL: Anthropic.Messages.Tool = {
-  name: CLASSIFY_REPO_TOOL_NAME,
-  description:
-    "Classify which repository a Slack message refers to. Use repoId as null when uncertain.",
-  input_schema: {
-    type: "object",
-    properties: {
-      repoId: {
-        type: ["string", "null"],
-        description: "Repository ID/fullName if confident enough to choose one, otherwise null.",
-      },
-      confidence: {
-        type: "string",
-        enum: CONFIDENCE_LEVELS,
-      },
-      reasoning: {
-        type: "string",
-        description: "Brief explanation of classification decision.",
-      },
-      alternatives: {
-        type: "array",
-        items: { type: "string" },
-        description: "Alternative repository IDs/fullNames when confidence is not high.",
-      },
-    },
-    required: ["repoId", "confidence", "reasoning", "alternatives"],
-    additionalProperties: false,
-  },
-};
+const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.4-mini";
 
 /**
  * Build the classification prompt for the LLM.
@@ -104,7 +78,7 @@ Return your decision by calling the ${CLASSIFY_REPO_TOOL_NAME} tool with:
 }
 
 /**
- * Parse the LLM response into a structured result.
+ * Parsed and validated classification result.
  */
 interface LLMResponse {
   repoId: string | null;
@@ -113,6 +87,9 @@ interface LLMResponse {
   alternatives: string[];
 }
 
+/**
+ * Validate the raw classifier output (from the endpoint) into LLMResponse.
+ */
 function normalizeModelResponse(raw: unknown): LLMResponse {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("LLM response was not an object");
@@ -158,29 +135,60 @@ function normalizeModelResponse(raw: unknown): LLMResponse {
   };
 }
 
-function extractStructuredResponse(response: Anthropic.Messages.Message): LLMResponse {
-  const toolUseBlock = response.content.find(
-    (block): block is Anthropic.Messages.ToolUseBlock =>
-      block.type === "tool_use" && block.name === CLASSIFY_REPO_TOOL_NAME
-  );
+/** Error thrown when the control-plane classifier endpoint fails to run. */
+class ClassifierEndpointError extends Error {
+  constructor(
+    readonly reason: ClassificationResult["failureReason"],
+    message: string
+  ) {
+    super(message);
+  }
+}
 
-  if (!toolUseBlock) {
-    throw new Error("No structured tool_use classification in LLM response");
+/**
+ * Run the classification via the control-plane `/classify` endpoint (which owns
+ * the OAuth / API-key credentials). Throws ClassifierEndpointError on failure.
+ */
+async function callClassifyEndpoint(
+  env: Env,
+  prompt: string,
+  model: string,
+  traceId?: string
+): Promise<ClassifyRawResult> {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(await buildInternalAuthHeaders(env.INTERNAL_CALLBACK_SECRET, traceId)),
+  };
+  const response = await env.CONTROL_PLANE.fetch("https://internal/classify", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ prompt, model }),
+  });
+
+  if (!response.ok) {
+    let reason: ClassificationResult["failureReason"] = "provider_error";
+    let message = `classify endpoint returned ${response.status}`;
+    try {
+      const errBody = (await response.json()) as ClassifyErrorResponse;
+      if (errBody.reason) reason = errBody.reason;
+      if (errBody.message) message = errBody.message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ClassifierEndpointError(reason, message);
   }
 
-  return normalizeModelResponse(toolUseBlock.input);
+  return (await response.json()) as ClassifyRawResult;
 }
 
 /**
  * Repository classifier class.
  */
 export class RepoClassifier {
-  private client: Anthropic | null;
   private env: Env;
 
   constructor(env: Env) {
     this.env = env;
-    this.client = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;
   }
 
   /**
@@ -227,39 +235,12 @@ export class RepoClassifier {
       }
     }
 
-    if (!this.client) {
-      return {
-        repo: null,
-        confidence: "low",
-        reasoning: "Repository classifier is not configured. Please select a repository.",
-        alternatives: repos.slice(0, 5),
-        needsClarification: true,
-      };
-    }
-
-    // Use LLM for classification
+    // Delegate the LLM call to the control plane.
     try {
       const prompt = await buildClassificationPrompt(this.env, message, context, traceId);
-
-      const response = await this.client.messages.create({
-        model: this.env.CLASSIFICATION_MODEL || "claude-haiku-4-5",
-        max_tokens: 500,
-        temperature: 0,
-        tools: [CLASSIFY_REPO_TOOL],
-        tool_choice: {
-          type: "tool",
-          name: CLASSIFY_REPO_TOOL_NAME,
-          disable_parallel_tool_use: true,
-        },
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      });
-
-      const llmResult = extractStructuredResponse(response);
+      const model = this.env.CLASSIFICATION_MODEL || DEFAULT_CLASSIFICATION_MODEL;
+      const raw = await callClassifyEndpoint(this.env, prompt, model, traceId);
+      const llmResult = normalizeModelResponse(raw);
 
       // Find the matched repo
       let matchedRepo: RepoConfig | null = null;
@@ -296,10 +277,14 @@ export class RepoClassifier {
           (llmResult.confidence === "medium" && alternatives.length > 0),
       };
     } catch (e) {
+      const failureReason =
+        e instanceof ClassifierEndpointError ? (e.reason ?? "provider_error") : "provider_error";
+
       log.error("classifier.classify", {
         trace_id: traceId,
-        method: "llm",
+        method: "endpoint",
         outcome: "error",
+        failure_reason: failureReason,
         error: e instanceof Error ? e : new Error(String(e)),
         channel_id: context?.channelId,
       });
@@ -308,9 +293,10 @@ export class RepoClassifier {
         repo: null,
         confidence: "low",
         reasoning:
-          "Could not classify repository from structured model output. Please select a repository.",
+          "The repository classifier failed to run, so I couldn't auto-detect the repository. Please select a repository.",
         alternatives: repos.slice(0, 5),
         needsClarification: true,
+        failureReason,
       };
     }
   }

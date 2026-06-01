@@ -93,10 +93,9 @@ function makeEnv(): Env {
     CONTROL_PLANE_URL: "https://control-plane.test",
     WEB_APP_URL: "https://app.test",
     DEFAULT_MODEL: "anthropic/claude-haiku-4-5",
-    CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
+    CLASSIFICATION_MODEL: "openai/gpt-5.4-mini",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret",
-    ANTHROPIC_API_KEY: "test-key",
     LOG_LEVEL: "error",
   };
 }

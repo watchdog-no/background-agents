@@ -2,7 +2,8 @@ const ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY = "ANTHROPIC_OAUTH_REFRESH_TOKEN";
 
 export const ANTHROPIC_OAUTH_SANDBOX_FLAG = "ANTHROPIC_OAUTH_ENABLED";
 
-const ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = new Set([
+// OAuth token/config material must not be injected into sandbox sessions.
+const SANDBOX_FILTERED_CREDENTIAL_KEYS = new Set([
   ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY,
   "ANTHROPIC_OAUTH_ACCESS_TOKEN",
   "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT",
@@ -19,7 +20,7 @@ export interface PreparedSandboxOAuthEnv {
   anthropicOauthEnabled: boolean;
 }
 
-export function filterAnthropicOAuthSandboxUserEnvVars(
+export function filterSandboxCredentialEnvVars(
   userEnvVars: Record<string, string> | undefined
 ): Record<string, string> | undefined {
   if (!userEnvVars) {
@@ -28,7 +29,7 @@ export function filterAnthropicOAuthSandboxUserEnvVars(
 
   const filtered: Record<string, string> = {};
   for (const [key, value] of Object.entries(userEnvVars)) {
-    if (!ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS.has(key.toUpperCase())) {
+    if (!SANDBOX_FILTERED_CREDENTIAL_KEYS.has(key.toUpperCase())) {
       filtered[key] = value;
     }
   }
@@ -53,7 +54,7 @@ export function prepareSandboxOAuthEnv(
   }
 
   return {
-    userEnvVars: filterAnthropicOAuthSandboxUserEnvVars(userEnvVars),
+    userEnvVars: filterSandboxCredentialEnvVars(userEnvVars),
     anthropicOauthEnabled,
   };
 }

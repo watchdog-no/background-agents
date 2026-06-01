@@ -48,19 +48,15 @@ module "slack_bot_worker" {
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = "openai/gpt-5.5" },
-    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.2" },
+    # Repo classification runs via the control-plane /classify endpoint.
+    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.4-mini" },
   ]
 
-  secrets = concat(
-    [
-      { name = "SLACK_BOT_TOKEN", value = var.slack_bot_token },
-      { name = "SLACK_SIGNING_SECRET", value = var.slack_signing_secret },
-      { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
-    ],
-    var.anthropic_api_key != "" ? [
-      { name = "ANTHROPIC_API_KEY", value = var.anthropic_api_key },
-    ] : []
-  )
+  secrets = [
+    { name = "SLACK_BOT_TOKEN", value = var.slack_bot_token },
+    { name = "SLACK_SIGNING_SECRET", value = var.slack_signing_secret },
+    { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
+  ]
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]

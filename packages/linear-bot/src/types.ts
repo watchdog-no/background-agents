@@ -17,6 +17,7 @@ export interface Env {
   CONTROL_PLANE_URL: string;
   WEB_APP_URL: string;
   DEFAULT_MODEL: string;
+  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.4-mini)
   APP_NAME?: string;
 
   // OAuth app credentials
@@ -29,7 +30,6 @@ export interface Env {
   // Secrets
   LINEAR_WEBHOOK_SECRET: string;
   LINEAR_API_KEY?: string; // kept for backward compat / fallback
-  ANTHROPIC_API_KEY?: string;
   INTERNAL_CALLBACK_SECRET?: string;
   LOG_LEVEL?: string;
 }

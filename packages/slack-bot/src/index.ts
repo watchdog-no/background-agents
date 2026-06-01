@@ -888,39 +888,40 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
       value: r.id,
     }));
 
-    await postMessage(
-      env.SLACK_BOT_TOKEN,
-      channel,
-      `I couldn't determine which repository you're referring to. ${result.reasoning}`,
-      {
-        thread_ts: threadTs || ts,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `I couldn't determine which repository you're referring to.\n\n_${result.reasoning}_`,
-            },
+    // Distinguish an infra failure (broken classifier creds) from a genuine
+    // low-confidence result so the team knows there's a bug to fix.
+    const header = result.failureReason
+      ? `:warning: The repository classifier failed to run (\`${result.failureReason}\`) — this is a configuration issue, not a normal "couldn't decide". Please flag it to the team.`
+      : "I couldn't determine which repository you're referring to.";
+
+    await postMessage(env.SLACK_BOT_TOKEN, channel, `${header} ${result.reasoning}`, {
+      thread_ts: threadTs || ts,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `${header}\n\n_${result.reasoning}_`,
           },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "Which repository should I work with?",
-            },
-            accessory: {
-              type: "static_select",
-              placeholder: {
-                type: "plain_text",
-                text: "Select a repository",
-              },
-              options: repoOptions,
-              action_id: "select_repo",
-            },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Which repository should I work with?",
           },
-        ],
-      }
-    );
+          accessory: {
+            type: "static_select",
+            placeholder: {
+              type: "plain_text",
+              text: "Select a repository",
+            },
+            options: repoOptions,
+            action_id: "select_repo",
+          },
+        },
+      ],
+    });
     return;
   }
 

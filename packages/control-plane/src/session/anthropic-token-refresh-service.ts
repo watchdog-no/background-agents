@@ -17,6 +17,12 @@ type AnthropicTokenState =
   | { type: "cached"; accessToken: string; expiresIn: number }
   | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number };
 
+/**
+ * Identifies the repo a rotated secret should be written back to. Null for the
+ * global-only path (e.g. the repo classifier), which has no session/repo.
+ */
+type RepoWriteContext = { repoOwner: string; repoName: string };
+
 export type AnthropicTokenRefreshResult =
   | { ok: true; accessToken: string; expiresIn?: number }
   | { ok: false; status: number; error: string };
@@ -30,9 +36,28 @@ export class AnthropicTokenRefreshService {
     private readonly oauthConfig?: AnthropicOAuthConfig
   ) {}
 
+  /**
+   * Refresh using a session's repo-scoped secrets, falling back to global.
+   */
   async refresh(session: SessionRow): Promise<AnthropicTokenRefreshResult> {
-    const readTokenState = () => this.readTokenState(session);
+    return this.refreshFromState(() => this.readTokenState(session), {
+      repoOwner: session.repo_owner,
+      repoName: session.repo_name,
+    });
+  }
 
+  /**
+   * Refresh using only the deployment-wide global secrets — no session/repo.
+   * Used by callers that run before a session exists (e.g. the repo classifier).
+   */
+  async refreshGlobal(): Promise<AnthropicTokenRefreshResult> {
+    return this.refreshFromState(() => this.readGlobalTokenState(), null);
+  }
+
+  private async refreshFromState(
+    readTokenState: () => Promise<AnthropicTokenState | null>,
+    repoContext: RepoWriteContext | null
+  ): Promise<AnthropicTokenRefreshResult> {
     let tokenState: AnthropicTokenState | null;
     try {
       tokenState = await readTokenState();
@@ -56,10 +81,10 @@ export class AnthropicTokenRefreshService {
     }
 
     try {
-      return await this.attemptRefresh(tokenState, session);
+      return await this.attemptRefresh(tokenState, repoContext);
     } catch (e) {
       if (e instanceof AnthropicTokenRefreshError && this.isConcurrentRotationError(e)) {
-        return this.handleConcurrentRotationRefresh(tokenState, readTokenState, session, e);
+        return this.handleConcurrentRotationRefresh(tokenState, readTokenState, repoContext, e);
       }
 
       this.log.error("Anthropic token refresh failed", {
@@ -113,9 +138,16 @@ export class AnthropicTokenRefreshService {
     return this.getTokenStateFromSecrets(globalSecrets, "global", repoId);
   }
 
+  private async readGlobalTokenState(): Promise<AnthropicTokenState | null> {
+    const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
+    const globalSecrets = await globalStore.getDecryptedSecrets();
+    // repoId is unused for global-scoped writes; pass a sentinel.
+    return this.getTokenStateFromSecrets(globalSecrets, "global", 0);
+  }
+
   private async attemptRefresh(
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
-    session: SessionRow
+    repoContext: RepoWriteContext | null
   ): Promise<AnthropicTokenRefreshResult> {
     const tokens = this.oauthConfig
       ? await refreshAnthropicToken(tokenState.refreshToken, this.oauthConfig)
@@ -124,7 +156,7 @@ export class AnthropicTokenRefreshService {
     let refreshTokenPersisted = false;
 
     try {
-      await this.writeRotatedRefreshToken(tokenState, session, tokens.refresh_token);
+      await this.writeRotatedRefreshToken(tokenState, repoContext, tokens.refresh_token);
       refreshTokenPersisted = true;
 
       this.log.info("Anthropic refresh token rotated", {
@@ -142,7 +174,7 @@ export class AnthropicTokenRefreshService {
 
     if (refreshTokenPersisted) {
       try {
-        await this.writeTokenSecrets(tokenState, session, {
+        await this.writeTokenSecrets(tokenState, repoContext, {
           ANTHROPIC_OAUTH_ACCESS_TOKEN: tokens.access_token,
           ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(expiresAt),
         });
@@ -186,12 +218,20 @@ export class AnthropicTokenRefreshService {
 
   private async writeTokenSecrets(
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
-    session: SessionRow,
+    repoContext: RepoWriteContext | null,
     secrets: Record<string, string>
   ): Promise<void> {
     if (tokenState.source === "repo") {
+      if (!repoContext) {
+        throw new Error("Repo context required to persist repo-scoped Anthropic secrets");
+      }
       const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-      await repoStore.setSecrets(tokenState.repoId, session.repo_owner, session.repo_name, secrets);
+      await repoStore.setSecrets(
+        tokenState.repoId,
+        repoContext.repoOwner,
+        repoContext.repoName,
+        secrets
+      );
     } else {
       const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
       await globalStore.setSecrets(secrets);
@@ -200,14 +240,14 @@ export class AnthropicTokenRefreshService {
 
   private async writeRotatedRefreshToken(
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
-    session: SessionRow,
+    repoContext: RepoWriteContext | null,
     refreshToken: string
   ): Promise<void> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS; attempt++) {
       try {
-        await this.writeTokenSecrets(tokenState, session, {
+        await this.writeTokenSecrets(tokenState, repoContext, {
           ANTHROPIC_OAUTH_REFRESH_TOKEN: refreshToken,
         });
         return;
@@ -227,7 +267,7 @@ export class AnthropicTokenRefreshService {
   private async handleConcurrentRotationRefresh(
     tokenState: Extract<AnthropicTokenState, { type: "refresh" }>,
     readTokenState: () => Promise<AnthropicTokenState | null>,
-    session: SessionRow,
+    repoContext: RepoWriteContext | null,
     error: AnthropicTokenRefreshError
   ): Promise<AnthropicTokenRefreshResult> {
     this.log.warn("Anthropic refresh failed, checking for concurrent rotation", {
@@ -251,7 +291,7 @@ export class AnthropicTokenRefreshService {
 
       if (reread?.type === "refresh" && reread.refreshToken !== tokenState.refreshToken) {
         this.log.info("Detected concurrent token rotation, retrying");
-        return this.attemptRefresh(reread, session);
+        return this.attemptRefresh(reread, repoContext);
       }
 
       this.log.error("Anthropic refresh token rejected and no newer token was found", {

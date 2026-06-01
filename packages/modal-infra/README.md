@@ -72,7 +72,8 @@ Base image definition with:
 
 ```bash
 # Optional metered Claude API fallback. Set to an empty value when using
-# Claude subscription OAuth as the Anthropic model path.
+# Claude subscription OAuth as the Anthropic model path. This Modal secret is
+# separate from Settings > Secrets global provider API keys.
 modal secret create llm-api-keys ANTHROPIC_API_KEY=""
 
 # GitHub App credentials (for repo access)
@@ -160,7 +161,7 @@ Set via Modal secrets:
 
 | Variable | Secret | Description |
 |----------|--------|-------------|
-| `ANTHROPIC_API_KEY` | `llm-api-keys` | Optional metered Claude API fallback |
+| `ANTHROPIC_API_KEY` | `llm-api-keys` | Optional metered Claude API fallback, separate from Settings global secrets |
 | `GITHUB_APP_ID` | `github-app` | GitHub App ID for repo access |
 | `GITHUB_APP_PRIVATE_KEY` | `github-app` | GitHub App private key (PKCS#8) |
 | `GITHUB_APP_INSTALLATION_ID` | `github-app` | GitHub App installation ID |

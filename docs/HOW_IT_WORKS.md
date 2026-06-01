@@ -480,7 +480,7 @@ You can configure environment variables (API keys, credentials) at global or per
 - Visible to authenticated Settings users with values masked by default
 
 > **Daytona users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the default Claude
-> subscription path. Add `ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
+> subscription path. Add provider API keys only if you intentionally use metered API billing.
 
 See [Secrets Management](./SECRETS.md) for setup instructions.
 

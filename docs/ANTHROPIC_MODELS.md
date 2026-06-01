@@ -74,8 +74,9 @@ When starting a session, pick one of the supported Claude models from the model 
    persists the new value automatically.
 5. Tokens are resolved **repo-first, then global**: a repo-scoped token overrides the global one.
 
-If no OAuth refresh token is configured, the system can fall back to the `ANTHROPIC_API_KEY` secret
-for deployments that intentionally use metered API billing.
+If no OAuth refresh token is configured, control-plane classification can fall back to the
+`ANTHROPIC_API_KEY` secret. Add that key only for deployments that intentionally use metered API
+billing.
 
 ## Troubleshooting
 

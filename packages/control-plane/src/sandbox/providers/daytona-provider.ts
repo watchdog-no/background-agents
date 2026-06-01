@@ -21,7 +21,7 @@ import {
   type StopConfig,
   type StopResult,
 } from "../provider";
-import { ANTHROPIC_OAUTH_SANDBOX_FLAG, filterAnthropicOAuthSandboxUserEnvVars } from "../oauth-env";
+import { ANTHROPIC_OAUTH_SANDBOX_FLAG, filterSandboxCredentialEnvVars } from "../oauth-env";
 
 const log = createLogger("daytona-provider");
 
@@ -194,7 +194,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
   private async buildEnvVars(config: CreateSandboxConfig): Promise<Record<string, string>> {
     // Start with user env vars (repo secrets), then overlay system vars
     const envVars: Record<string, string> = {
-      ...(filterAnthropicOAuthSandboxUserEnvVars(config.userEnvVars) ?? {}),
+      ...(filterSandboxCredentialEnvVars(config.userEnvVars) ?? {}),
     };
 
     const sessionConfig: Record<string, string> = {

@@ -18,6 +18,7 @@ import { type Route, type RequestContext, parsePattern, json, error } from "./ro
 import { integrationSettingsRoutes } from "./routes/integration-settings";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
 import { reposRoutes } from "./routes/repos";
+import { classifyRoutes } from "./routes/classify";
 import { repoImageRoutes } from "./routes/repo-images";
 import { secretsRoutes } from "./routes/secrets";
 import { automationRoutes } from "./routes/automations";
@@ -296,6 +297,9 @@ const routes: Route[] = [
 
   // Repository management
   ...reposRoutes,
+
+  // Repo classification for bots (internal-auth)
+  ...classifyRoutes,
 
   // Secrets
   ...secretsRoutes,
