@@ -17,6 +17,7 @@ import {
   extractProviderAndModel,
   CLAUDE_CODE_IDENTITY,
   ANTHROPIC_OAUTH_BETA,
+  OPENAI_SUBSCRIPTION_MODEL_IDS,
 } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import { GlobalSecretsStore } from "../db/global-secrets";
@@ -32,23 +33,7 @@ const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENAI_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 
-/**
- * Models the OpenAI subscription (ChatGPT/Codex) backend serves. Mirrors the
- * sandbox `codex-auth-plugin.js` ALLOWED_MODELS — keep in sync. Anything outside
- * this set requires an OPENAI_API_KEY (API-platform SKUs like `*-nano`).
- */
-const OPENAI_SUBSCRIPTION_MODELS = new Set([
-  "gpt-5.1-codex-max",
-  "gpt-5.1-codex-mini",
-  "gpt-5.1-codex",
-  "gpt-5.2",
-  "gpt-5.2-codex",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-  "gpt-5.4",
-  "gpt-5.5",
-  "gpt-5.5-pro",
-]);
+const OPENAI_SUBSCRIPTION_MODELS = new Set<string>(OPENAI_SUBSCRIPTION_MODEL_IDS);
 
 /** JSON schema for the structured classification result. */
 const CLASSIFY_INPUT_SCHEMA = {

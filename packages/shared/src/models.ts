@@ -32,6 +32,26 @@ export const VALID_MODELS = [
 export type ValidModel = (typeof VALID_MODELS)[number];
 
 /**
+ * Bare OpenAI model IDs served by the ChatGPT/Codex subscription backend.
+ * A unit test keeps this in sync with the sandbox codex-auth-plugin.js
+ * ALLOWED_MODELS list; models outside this set require an OpenAI platform API key.
+ */
+export const OPENAI_SUBSCRIPTION_MODEL_IDS = [
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-codex",
+  "gpt-5.2",
+  "gpt-5.2-codex",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.4",
+  "gpt-5.5",
+  "gpt-5.5-pro",
+] as const;
+
+export type OpenAISubscriptionModelId = (typeof OPENAI_SUBSCRIPTION_MODEL_IDS)[number];
+
+/**
  * Default model to use when none specified or invalid.
  */
 export const DEFAULT_MODEL: ValidModel = "openai/gpt-5.5";
