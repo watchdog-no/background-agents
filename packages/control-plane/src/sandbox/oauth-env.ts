@@ -2,7 +2,11 @@ const ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY = "ANTHROPIC_OAUTH_REFRESH_TOKEN";
 
 export const ANTHROPIC_OAUTH_SANDBOX_FLAG = "ANTHROPIC_OAUTH_ENABLED";
 
-const ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = new Set([
+// Global-secret keys that are control-plane-only model credentials and must NOT
+// be injected into sandbox sessions: the Anthropic OAuth machinery, plus the
+// repo-classifier API keys (injecting these could make the coding agent use a
+// metered API key instead of its subscription OAuth).
+const SANDBOX_FILTERED_CREDENTIAL_KEYS = new Set([
   ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY,
   "ANTHROPIC_OAUTH_ACCESS_TOKEN",
   "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT",
@@ -12,6 +16,8 @@ const ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = new Set([
   "ANTHROPIC_OAUTH_TOKEN_URL",
   "ANTHROPIC_OAUTH_REDIRECT_URI",
   "ANTHROPIC_OAUTH_SCOPES",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
 ]);
 
 export interface PreparedSandboxOAuthEnv {
@@ -19,7 +25,7 @@ export interface PreparedSandboxOAuthEnv {
   anthropicOauthEnabled: boolean;
 }
 
-export function filterAnthropicOAuthSandboxUserEnvVars(
+export function filterSandboxCredentialEnvVars(
   userEnvVars: Record<string, string> | undefined
 ): Record<string, string> | undefined {
   if (!userEnvVars) {
@@ -28,7 +34,7 @@ export function filterAnthropicOAuthSandboxUserEnvVars(
 
   const filtered: Record<string, string> = {};
   for (const [key, value] of Object.entries(userEnvVars)) {
-    if (!ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS.has(key.toUpperCase())) {
+    if (!SANDBOX_FILTERED_CREDENTIAL_KEYS.has(key.toUpperCase())) {
       filtered[key] = value;
     }
   }
@@ -53,7 +59,7 @@ export function prepareSandboxOAuthEnv(
   }
 
   return {
-    userEnvVars: filterAnthropicOAuthSandboxUserEnvVars(userEnvVars),
+    userEnvVars: filterSandboxCredentialEnvVars(userEnvVars),
     anthropicOauthEnabled,
   };
 }

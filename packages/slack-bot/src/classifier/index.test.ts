@@ -1,25 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env, RepoConfig } from "../types";
 
-const {
-  mockMessagesCreate,
-  mockGetAvailableRepos,
-  mockBuildRepoDescriptions,
-  mockGetReposByChannel,
-} = vi.hoisted(() => ({
-  mockMessagesCreate: vi.fn(),
-  mockGetAvailableRepos: vi.fn(),
-  mockBuildRepoDescriptions: vi.fn(),
-  mockGetReposByChannel: vi.fn(),
-}));
-
-vi.mock("@anthropic-ai/sdk", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: {
-      create: mockMessagesCreate,
-    },
-  })),
-}));
+const { mockFetch, mockGetAvailableRepos, mockBuildRepoDescriptions, mockGetReposByChannel } =
+  vi.hoisted(() => ({
+    mockFetch: vi.fn(),
+    mockGetAvailableRepos: vi.fn(),
+    mockBuildRepoDescriptions: vi.fn(),
+    mockGetReposByChannel: vi.fn(),
+  }));
 
 vi.mock("./repos", () => ({
   getAvailableRepos: mockGetAvailableRepos,
@@ -57,9 +45,18 @@ const TEST_REPOS: RepoConfig[] = [
 ];
 
 const TEST_ENV = {
-  ANTHROPIC_API_KEY: "test-api-key",
-  CLASSIFICATION_MODEL: "claude-haiku-4-5",
-} as Env;
+  CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
+  INTERNAL_CALLBACK_SECRET: "test-secret",
+  CONTROL_PLANE: { fetch: mockFetch },
+} as unknown as Env;
+
+/** Build a JSON Response for the mocked control-plane fetch. */
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 describe("RepoClassifier", () => {
   beforeEach(() => {
@@ -69,22 +66,15 @@ describe("RepoClassifier", () => {
     mockBuildRepoDescriptions.mockResolvedValue("- acme/prod\n- acme/web");
   });
 
-  it("uses tool output when provider returns valid structured classification", async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [
-        {
-          type: "tool_use",
-          id: "toolu_1",
-          name: "classify_repository",
-          input: {
-            repoId: "acme/prod",
-            confidence: "high",
-            reasoning: "The message explicitly mentions prod.",
-            alternatives: [],
-          },
-        },
-      ],
-    });
+  it("uses the /classify endpoint output for a confident match", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({
+        repoId: "acme/prod",
+        confidence: "high",
+        reasoning: "The message explicitly mentions prod.",
+        alternatives: [],
+      })
+    );
 
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("please fix prod slack alerts", undefined, "trace-1");
@@ -92,77 +82,57 @@ describe("RepoClassifier", () => {
     expect(result.repo?.fullName).toBe("acme/prod");
     expect(result.confidence).toBe("high");
     expect(result.needsClarification).toBe(false);
-    expect(mockMessagesCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        temperature: 0,
-        tool_choice: expect.objectContaining({
-          type: "tool",
-          name: "classify_repository",
-        }),
-        tools: [expect.objectContaining({ name: "classify_repository" })],
-      })
-    );
+    expect(result.failureReason).toBeUndefined();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://internal/classify");
+    const sentBody = JSON.parse((init as RequestInit).body as string);
+    expect(sentBody.model).toBe("anthropic/claude-haiku-4-5");
+    expect(typeof sentBody.prompt).toBe("string");
   });
 
-  it("asks for clarification when tool payload is invalid", async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [
-        {
-          type: "tool_use",
-          id: "toolu_2",
-          name: "classify_repository",
-          input: {
-            repoId: "acme/prod",
-            confidence: "certain",
-            reasoning: "Totally sure",
-            alternatives: [],
-          },
-        },
-      ],
-    });
+  it("flags an infra failure (with reason) when the endpoint errors", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({ reason: "oauth_unauthorized", message: "rejected" }, 502)
+    );
+
+    const classifier = new RepoClassifier(TEST_ENV);
+    const result = await classifier.classify("frontend UI issue in web app");
+
+    expect(result.repo).toBeNull();
+    expect(result.needsClarification).toBe(true);
+    expect(result.failureReason).toBe("oauth_unauthorized");
+    expect(result.reasoning).toContain("classifier failed to run");
+    expect(result.alternatives).toHaveLength(2);
+  });
+
+  it("flags a failure when the endpoint returns an invalid payload", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({
+        repoId: "acme/prod",
+        confidence: "certain",
+        reasoning: "Totally sure",
+        alternatives: [],
+      })
+    );
 
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("please update prod deployment config");
 
     expect(result.repo).toBeNull();
-    expect(result.confidence).toBe("low");
     expect(result.needsClarification).toBe(true);
-    expect(result.reasoning).toContain("structured model output");
-    expect(result.alternatives).toHaveLength(2);
+    expect(result.failureReason).toBe("provider_error");
   });
 
-  it("asks for clarification when tool output is missing", async () => {
-    mockMessagesCreate.mockResolvedValue({
-      content: [
-        {
-          type: "text",
-          text: '{"repoId":"acme/web","confidence":"high","reasoning":"Mentions frontend and UI.","alternatives":[]}',
-        },
-      ],
-    });
+  it("skips the endpoint when a channel is mapped to a single repo", async () => {
+    mockGetReposByChannel.mockResolvedValue([TEST_REPOS[1]]);
 
     const classifier = new RepoClassifier(TEST_ENV);
-    const result = await classifier.classify("frontend UI issue in web app");
+    const result = await classifier.classify("anything", { channelId: "C123" });
 
-    expect(result.repo).toBeNull();
-    expect(result.confidence).toBe("low");
-    expect(result.needsClarification).toBe(true);
-    expect(result.reasoning).toContain("structured model output");
-    expect(result.alternatives).toHaveLength(2);
-  });
-
-  it("asks for clarification without calling provider when classifier key is missing", async () => {
-    const classifier = new RepoClassifier({
-      CLASSIFICATION_MODEL: "claude-haiku-4-5",
-    } as Env);
-
-    const result = await classifier.classify("frontend UI issue in web app");
-
-    expect(result.repo).toBeNull();
-    expect(result.confidence).toBe("low");
-    expect(result.needsClarification).toBe(true);
-    expect(result.reasoning).toContain("not configured");
-    expect(result.alternatives).toHaveLength(2);
-    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    expect(result.repo?.fullName).toBe("acme/web");
+    expect(result.needsClarification).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

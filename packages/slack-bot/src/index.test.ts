@@ -96,7 +96,6 @@ function makeEnv(): Env {
     CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret",
-    ANTHROPIC_API_KEY: "test-key",
     LOG_LEVEL: "error",
   };
 }

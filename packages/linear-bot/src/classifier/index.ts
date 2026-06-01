@@ -1,35 +1,20 @@
 /**
  * Repository classifier for the Linear bot.
- * Uses raw Anthropic API (no SDK) to classify which repo an issue belongs to.
+ *
+ * Delegates the LLM call to the control-plane `POST /classify` endpoint, which
+ * holds the subscription OAuth credentials (and any API-key fallback). The bot
+ * builds the prompt and matches the returned repo id against its own repo list.
  */
 
 import type { Env, RepoConfig, ClassificationResult } from "../types";
-import type { ConfidenceLevel } from "@open-inspect/shared";
+import type { ClassifyRawResult, ClassifyErrorResponse } from "@open-inspect/shared";
 import { getAvailableRepos, buildRepoDescriptions } from "./repos";
+import { buildInternalAuthHeaders } from "../utils/internal";
 import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
 
-const CLASSIFY_REPO_TOOL_NAME = "classify_repository";
-
-interface ClassifyToolInput {
-  repoId: string | null;
-  confidence: ConfidenceLevel;
-  reasoning: string;
-  alternatives: string[];
-}
-
-interface AnthropicContentBlock {
-  type: string;
-  id?: string;
-  name?: string;
-  input?: unknown;
-  text?: string;
-}
-
-interface AnthropicResponse {
-  content: AnthropicContentBlock[];
-}
+const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
 
 /**
  * Build classification prompt from Linear issue context.
@@ -81,79 +66,53 @@ Consider:
 5. Project name associations
 6. Label associations
 
-Return your decision by calling the ${CLASSIFY_REPO_TOOL_NAME} tool.`;
+Return your decision by calling the classify_repository tool.`;
+}
+
+/** Error thrown when the control-plane classifier endpoint fails to run. */
+class ClassifierEndpointError extends Error {
+  constructor(
+    readonly reason: ClassificationResult["failureReason"],
+    message: string
+  ) {
+    super(message);
+  }
 }
 
 /**
- * Call Anthropic API directly (no SDK — Workers can't use CJS imports).
+ * Run the classification via the control-plane `/classify` endpoint (which owns
+ * the OAuth / API-key credentials). Throws ClassifierEndpointError on failure.
  */
-async function callAnthropic(apiKey: string, prompt: string): Promise<ClassifyToolInput> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+async function callClassifyEndpoint(
+  env: Env,
+  prompt: string,
+  model: string,
+  traceId?: string
+): Promise<ClassifyRawResult> {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(await buildInternalAuthHeaders(env.INTERNAL_CALLBACK_SECRET, traceId)),
+  };
+  const response = await env.CONTROL_PLANE.fetch("https://internal/classify", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5",
-      max_tokens: 500,
-      temperature: 0,
-      tools: [
-        {
-          name: CLASSIFY_REPO_TOOL_NAME,
-          description: "Classify which repository an issue belongs to.",
-          input_schema: {
-            type: "object" as const,
-            properties: {
-              repoId: {
-                type: ["string", "null"],
-                description: "Repository ID (owner/name) if confident, otherwise null.",
-              },
-              confidence: {
-                type: "string",
-                enum: ["high", "medium", "low"],
-              },
-              reasoning: {
-                type: "string",
-                description: "Brief explanation.",
-              },
-              alternatives: {
-                type: "array",
-                items: { type: "string" },
-                description: "Alternative repo IDs when not confident.",
-              },
-            },
-            required: ["repoId", "confidence", "reasoning", "alternatives"],
-          },
-        },
-      ],
-      tool_choice: { type: "tool", name: CLASSIFY_REPO_TOOL_NAME },
-      messages: [{ role: "user", content: prompt }],
-    }),
+    headers,
+    body: JSON.stringify({ prompt, model }),
   });
 
   if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errText}`);
+    let reason: ClassificationResult["failureReason"] = "provider_error";
+    let message = `classify endpoint returned ${response.status}`;
+    try {
+      const errBody = (await response.json()) as ClassifyErrorResponse;
+      if (errBody.reason) reason = errBody.reason;
+      if (errBody.message) message = errBody.message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ClassifierEndpointError(reason, message);
   }
 
-  const data = (await response.json()) as AnthropicResponse;
-  const toolBlock = data.content.find(
-    (b) => b.type === "tool_use" && b.name === CLASSIFY_REPO_TOOL_NAME
-  );
-
-  if (!toolBlock) throw new Error("No tool_use block in Anthropic response");
-
-  const input = toolBlock.input as Record<string, unknown>;
-  return {
-    repoId: input.repoId === null ? null : typeof input.repoId === "string" ? input.repoId : null,
-    confidence: (input.confidence as ConfidenceLevel) || "low",
-    reasoning: String(input.reasoning || ""),
-    alternatives: Array.isArray(input.alternatives)
-      ? input.alternatives.filter((a): a is string => typeof a === "string")
-      : [],
-  };
+  return (await response.json()) as ClassifyRawResult;
 }
 
 /**
@@ -190,17 +149,6 @@ export async function classifyRepo(
     };
   }
 
-  if (!env.ANTHROPIC_API_KEY) {
-    return {
-      repo: null,
-      confidence: "low",
-      reasoning:
-        "Repository classifier is not configured. Please reply with the repository name (e.g., `owner/repo`).",
-      alternatives: repos.slice(0, 5),
-      needsClarification: true,
-    };
-  }
-
   try {
     const prompt = await buildClassificationPrompt(
       env,
@@ -214,7 +162,8 @@ export async function classifyRepo(
       traceId
     );
 
-    const result = await callAnthropic(env.ANTHROPIC_API_KEY, prompt);
+    const model = env.CLASSIFICATION_MODEL || DEFAULT_CLASSIFICATION_MODEL;
+    const result = await callClassifyEndpoint(env, prompt, model, traceId);
 
     let matchedRepo: RepoConfig | null = null;
     if (result.repoId) {
@@ -247,9 +196,13 @@ export async function classifyRepo(
         (result.confidence === "medium" && alternatives.length > 0),
     };
   } catch (e) {
+    const failureReason =
+      e instanceof ClassifierEndpointError ? (e.reason ?? "provider_error") : "provider_error";
+
     log.error("classifier.classify", {
       trace_id: traceId,
       outcome: "error",
+      failure_reason: failureReason,
       error: e instanceof Error ? e : new Error(String(e)),
     });
 
@@ -257,9 +210,10 @@ export async function classifyRepo(
       repo: null,
       confidence: "low",
       reasoning:
-        "Could not classify repository automatically. Please reply with the repository name (e.g., `owner/repo`).",
+        "The repository classifier failed to run, so I couldn't auto-detect the repository. Please reply with the repository name (e.g., `owner/repo`).",
       alternatives: repos.slice(0, 5),
       needsClarification: true,
+      failureReason,
     };
   }
 }

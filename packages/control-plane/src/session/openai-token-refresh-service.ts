@@ -17,6 +17,12 @@ type OpenAITokenState =
   | { type: "cached"; accessToken: string; expiresIn: number; accountId?: string }
   | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number };
 
+/**
+ * Identifies the repo a rotated secret should be written back to. Null for the
+ * global-only path (e.g. the repo classifier), which has no session/repo.
+ */
+type RepoWriteContext = { repoOwner: string; repoName: string };
+
 export type OpenAITokenRefreshResult =
   | { ok: true; accessToken: string; expiresIn?: number; accountId?: string }
   | { ok: false; status: number; error: string };
@@ -29,9 +35,28 @@ export class OpenAITokenRefreshService {
     private readonly log: Logger
   ) {}
 
+  /**
+   * Refresh using a session's repo-scoped secrets, falling back to global.
+   */
   async refresh(session: SessionRow): Promise<OpenAITokenRefreshResult> {
-    const readTokenState = () => this.readTokenState(session);
+    return this.refreshFromState(() => this.readTokenState(session), {
+      repoOwner: session.repo_owner,
+      repoName: session.repo_name,
+    });
+  }
 
+  /**
+   * Refresh using only the deployment-wide global secrets — no session/repo.
+   * Used by callers that run before a session exists (e.g. the repo classifier).
+   */
+  async refreshGlobal(): Promise<OpenAITokenRefreshResult> {
+    return this.refreshFromState(() => this.readGlobalTokenState(), null);
+  }
+
+  private async refreshFromState(
+    readTokenState: () => Promise<OpenAITokenState | null>,
+    repoContext: RepoWriteContext | null
+  ): Promise<OpenAITokenRefreshResult> {
     let tokenState: OpenAITokenState | null;
     try {
       tokenState = await readTokenState();
@@ -56,10 +81,10 @@ export class OpenAITokenRefreshService {
     }
 
     try {
-      return await this.attemptRefresh(tokenState, session);
+      return await this.attemptRefresh(tokenState, repoContext);
     } catch (e) {
       if (e instanceof OpenAITokenRefreshError && e.status === 401) {
-        return this.handleUnauthorizedRefresh(tokenState, readTokenState, session);
+        return this.handleUnauthorizedRefresh(tokenState, readTokenState, repoContext);
       }
 
       this.log.error("OpenAI token refresh failed", {
@@ -114,9 +139,16 @@ export class OpenAITokenRefreshService {
     return this.getTokenStateFromSecrets(globalSecrets, "global", repoId);
   }
 
+  private async readGlobalTokenState(): Promise<OpenAITokenState | null> {
+    const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
+    const globalSecrets = await globalStore.getDecryptedSecrets();
+    // repoId is unused for global-scoped writes; pass a sentinel.
+    return this.getTokenStateFromSecrets(globalSecrets, "global", 0);
+  }
+
   private async attemptRefresh(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    session: SessionRow
+    repoContext: RepoWriteContext | null
   ): Promise<OpenAITokenRefreshResult> {
     const tokens = await refreshOpenAIToken(tokenState.refreshToken);
     const accountId = extractOpenAIAccountId(tokens);
@@ -124,7 +156,7 @@ export class OpenAITokenRefreshService {
     let refreshTokenPersisted = false;
 
     try {
-      await this.writeRotatedRefreshToken(tokenState, session, tokens.refresh_token);
+      await this.writeRotatedRefreshToken(tokenState, repoContext, tokens.refresh_token);
       refreshTokenPersisted = true;
 
       this.log.info("OpenAI refresh token rotated", {
@@ -151,7 +183,7 @@ export class OpenAITokenRefreshService {
           cacheSecrets.OPENAI_OAUTH_ACCOUNT_ID = accountId;
         }
 
-        await this.writeTokenSecrets(tokenState, session, cacheSecrets);
+        await this.writeTokenSecrets(tokenState, repoContext, cacheSecrets);
 
         this.log.info("OpenAI access token cached", {
           source: tokenState.source,
@@ -177,12 +209,20 @@ export class OpenAITokenRefreshService {
 
   private async writeTokenSecrets(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    session: SessionRow,
+    repoContext: RepoWriteContext | null,
     secrets: Record<string, string>
   ): Promise<void> {
     if (tokenState.source === "repo") {
+      if (!repoContext) {
+        throw new Error("Repo context required to persist repo-scoped OpenAI secrets");
+      }
       const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-      await repoStore.setSecrets(tokenState.repoId, session.repo_owner, session.repo_name, secrets);
+      await repoStore.setSecrets(
+        tokenState.repoId,
+        repoContext.repoOwner,
+        repoContext.repoName,
+        secrets
+      );
     } else {
       const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
       await globalStore.setSecrets(secrets);
@@ -191,14 +231,14 @@ export class OpenAITokenRefreshService {
 
   private async writeRotatedRefreshToken(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    session: SessionRow,
+    repoContext: RepoWriteContext | null,
     refreshToken: string
   ): Promise<void> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS; attempt++) {
       try {
-        await this.writeTokenSecrets(tokenState, session, {
+        await this.writeTokenSecrets(tokenState, repoContext, {
           OPENAI_OAUTH_REFRESH_TOKEN: refreshToken,
         });
         return;
@@ -218,7 +258,7 @@ export class OpenAITokenRefreshService {
   private async handleUnauthorizedRefresh(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
     readTokenState: () => Promise<OpenAITokenState | null>,
-    session: SessionRow
+    repoContext: RepoWriteContext | null
   ): Promise<OpenAITokenRefreshResult> {
     this.log.warn("OpenAI refresh got 401, checking for concurrent rotation", {
       source: tokenState.source,
@@ -241,7 +281,7 @@ export class OpenAITokenRefreshService {
 
       if (reread?.type === "refresh" && reread.refreshToken !== tokenState.refreshToken) {
         this.log.info("Detected concurrent token rotation, retrying");
-        return this.attemptRefresh(reread, session);
+        return this.attemptRefresh(reread, repoContext);
       }
 
       this.log.error("OpenAI refresh token rejected and no newer token was found", {

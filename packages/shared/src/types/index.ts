@@ -540,6 +540,55 @@ export interface ClassificationResult {
   reasoning: string;
   alternatives?: RepoConfig[];
   needsClarification: boolean;
+  /**
+   * Set when the classifier itself failed to run (bad/missing credentials,
+   * provider error) rather than producing a genuine low-confidence result.
+   * Lets callers show a "flag this to the team" disclaimer instead of the
+   * neutral "couldn't determine" copy. Carries no secret detail.
+   */
+  failureReason?: ClassifyErrorReason;
+}
+
+/**
+ * Request body for the control-plane `POST /classify` endpoint. The caller
+ * supplies a fully-built prompt (including the available-repo descriptions) and
+ * the model to run it on as a `<provider>/<model>` string.
+ */
+export interface ClassifyRequest {
+  prompt: string;
+  model: string;
+}
+
+/**
+ * Raw structured output of the classifier model — returned verbatim by
+ * `POST /classify`. Callers map `repoId`/`alternatives` onto their own
+ * RepoConfig list and decide whether clarification is needed.
+ */
+export interface ClassifyRawResult {
+  repoId: string | null;
+  confidence: ConfidenceLevel;
+  reasoning: string;
+  alternatives: string[];
+}
+
+/**
+ * Machine-readable reason a classification request failed, so callers can tell
+ * an infrastructure failure (worth flagging to the team) apart from a genuine
+ * low-confidence result. Never carries secret/token detail.
+ */
+export type ClassifyErrorReason =
+  | "oauth_not_configured"
+  | "oauth_unauthorized"
+  | "model_not_entitled"
+  | "provider_error"
+  | "invalid_request";
+
+/**
+ * Error body returned by `POST /classify` on a non-2xx response.
+ */
+export interface ClassifyErrorResponse {
+  reason: ClassifyErrorReason;
+  message: string;
 }
 
 export interface EventResponse {

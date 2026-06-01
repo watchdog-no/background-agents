@@ -15,7 +15,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret",
-    ANTHROPIC_API_KEY: "test-key",
     INTERNAL_CALLBACK_SECRET: "callback-secret",
     LOG_LEVEL: "error",
     ...overrides,

@@ -237,7 +237,7 @@ variable "linear_api_key" {
 # =============================================================================
 
 variable "anthropic_api_key" {
-  description = "Optional Anthropic API key for metered Claude fallback and bot classifiers"
+  description = "Optional Anthropic API key passed to Modal as a metered-Claude fallback. The repo classifier reads its API keys from the D1 global secrets store, not this variable."
   type        = string
   sensitive   = true
   default     = ""

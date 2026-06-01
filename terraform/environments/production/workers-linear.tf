@@ -46,21 +46,18 @@ module "linear_bot_worker" {
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = "openai/gpt-5.5" },
+    # Repo classification runs via the control-plane /classify endpoint.
+    { name = "CLASSIFICATION_MODEL", value = "anthropic/claude-haiku-4-5" },
     { name = "LINEAR_CLIENT_ID", value = var.linear_client_id },
     { name = "WORKER_URL", value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" },
   ]
 
-  secrets = concat(
-    [
-      { name = "LINEAR_WEBHOOK_SECRET", value = var.linear_webhook_secret },
-      { name = "LINEAR_CLIENT_SECRET", value = var.linear_client_secret },
-      { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
-      { name = "LINEAR_API_KEY", value = var.linear_api_key },
-    ],
-    var.anthropic_api_key != "" ? [
-      { name = "ANTHROPIC_API_KEY", value = var.anthropic_api_key },
-    ] : []
-  )
+  secrets = [
+    { name = "LINEAR_WEBHOOK_SECRET", value = var.linear_webhook_secret },
+    { name = "LINEAR_CLIENT_SECRET", value = var.linear_client_secret },
+    { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
+    { name = "LINEAR_API_KEY", value = var.linear_api_key },
+  ]
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]

@@ -399,9 +399,15 @@ async function handleNewSession(
         .map((r) => `- **${r.fullName}**: ${r.description}`)
         .join("\n");
 
+      // Distinguish an infra failure (broken classifier creds) from a genuine
+      // low-confidence result so the team knows there's a bug to fix.
+      const header = classification.failureReason
+        ? `⚠️ The repository classifier failed to run (\`${classification.failureReason}\`) — this is a configuration issue, not a normal "couldn't decide". Please flag it to the team.`
+        : "I couldn't determine which repository to work on.";
+
       await emitAgentActivity(client, agentSessionId, {
         type: "elicitation",
-        body: `I couldn't determine which repository to work on.\n\n${classification.reasoning}\n\n**Available repositories:**\n${altList || "None available"}\n\nPlease reply with the repository name (e.g., \`owner/repo\`).`,
+        body: `${header}\n\n${classification.reasoning}\n\n**Available repositories:**\n${altList || "None available"}\n\nPlease reply with the repository name (e.g., \`owner/repo\`).`,
       });
 
       log.warn("agent_session.classification_uncertain", {

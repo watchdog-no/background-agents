@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ANTHROPIC_OAUTH_SANDBOX_FLAG,
-  filterAnthropicOAuthSandboxUserEnvVars,
+  filterSandboxCredentialEnvVars,
   prepareSandboxOAuthEnv,
 } from "./oauth-env";
 
@@ -69,12 +69,22 @@ describe("prepareSandboxOAuthEnv", () => {
   });
 });
 
-describe("filterAnthropicOAuthSandboxUserEnvVars", () => {
+describe("filterSandboxCredentialEnvVars", () => {
   it("strips Anthropic OAuth keys without deriving setup state", () => {
     expect(
-      filterAnthropicOAuthSandboxUserEnvVars({
+      filterSandboxCredentialEnvVars({
         ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
         ANTHROPIC_OAUTH_ENABLED: "true",
+        CUSTOM_VAR: "value",
+      })
+    ).toEqual({ CUSTOM_VAR: "value" });
+  });
+
+  it("strips classifier model API keys so they never reach sandboxes", () => {
+    expect(
+      filterSandboxCredentialEnvVars({
+        ANTHROPIC_API_KEY: "sk-ant-classifier",
+        OPENAI_API_KEY: "sk-openai-classifier",
         CUSTOM_VAR: "value",
       })
     ).toEqual({ CUSTOM_VAR: "value" });
