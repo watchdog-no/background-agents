@@ -2,9 +2,7 @@ const ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY = "ANTHROPIC_OAUTH_REFRESH_TOKEN";
 
 export const ANTHROPIC_OAUTH_SANDBOX_FLAG = "ANTHROPIC_OAUTH_ENABLED";
 
-// Global-secret keys that must not be injected into sandbox sessions: OAuth
-// token/config material, plus provider API keys that coding agents could
-// auto-detect and use instead of the intended subscription OAuth path.
+// OAuth token/config material must not be injected into sandbox sessions.
 const SANDBOX_FILTERED_CREDENTIAL_KEYS = new Set([
   ANTHROPIC_OAUTH_REFRESH_TOKEN_KEY,
   "ANTHROPIC_OAUTH_ACCESS_TOKEN",
@@ -15,8 +13,6 @@ const SANDBOX_FILTERED_CREDENTIAL_KEYS = new Set([
   "ANTHROPIC_OAUTH_TOKEN_URL",
   "ANTHROPIC_OAUTH_REDIRECT_URI",
   "ANTHROPIC_OAUTH_SCOPES",
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
 ]);
 
 export interface PreparedSandboxOAuthEnv {

@@ -80,13 +80,17 @@ describe("filterSandboxCredentialEnvVars", () => {
     ).toEqual({ CUSTOM_VAR: "value" });
   });
 
-  it("strips provider API keys so sandbox agents cannot bypass subscription OAuth", () => {
+  it("preserves provider API keys for repo apps and tests", () => {
     expect(
       filterSandboxCredentialEnvVars({
         ANTHROPIC_API_KEY: "sk-ant-classifier",
         OPENAI_API_KEY: "sk-openai-classifier",
         CUSTOM_VAR: "value",
       })
-    ).toEqual({ CUSTOM_VAR: "value" });
+    ).toEqual({
+      ANTHROPIC_API_KEY: "sk-ant-classifier",
+      OPENAI_API_KEY: "sk-openai-classifier",
+      CUSTOM_VAR: "value",
+    });
   });
 });

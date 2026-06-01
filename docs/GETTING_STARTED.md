@@ -178,8 +178,8 @@ Create an R2 API Token:
 The control plane calls the Daytona REST API directly — no shim service to deploy.
 
 > **Important**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a
-> **global secret** in Settings > Secrets after deploying. Global provider API keys are used only by
-> control-plane classification and are not injected into sandbox agents. See
+> **global secret** in Settings > Secrets after deploying. Add provider API keys only if you
+> intentionally want those standard SDK credentials available to sandbox code. See
 > [Secrets Management](SECRETS.md) for details.
 
 ### Anthropic

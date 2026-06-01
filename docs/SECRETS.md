@@ -15,8 +15,7 @@ in the UI.
 4. Click **Add secret**, enter a key and value, then click **Save**
 
 That's it — the next sandbox you launch will have the secret available as an environment variable,
-unless the key is a control-plane-only credential such as OAuth token material or provider API keys
-reserved for control-plane classification.
+unless the key is control-plane-only OAuth token material.
 
 ---
 
@@ -33,8 +32,8 @@ If you override a global key at the repo level, the global entry shows "(overrid
 
 ### When to use global secrets
 
-Use global secrets for keys that apply regardless of which repository a session runs against,
-including control-plane credentials. The most common examples:
+Use global secrets for keys that apply regardless of which repository a session runs against. The
+most common examples:
 
 | Key                             | Description                                                           |
 | ------------------------------- | --------------------------------------------------------------------- |
@@ -45,8 +44,8 @@ including control-plane credentials. The most common examples:
 | `OPENAI_API_KEY`                | Optional metered OpenAI API key for control-plane classification.     |
 
 > **Daytona users**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN`
-> as a global secret after deploying. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are not injected into
-> sandboxes, so coding agents keep using subscription OAuth instead of metered API auth.
+> as a global secret after deploying. Add provider API keys only if you intentionally want those
+> standard SDK credentials available to sandbox code.
 
 ### When to use repository secrets
 
@@ -112,9 +111,9 @@ If you try to save a reserved key, the UI will show a validation error.
 - Secrets are encrypted with **AES-256-GCM** before being stored in the database
 - Values are returned only to authenticated Settings users and are masked by default in the UI
 - Most secrets are decrypted at sandbox creation time and injected as environment variables
-- Anthropic OAuth refresh tokens, cached access-token secrets, and provider API keys used for
-  classification are control-plane-only; sandboxes receive only a non-secret enabled flag and
-  short-lived access tokens through the internal refresh endpoint
+- Anthropic OAuth refresh tokens and cached access-token secrets are control-plane-only; sandboxes
+  receive only a non-secret enabled flag and short-lived access tokens through the internal refresh
+  endpoint
 - System variables (set by the control plane) always take precedence over user-defined secrets
 
 ---
@@ -139,13 +138,13 @@ If you try to save a reserved key, the UI will show a validation error.
 ### "Model not found" errors (Daytona provider)
 
 If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
-confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Global
-`ANTHROPIC_API_KEY` is intentionally not injected into sandbox sessions.
+confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
+`ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
 
 ### Secret not appearing in sandbox
 
 1. Verify the secret is saved under the correct scope (global or the specific repo)
-2. Check that the key isn't in the reserved keys list above or a control-plane-only key
+2. Check that the key isn't in the reserved keys list above or a control-plane-only OAuth key
 3. New secrets only apply to **new** sandboxes — restart your session to pick up changes
 
 ### Key name was auto-changed
