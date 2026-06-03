@@ -29,7 +29,7 @@ from sandbox_runtime.constants import (
 from sandbox_runtime.log_config import get_logger
 from sandbox_runtime.types import SandboxStatus, SessionConfig
 
-from ..app import app, llm_secrets
+from ..app import app
 from ..images.base import base_image
 
 log = get_logger("manager")
@@ -410,7 +410,7 @@ class SandboxManager:
         create_kwargs: dict = {
             "image": image,
             "app": app,
-            "secrets": [llm_secrets],
+            "secrets": [],
             "timeout": config.timeout_seconds,
             "workdir": "/workspace",
             "env": env_vars,
@@ -741,7 +741,7 @@ class SandboxManager:
         create_kwargs: dict = {
             "image": image,
             "app": app,
-            "secrets": [llm_secrets],
+            "secrets": [],
             "timeout": timeout_seconds,
             "workdir": "/workspace",
             "env": env_vars,
