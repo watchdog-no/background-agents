@@ -236,13 +236,6 @@ variable "linear_api_key" {
 # API Keys
 # =============================================================================
 
-variable "anthropic_api_key" {
-  description = "Optional Anthropic API key passed to Modal as a metered-Claude fallback. The repo classifier reads its API keys from the D1 global secrets store, not this variable."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "anthropic_oauth_client_id" {
   description = "Optional Claude subscription OAuth public client ID override"
   type        = string

@@ -199,7 +199,6 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_anthropic_oauth_client_id: ${{ secrets.ANTHROPIC_OAUTH_CLIENT_ID }}
           TF_VAR_anthropic_oauth_token_url: ${{ secrets.ANTHROPIC_OAUTH_TOKEN_URL }}
           TF_VAR_token_encryption_key: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
@@ -335,7 +334,6 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_anthropic_oauth_client_id: ${{ secrets.ANTHROPIC_OAUTH_CLIENT_ID }}
           TF_VAR_anthropic_oauth_token_url: ${{ secrets.ANTHROPIC_OAUTH_TOKEN_URL }}
           TF_VAR_token_encryption_key: ${{ secrets.TOKEN_ENCRYPTION_KEY }}

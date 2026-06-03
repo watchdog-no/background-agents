@@ -194,9 +194,6 @@ GH_APP_INSTALLATION_ID
 SLACK_BOT_TOKEN
 SLACK_SIGNING_SECRET
 
-# API Keys (optional Modal metered Claude fallback)
-ANTHROPIC_API_KEY
-
 # Anthropic OAuth overrides (optional; public-client config)
 ANTHROPIC_OAUTH_CLIENT_ID
 ANTHROPIC_OAUTH_TOKEN_URL

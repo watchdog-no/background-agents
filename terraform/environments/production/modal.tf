@@ -37,12 +37,6 @@ module "modal_app" {
 
   secrets = [
     {
-      name = "llm-api-keys"
-      values = {
-        ANTHROPIC_API_KEY = var.anthropic_api_key
-      }
-    },
-    {
       name = "github-app"
       values = {
         GITHUB_APP_ID              = var.github_app_id
