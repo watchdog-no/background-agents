@@ -339,15 +339,16 @@ class TestAnthropicAuthPluginSetup:
             }
 
             assert(
-              upstreamHeaders[0]["anthropic-beta"] === "tools-2025-01-01, oauth-2025-04-20",
+              upstreamHeaders[0]["anthropic-beta"] ===
+                "tools-2025-01-01, oauth-2025-04-20, claude-code-20250219",
               "Headers beta value was not appended"
             );
             assert(
-              upstreamHeaders[1]["anthropic-beta"] === "oauth-2025-04-20",
+              upstreamHeaders[1]["anthropic-beta"] === "oauth-2025-04-20, claude-code-20250219",
               "array beta value was duplicated or clobbered"
             );
             assert(
-              upstreamHeaders[2]["anthropic-beta"] === "oauth-2025-04-20",
+              upstreamHeaders[2]["anthropic-beta"] === "oauth-2025-04-20, claude-code-20250219",
               "plain-object beta value was not set"
             );
 

@@ -13,6 +13,7 @@
 const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key";
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
 const ANTHROPIC_BETA_OAUTH = "oauth-2025-04-20";
+const ANTHROPIC_BETA_CLAUDE_CODE = "claude-code-20250219";
 
 // Claude Pro/Max OAuth tokens are only authorized for Claude Code. Anthropic
 // rejects requests whose first system block is not this exact identity, and the
@@ -265,7 +266,7 @@ export const AnthropicAuthProxy = async (input) => {
             // Set real authorization
             headers.set("authorization", `Bearer ${accessToken}`);
 
-            // Append the OAuth beta flag without clobbering any existing value.
+            // Append the Claude Code OAuth beta flags without clobbering any existing value.
             const existingBeta = headers.get("anthropic-beta");
             const betas = existingBeta
               ? existingBeta
@@ -274,6 +275,9 @@ export const AnthropicAuthProxy = async (input) => {
                   .filter(Boolean)
               : [];
             if (!betas.includes(ANTHROPIC_BETA_OAUTH)) betas.push(ANTHROPIC_BETA_OAUTH);
+            if (!betas.includes(ANTHROPIC_BETA_CLAUDE_CODE)) {
+              betas.push(ANTHROPIC_BETA_CLAUDE_CODE);
+            }
             headers.set("anthropic-beta", betas.join(", "));
 
             // Anthropic OAuth (Pro/Max) only authorises Claude Code requests, so
