@@ -1,3 +1,3 @@
 """Sandbox image version constants."""
 
-CACHE_BUSTER = "v60-opencode-1-15-13"
+CACHE_BUSTER = "v61-anthropic-claude-code-oauth"
