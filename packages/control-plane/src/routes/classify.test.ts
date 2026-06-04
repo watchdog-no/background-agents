@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CLAUDE_CODE_IDENTITY, ANTHROPIC_OAUTH_BETA } from "@open-inspect/shared";
+import {
+  ANTHROPIC_OAUTH_BETA,
+  CLAUDE_CODE_AGENT_SDK_IDENTITY,
+  CLAUDE_CODE_BILLING_HEADER,
+  CLAUDE_CODE_MAX_TOKENS,
+  CLAUDE_CODE_USER_AGENT,
+} from "@open-inspect/shared";
 import type { Env } from "../types";
 import type { RequestContext } from "./shared";
 
@@ -96,6 +102,20 @@ function classify(model: string, env: Env = ENV) {
   );
 }
 
+function expectAnthropicOAuthEnvelope(call: ReturnType<typeof lastFetch>) {
+  expect(call.headers["Authorization"]).toBe("Bearer oauth-token");
+  expect(call.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
+  expect(call.headers["anthropic-beta"]).toContain("claude-code-20250219");
+  expect(call.headers["anthropic-beta"]).toContain("extended-cache-ttl-2025-04-11");
+  expect(call.headers["anthropic-dangerous-direct-browser-access"]).toBe("true");
+  expect(call.headers["user-agent"]).toBe(CLAUDE_CODE_USER_AGENT);
+  expect(call.headers["x-app"]).toBe("cli");
+  expect(call.body.max_tokens).toBe(CLAUDE_CODE_MAX_TOKENS);
+  const system = call.body.system as Array<{ type: string; text: string }>;
+  expect(system[0].text).toBe(CLAUDE_CODE_BILLING_HEADER);
+  expect(system[1].text).toBe(CLAUDE_CODE_AGENT_SDK_IDENTITY);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("fetch", mockFetch);
@@ -119,7 +139,7 @@ describe("POST /classify", () => {
     expect(mockAnthropicRefreshGlobal).not.toHaveBeenCalled();
   });
 
-  it("uses Anthropic OAuth (and injects the Claude Code identity) when no API key is stored", async () => {
+  it("uses Anthropic OAuth with the Claude Code envelope when no API key is stored", async () => {
     mockAnthropicRefreshGlobal.mockResolvedValue({ ok: true, accessToken: "oauth-token" });
     mockFetch.mockResolvedValue(anthropicToolResponse());
 
@@ -127,11 +147,7 @@ describe("POST /classify", () => {
 
     expect(res.status).toBe(200);
     const call = lastFetch();
-    expect(call.headers["Authorization"]).toBe("Bearer oauth-token");
-    expect(call.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
-    expect(call.headers["anthropic-beta"]).toContain("claude-code-20250219");
-    const system = call.body.system as Array<{ type: string; text: string }>;
-    expect(system[0].text).toBe(CLAUDE_CODE_IDENTITY);
+    expectAnthropicOAuthEnvelope(call);
   });
 
   it("falls back to Anthropic OAuth when a stored API key is rejected", async () => {
@@ -147,10 +163,7 @@ describe("POST /classify", () => {
     expect(await res.json()).toEqual(VALID_RESULT);
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const fallback = lastFetch();
-    expect(fallback.headers["Authorization"]).toBe("Bearer oauth-token");
-    expect(fallback.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
-    expect(fallback.headers["anthropic-beta"]).toContain("claude-code-20250219");
-    expect((fallback.body.system as Array<{ text: string }>)[0].text).toBe(CLAUDE_CODE_IDENTITY);
+    expectAnthropicOAuthEnvelope(fallback);
   });
 
   it("uses an OpenAI API key from global secrets against the platform Responses API", async () => {
