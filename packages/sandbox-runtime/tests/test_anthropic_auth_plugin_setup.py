@@ -333,22 +333,44 @@ class TestAnthropicAuthPluginSetup:
             assert(refreshCalls === 1, `expected one refresh call, got ${refreshCalls}`);
             assert(upstreamHeaders.length === 3, "expected three upstream calls");
 
+            const requiredBetas = [
+              "oauth-2025-04-20",
+              "claude-code-20250219",
+              "interleaved-thinking-2025-05-14",
+              "thinking-token-count-2026-05-13",
+              "context-management-2025-06-27",
+              "prompt-caching-scope-2026-01-05",
+              "mid-conversation-system-2026-04-07",
+              "advisor-tool-2026-03-01",
+              "effort-2025-11-24",
+              "extended-cache-ttl-2025-04-11",
+            ];
+
             for (const headers of upstreamHeaders) {
               assert(headers.authorization === "Bearer oauth-access", "authorization not replaced");
               assert(!("x-api-key" in headers), "x-api-key leaked upstream");
+              assert(headers["anthropic-dangerous-direct-browser-access"] === "true", "browser access marker missing");
+              assert(headers["anthropic-version"] === "2023-06-01", "anthropic-version missing");
+              assert(headers["user-agent"] === "claude-cli/2.1.162 (external, sdk-cli)", "Claude Code user-agent missing");
+              assert(headers["x-app"] === "cli", "Claude Code app marker missing");
+              assert(headers["x-claude-code-session-id"] === "sess-1", "Claude Code session id missing");
+
+              const betas = headers["anthropic-beta"].split(",").map((b) => b.trim());
+              for (const beta of requiredBetas) {
+                assert(betas.includes(beta), `missing beta ${beta}`);
+              }
             }
 
             assert(
-              upstreamHeaders[0]["anthropic-beta"] ===
-                "tools-2025-01-01, oauth-2025-04-20, claude-code-20250219",
-              "Headers beta value was not appended"
+              upstreamHeaders[0]["anthropic-beta"].startsWith("tools-2025-01-01, "),
+              "existing beta value was not preserved first"
             );
             assert(
-              upstreamHeaders[1]["anthropic-beta"] === "oauth-2025-04-20, claude-code-20250219",
+              upstreamHeaders[1]["anthropic-beta"].split("oauth-2025-04-20").length === 2,
               "array beta value was duplicated or clobbered"
             );
             assert(
-              upstreamHeaders[2]["anthropic-beta"] === "oauth-2025-04-20, claude-code-20250219",
+              upstreamHeaders[2]["anthropic-beta"].startsWith("claude-code-20250219"),
               "plain-object beta value was not set"
             );
 
@@ -364,8 +386,8 @@ class TestAnthropicAuthPluginSetup:
 
         assert result.stdout.strip() == "ok"
 
-    def test_fetch_hook_rewrites_request_and_stream_bodies(self):
-        """Claude Code identity rewrite must handle non-string fetch body shapes."""
+    def test_fetch_hook_wraps_request_and_stream_bodies(self):
+        """Claude Code SDK envelope rewrite must handle non-string fetch body shapes."""
         plugin_path = (
             Path(__file__).parents[1]
             / "src"
@@ -459,18 +481,150 @@ class TestAnthropicAuthPluginSetup:
             );
             for (const sentBody of upstreamBodies) {
               assert(
-                sentBody.system[0].text === "You are Claude Code, Anthropic's official CLI for Claude.",
-                "Claude Code identity was not prepended"
+                sentBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.162.518;"),
+                "Claude Code billing header was not prepended"
               );
               assert(
-                sentBody.system[1].text === "You are running through the OpenCode harness.",
-                "OpenCode identity was not rewritten"
+                sentBody.system[1].text === "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+                "Claude Code SDK identity was not prepended"
               );
               assert(
-                sentBody.system[2].text === "Keep existing tool instructions.",
+                sentBody.system[2].text === "You are OpenCode, the best coding agent on the planet.",
+                "OpenCode system prompt was not preserved"
+              );
+              assert(
+                sentBody.system[3].text === "Keep existing tool instructions.",
                 "existing system instructions were not preserved"
               );
+              assert(sentBody.max_tokens === 64000, "Claude Code max_tokens cap was not applied");
             }
+
+            console.log("ok");
+        """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.strip() == "ok"
+
+    def test_fetch_hook_preserves_opencode_shape_under_claude_code_envelope(self):
+        """OpenCode prompt and tools should stay intact under the Claude Code SDK envelope."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = """
+            import { AnthropicAuthProxy } from PLUGIN_URI;
+
+            const assert = (condition, message) => {
+              if (!condition) throw new Error(message);
+            };
+
+            process.env.CONTROL_PLANE_URL = "https://cp.example.com";
+            process.env.SANDBOX_AUTH_TOKEN = "sandbox-token";
+            process.env.SESSION_CONFIG = JSON.stringify({ sessionId: "sess-1" });
+
+            let upstreamBody;
+
+            globalThis.fetch = async (requestInput, init = {}) => {
+              const url =
+                requestInput instanceof URL
+                  ? requestInput.href
+                  : typeof requestInput === "string"
+                    ? requestInput
+                    : requestInput.url;
+
+              if (url === "https://cp.example.com/sessions/sess-1/anthropic-token-refresh") {
+                return new Response(
+                  JSON.stringify({ access_token: "oauth-access", expires_in: 3600 }),
+                  { status: 200, headers: { "content-type": "application/json" } }
+                );
+              }
+
+              upstreamBody = JSON.parse(init.body);
+              return new Response("ok", { status: 200 });
+            };
+
+            const plugin = await AnthropicAuthProxy({
+              client: { auth: { set: async () => {} } },
+            });
+            const loader = await plugin.auth.loader(
+              async () => ({ type: "oauth", refresh: "sentinel", access: "", expires: 0 }),
+              { models: { "claude-test": { cost: {} } } }
+            );
+
+            const system = `You are OpenCode, the best coding agent on the planet.
+
+# Task Management
+You have access to the TodoWrite tools.
+# Doing tasks
+- Use the TodoWrite tool to plan the task if required
+
+# Tool usage policy
+- Prefer to use the Task tool.
+- Use WebFetch on redirects.
+# Code References
+Use file_path:line_number.
+
+Here is some useful information about the environment you are running in:
+<env>
+  Working directory: /workspace/repo
+</env>
+Instructions from: /workspace/repo/AGENTS.md
+# AGENTS.md
+Repo-specific instructions that must not stay in the system prompt.`;
+
+            await loader.fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                model: "claude-opus-4-8",
+                max_tokens: 32000,
+                system: [{ type: "text", text: system }],
+                messages: [{ role: "user", content: "Reply OK" }],
+                tools: [
+                  { name: "read", description: "Read a file", input_schema: { type: "object" } },
+                  {
+                    name: "todowrite",
+                    description: "Create and maintain a structured task list.",
+                    input_schema: { type: "object" },
+                  },
+                ],
+                tool_choice: { type: "auto" },
+                stream: true,
+              }),
+            });
+
+            assert(upstreamBody, "upstream body was not captured");
+            assert(
+              upstreamBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.162.518;"),
+              "Claude Code billing header was not prepended"
+            );
+            assert(
+              upstreamBody.system[1].text === "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+              "Claude Code SDK identity was not prepended"
+            );
+            assert(
+              upstreamBody.system[2].text.startsWith("You are OpenCode, the best coding agent on the planet."),
+              "OpenCode system prompt was not preserved"
+            );
+            assert(upstreamBody.system[2].text.includes("# Task Management"), "task block was stripped");
+            assert(upstreamBody.system[2].text.includes("# Tool usage policy"), "tool policy was stripped");
+            assert(upstreamBody.system[2].text.includes("<env>"), "env block was stripped");
+            assert(upstreamBody.system[2].text.includes("Instructions from:"), "repo tail was stripped");
+            assert(upstreamBody.system[2].text.includes("TodoWrite"), "TodoWrite text was stripped");
+            assert(upstreamBody.tools.length === 2, "unexpected tool count");
+            assert(upstreamBody.tools.some((tool) => tool.name === "read"), "read tool was not preserved");
+            assert(upstreamBody.tools.some((tool) => tool.name === "todowrite"), "todowrite tool was stripped");
+            assert(upstreamBody.tool_choice.type === "auto", "tool choice was not preserved");
+            assert(upstreamBody.max_tokens === 64000, "Claude Code max_tokens cap was not applied");
 
             console.log("ok");
         """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))

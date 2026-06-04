@@ -1,3 +1,3 @@
 """Sandbox image version constants."""
 
-CACHE_BUSTER = "v62-anthropic-oauth-body-rewrite"
+CACHE_BUSTER = "v64-anthropic-oauth-claude-code-envelope"

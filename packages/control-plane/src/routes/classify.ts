@@ -16,7 +16,10 @@ import type { Env } from "../types";
 import type { ClassifyRawResult, ClassifyErrorReason, ConfidenceLevel } from "@open-inspect/shared";
 import {
   extractProviderAndModel,
-  CLAUDE_CODE_IDENTITY,
+  CLAUDE_CODE_AGENT_SDK_IDENTITY,
+  CLAUDE_CODE_BILLING_HEADER,
+  CLAUDE_CODE_MAX_TOKENS,
+  CLAUDE_CODE_USER_AGENT,
   ANTHROPIC_OAUTH_BETA,
 } from "@open-inspect/shared";
 import { createLogger } from "../logger";
@@ -119,9 +122,14 @@ async function anthropicRequest(
   } else {
     headers["Authorization"] = `Bearer ${cred.oauthToken}`;
     headers["anthropic-beta"] = ANTHROPIC_OAUTH_BETA;
-    // OAuth tokens are only authorized for Claude Code requests: the first
-    // system block must be the Claude Code identity.
-    body.system = [{ type: "text", text: CLAUDE_CODE_IDENTITY }];
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+    headers["user-agent"] = CLAUDE_CODE_USER_AGENT;
+    headers["x-app"] = "cli";
+    body.max_tokens = CLAUDE_CODE_MAX_TOKENS;
+    body.system = [
+      { type: "text", text: CLAUDE_CODE_BILLING_HEADER },
+      { type: "text", text: CLAUDE_CODE_AGENT_SDK_IDENTITY },
+    ];
   }
 
   const response = await fetch(ANTHROPIC_MESSAGES_URL, {
