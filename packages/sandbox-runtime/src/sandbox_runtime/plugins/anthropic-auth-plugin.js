@@ -49,7 +49,7 @@ function rewriteOpenCodeIdentity(text) {
  * whose first block is already the identity is left untouched so we never add a
  * duplicate or shift cache breakpoints needlessly.
  */
-function ensureClaudeCodeSystemPrompt(body) {
+function rewriteClaudeCodeSystemPromptText(body) {
   if (typeof body !== "string") return body;
   let parsed;
   try {
@@ -75,6 +75,37 @@ function ensureClaudeCodeSystemPrompt(body) {
   }
 
   return JSON.stringify(parsed);
+}
+
+async function bodyToText(body) {
+  if (typeof body === "string") return body;
+  if (body instanceof ArrayBuffer) return new TextDecoder().decode(body);
+  if (ArrayBuffer.isView(body)) {
+    return new TextDecoder().decode(
+      body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)
+    );
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) return body.text();
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
+    return body.toString();
+  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
+    return new Response(body).text();
+  }
+  return null;
+}
+
+async function ensureClaudeCodeSystemPromptBody(requestInput, init) {
+  if (init && Object.hasOwn(init, "body")) {
+    if (init.body === undefined || init.body === null) return init.body;
+    const text = await bodyToText(init.body);
+    return text === null ? init.body : rewriteClaudeCodeSystemPromptText(text);
+  }
+
+  if (typeof Request !== "undefined" && requestInput instanceof Request && requestInput.body) {
+    return rewriteClaudeCodeSystemPromptText(await requestInput.clone().text());
+  }
+
+  return undefined;
 }
 
 // In-memory token cache (reset on sandbox restart - fresh refresh via bridge)
@@ -244,8 +275,12 @@ export const AnthropicAuthProxy = async (input) => {
             // Ensure we have a valid access token
             const { accessToken } = await ensureAccessToken(getAuth, setAuth);
 
-            // Build headers
-            const headers = new Headers();
+            // Build headers. If the caller passed a Request, preserve its
+            // headers before applying any init.headers overrides.
+            const headers =
+              typeof Request !== "undefined" && requestInput instanceof Request
+                ? new Headers(requestInput.headers)
+                : new Headers();
             if (init?.headers) {
               if (init.headers instanceof Headers) {
                 init.headers.forEach((value, key) => headers.set(key, value));
@@ -284,8 +319,11 @@ export const AnthropicAuthProxy = async (input) => {
             // the first system block must be the Claude Code identity or the call
             // is rejected with a misleading 429. No URL rewrite — OAuth uses the
             // standard Messages API.
-            const body = ensureClaudeCodeSystemPrompt(init?.body);
-            return fetch(requestInput, { ...init, headers, body });
+            const body = await ensureClaudeCodeSystemPromptBody(requestInput, init);
+            const nextInit = { ...init, headers };
+            headers.delete("content-length");
+            if (body !== undefined) nextInit.body = body;
+            return fetch(requestInput, nextInit);
           },
         };
       },
