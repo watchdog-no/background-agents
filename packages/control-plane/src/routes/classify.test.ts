@@ -129,6 +129,7 @@ describe("POST /classify", () => {
     const call = lastFetch();
     expect(call.headers["Authorization"]).toBe("Bearer oauth-token");
     expect(call.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
+    expect(call.headers["anthropic-beta"]).toContain("claude-code-20250219");
     const system = call.body.system as Array<{ type: string; text: string }>;
     expect(system[0].text).toBe(CLAUDE_CODE_IDENTITY);
   });
@@ -147,6 +148,8 @@ describe("POST /classify", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const fallback = lastFetch();
     expect(fallback.headers["Authorization"]).toBe("Bearer oauth-token");
+    expect(fallback.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
+    expect(fallback.headers["anthropic-beta"]).toContain("claude-code-20250219");
     expect((fallback.body.system as Array<{ text: string }>)[0].text).toBe(CLAUDE_CODE_IDENTITY);
   });
 
