@@ -364,6 +364,126 @@ class TestAnthropicAuthPluginSetup:
 
         assert result.stdout.strip() == "ok"
 
+    def test_fetch_hook_rewrites_request_and_stream_bodies(self):
+        """Claude Code identity rewrite must handle non-string fetch body shapes."""
+        plugin_path = (
+            Path(__file__).parents[1]
+            / "src"
+            / "sandbox_runtime"
+            / "plugins"
+            / "anthropic-auth-plugin.js"
+        )
+        script = """
+            import { AnthropicAuthProxy } from PLUGIN_URI;
+
+            const assert = (condition, message) => {
+              if (!condition) throw new Error(message);
+            };
+
+            process.env.CONTROL_PLANE_URL = "https://cp.example.com";
+            process.env.SANDBOX_AUTH_TOKEN = "sandbox-token";
+            process.env.SESSION_CONFIG = JSON.stringify({ sessionId: "sess-1" });
+
+            const upstreamBodies = [];
+            const upstreamHeaders = [];
+
+            globalThis.fetch = async (requestInput, init = {}) => {
+              const url =
+                requestInput instanceof URL
+                  ? requestInput.href
+                  : typeof requestInput === "string"
+                    ? requestInput
+                    : requestInput.url;
+
+              if (url === "https://cp.example.com/sessions/sess-1/anthropic-token-refresh") {
+                return new Response(
+                  JSON.stringify({ access_token: "oauth-access", expires_in: 3600 }),
+                  { status: 200, headers: { "content-type": "application/json" } }
+                );
+              }
+
+              upstreamBodies.push(JSON.parse(init.body));
+              upstreamHeaders.push(Object.fromEntries(new Headers(init.headers).entries()));
+              return new Response("ok", { status: 200 });
+            };
+
+            const plugin = await AnthropicAuthProxy({
+              client: { auth: { set: async () => {} } },
+            });
+            const loader = await plugin.auth.loader(
+              async () => ({ type: "oauth", refresh: "sentinel", access: "", expires: 0 }),
+              { models: { "claude-test": { cost: {} } } }
+            );
+
+            const body = JSON.stringify({
+              model: "claude-opus-4-8",
+              max_tokens: 1,
+              system: [
+                { type: "text", text: "You are OpenCode, the best coding agent on the planet." },
+                { type: "text", text: "Keep existing tool instructions." },
+              ],
+              messages: [{ role: "user", content: "Reply OK" }],
+            });
+
+            await loader.fetch(
+              new Request("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "anthropic-version": "2023-06-01",
+                },
+                body,
+              })
+            );
+
+            await loader.fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode(body));
+                  controller.close();
+                },
+              }),
+              duplex: "half",
+            });
+
+            assert(upstreamBodies.length === 2, "expected two upstream calls");
+            assert(
+              upstreamHeaders[0]["content-type"] === "application/json",
+              "Request content-type header was not preserved"
+            );
+            assert(
+              upstreamHeaders[0]["anthropic-version"] === "2023-06-01",
+              "Request anthropic-version header was not preserved"
+            );
+            for (const sentBody of upstreamBodies) {
+              assert(
+                sentBody.system[0].text === "You are Claude Code, Anthropic's official CLI for Claude.",
+                "Claude Code identity was not prepended"
+              );
+              assert(
+                sentBody.system[1].text === "You are running through the OpenCode harness.",
+                "OpenCode identity was not rewritten"
+              );
+              assert(
+                sentBody.system[2].text === "Keep existing tool instructions.",
+                "existing system instructions were not preserved"
+              );
+            }
+
+            console.log("ok");
+        """.replace("PLUGIN_URI", json.dumps(plugin_path.as_uri()))
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.strip() == "ok"
+
     def test_set_auth_failure_is_logged_but_nonfatal(self):
         """OpenCode auth persistence failures should not be silent."""
         plugin_path = (

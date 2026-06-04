@@ -9,7 +9,7 @@ export interface RepoImageBuild {
 // the Modal builder records repo images with sandbox_version = CACHE_BUSTER, and
 // getLatestReady()/markReady() below filter on this constant. Any drift means
 // freshly built repo images are never matched and sessions fall back to base.
-export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v61-anthropic-claude-code-oauth";
+export const CURRENT_REPO_IMAGE_SANDBOX_VERSION = "v62-anthropic-oauth-body-rewrite";
 
 export interface RepoImage {
   id: string;
