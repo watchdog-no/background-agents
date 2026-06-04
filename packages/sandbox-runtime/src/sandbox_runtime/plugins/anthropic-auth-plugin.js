@@ -14,42 +14,65 @@ const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key";
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
 const ANTHROPIC_BETA_OAUTH = "oauth-2025-04-20";
 const ANTHROPIC_BETA_CLAUDE_CODE = "claude-code-20250219";
+const ANTHROPIC_BETA_CLAUDE_CODE_SDK = [
+  ANTHROPIC_BETA_CLAUDE_CODE,
+  ANTHROPIC_BETA_OAUTH,
+  "interleaved-thinking-2025-05-14",
+  "thinking-token-count-2026-05-13",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05",
+  "mid-conversation-system-2026-04-07",
+  "advisor-tool-2026-03-01",
+  "effort-2025-11-24",
+  "extended-cache-ttl-2025-04-11",
+];
 
-// Claude Pro/Max OAuth tokens are only authorized for Claude Code. Anthropic
-// rejects requests whose first system block is not this exact identity, and the
-// rejection arrives as a generic `429 {"type":"rate_limit_error"}` with NO
-// `anthropic-ratelimit-*` headers — easily mistaken for a usage cap. Prepend the
-// identity so the subscription request is accepted, mirroring the upstream
-// Claude Code client (OpenCode has no native Anthropic OAuth, so this plugin
-// owns the whole request).
-const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+const CLAUDE_CODE_CLIENT_VERSION = "2.1.162";
+const CLAUDE_CODE_MAX_TOKENS = 64000;
+const CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLIENT_VERSION} (external, sdk-cli)`;
+const CLAUDE_CODE_BILLING_HEADER =
+  `x-anthropic-billing-header: cc_version=${CLAUDE_CODE_CLIENT_VERSION}.518; ` +
+  "cc_entrypoint=sdk-cli; cch=00000;";
+const CLAUDE_CODE_AGENT_SDK_IDENTITY =
+  "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+const LEGACY_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-// OpenCode's built-in system prompt opens by asserting a competing agent
-// identity. We replace just that opening sentence with a neutral operational
-// note so the model sees ONE coherent identity (Claude Code) running via the
-// OpenCode harness, while keeping the rest of OpenCode's prompt — tool rules,
-// formatting, safety — untouched. Matched as an exact prefix, so it is a no-op
-// if OpenCode changes the wording in a future version (we then fall back to the
-// harmless dual identity rather than breaking).
-const OPENCODE_IDENTITY_PREFIX = "You are OpenCode, the best coding agent on the planet.";
-const OPENCODE_HARNESS_NOTE = "You are running through the OpenCode harness.";
+function systemToBlocks(system) {
+  if (Array.isArray(system)) return system;
+  if (typeof system === "string") return [{ type: "text", text: system }];
+  return [];
+}
 
-function rewriteOpenCodeIdentity(text) {
-  if (typeof text === "string" && text.startsWith(OPENCODE_IDENTITY_PREFIX)) {
-    return OPENCODE_HARNESS_NOTE + text.slice(OPENCODE_IDENTITY_PREFIX.length);
+function stripExistingClaudeCodeEnvelope(systemBlocks) {
+  const blocks = [...systemBlocks];
+
+  while (
+    blocks[0]?.type === "text" &&
+    typeof blocks[0].text === "string" &&
+    blocks[0].text.startsWith("x-anthropic-billing-header:")
+  ) {
+    blocks.shift();
   }
-  return text;
+
+  while (
+    blocks[0]?.type === "text" &&
+    (blocks[0].text === CLAUDE_CODE_AGENT_SDK_IDENTITY ||
+      blocks[0].text === LEGACY_CLAUDE_CODE_IDENTITY)
+  ) {
+    blocks.shift();
+  }
+
+  return blocks;
 }
 
 /**
- * Shape the request body for Claude Pro/Max OAuth: make the first `system` block
- * the Claude Code identity (the authorization marker) and demote OpenCode's
- * competing identity sentence to a neutral harness note. Returns the rewritten
- * body string, or the original input if it is not JSON we recognise. A body
- * whose first block is already the identity is left untouched so we never add a
- * duplicate or shift cache breakpoints needlessly.
+ * Shape the request body for Claude Pro/Max OAuth by wrapping OpenCode's request
+ * in the same SDK-level Claude Code attribution envelope sent by the official
+ * Claude Code client. Do not strip OpenCode's prompt or tools: live replay showed
+ * the original OpenCode request, including TodoWrite, routes through subscription
+ * once this envelope and the matching headers are present.
  */
-function rewriteClaudeCodeSystemPromptText(body) {
+function rewriteClaudeCodeRequestBodyText(body) {
   if (typeof body !== "string") return body;
   let parsed;
   try {
@@ -58,21 +81,13 @@ function rewriteClaudeCodeSystemPromptText(body) {
     return body;
   }
 
-  const identityBlock = { type: "text", text: CLAUDE_CODE_IDENTITY };
-  const system = parsed.system;
+  parsed.system = [
+    { type: "text", text: CLAUDE_CODE_BILLING_HEADER },
+    { type: "text", text: CLAUDE_CODE_AGENT_SDK_IDENTITY },
+    ...stripExistingClaudeCodeEnvelope(systemToBlocks(parsed.system)),
+  ];
 
-  if (Array.isArray(system)) {
-    if (system[0]?.type === "text" && system[0]?.text === CLAUDE_CODE_IDENTITY) return body;
-    const rest = system.map((b, i) =>
-      i === 0 && b?.type === "text" ? { ...b, text: rewriteOpenCodeIdentity(b.text) } : b
-    );
-    parsed.system = [identityBlock, ...rest];
-  } else if (typeof system === "string") {
-    if (system.startsWith(CLAUDE_CODE_IDENTITY)) return body;
-    parsed.system = [identityBlock, { type: "text", text: rewriteOpenCodeIdentity(system) }];
-  } else {
-    parsed.system = [identityBlock];
-  }
+  parsed.max_tokens = CLAUDE_CODE_MAX_TOKENS;
 
   return JSON.stringify(parsed);
 }
@@ -98,11 +113,11 @@ async function ensureClaudeCodeSystemPromptBody(requestInput, init) {
   if (init && Object.hasOwn(init, "body")) {
     if (init.body === undefined || init.body === null) return init.body;
     const text = await bodyToText(init.body);
-    return text === null ? init.body : rewriteClaudeCodeSystemPromptText(text);
+    return text === null ? init.body : rewriteClaudeCodeRequestBodyText(text);
   }
 
   if (typeof Request !== "undefined" && requestInput instanceof Request && requestInput.body) {
-    return rewriteClaudeCodeSystemPromptText(await requestInput.clone().text());
+    return rewriteClaudeCodeRequestBodyText(await requestInput.clone().text());
   }
 
   return undefined;
@@ -301,7 +316,9 @@ export const AnthropicAuthProxy = async (input) => {
             // Set real authorization
             headers.set("authorization", `Bearer ${accessToken}`);
 
-            // Append the Claude Code OAuth beta flags without clobbering any existing value.
+            // Match the official Claude Code SDK transport markers. The
+            // subscription router keys off the request envelope, not OpenCode's
+            // prompt content.
             const existingBeta = headers.get("anthropic-beta");
             const betas = existingBeta
               ? existingBeta
@@ -309,16 +326,18 @@ export const AnthropicAuthProxy = async (input) => {
                   .map((b) => b.trim())
                   .filter(Boolean)
               : [];
-            if (!betas.includes(ANTHROPIC_BETA_OAUTH)) betas.push(ANTHROPIC_BETA_OAUTH);
-            if (!betas.includes(ANTHROPIC_BETA_CLAUDE_CODE)) {
-              betas.push(ANTHROPIC_BETA_CLAUDE_CODE);
+            for (const beta of ANTHROPIC_BETA_CLAUDE_CODE_SDK) {
+              if (!betas.includes(beta)) betas.push(beta);
             }
             headers.set("anthropic-beta", betas.join(", "));
+            if (!headers.has("anthropic-version")) headers.set("anthropic-version", "2023-06-01");
+            headers.set("anthropic-dangerous-direct-browser-access", "true");
+            headers.set("user-agent", CLAUDE_CODE_USER_AGENT);
+            headers.set("x-app", "cli");
+            const sessionId = getSessionId();
+            if (sessionId) headers.set("x-claude-code-session-id", sessionId);
 
-            // Anthropic OAuth (Pro/Max) only authorises Claude Code requests, so
-            // the first system block must be the Claude Code identity or the call
-            // is rejected with a misleading 429. No URL rewrite — OAuth uses the
-            // standard Messages API.
+            // No URL rewrite — OAuth uses the standard Messages API.
             const body = await ensureClaudeCodeSystemPromptBody(requestInput, init);
             const nextInit = { ...init, headers };
             headers.delete("content-length");

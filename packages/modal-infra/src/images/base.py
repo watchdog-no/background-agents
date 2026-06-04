@@ -65,6 +65,8 @@ CTX7_VERSION = "0.4.4"
 # v59: add Claude Opus 4.8 model support
 # v60: upgrade OpenCode to 1.15.13; inject Claude Code identity in the Anthropic
 #      OAuth plugin so subscription requests are authorized (fixes spurious 429s)
+# v64: match the official Claude Code SDK request envelope for Anthropic OAuth;
+#      preserve the OpenCode prompt/tools instead of stripping request fragments
 
 # Base image with all development tools
 base_image = (
