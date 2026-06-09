@@ -30,6 +30,7 @@ from .constants import (
     TUNNEL_ENV_FILE_PATH,
 )
 from .log_config import configure_logging, get_logger
+from .repo_image_callback import RepoImageBuildCallback
 
 configure_logging()
 
@@ -40,46 +41,21 @@ AGENT_TOOLS_GATED_ON_ENV: dict[str, str] = {
 
 # Wrapper installed at /usr/local/bin/gh (ahead of the real /usr/bin/gh in
 # PATH). The git credential helper can't authenticate the GitHub CLI — gh
-# reads GH_TOKEN/GITHUB_TOKEN from the environment, not git's protocol — so
-# instead of baking a short-lived token into env at boot (which goes stale
-# after ~1h), this mints a fresh token per invocation.
-#
-# Skip rules (exec real gh untouched):
-#   * non-github.com deployments — never touch gh's auth;
-#   * a genuine user-provided token. The manager's legacy-snapshot fallback
-#     token is marked with OI_GITHUB_TOKEN_IS_FALLBACK=1 and is NOT treated
-#     as user-provided, so a helper-capable restored snapshot still refreshes
-#     rather than reusing the soon-expired restore token. gh reads GH_TOKEN
-#     before GITHUB_TOKEN. The manager's fallback aliases are matching
-#     GITHUB_TOKEN/GITHUB_APP_TOKEN values, so a later user override differs
-#     and wins.
+# reads GH_TOKEN/GITHUB_TOKEN from the environment, not git's protocol. This
+# thin delegator asks the credential helper's `gh-token` action whether a
+# fresh token is needed (the precedence logic lives there, in Python). If it
+# prints one we export it as GH_TOKEN; otherwise gh runs with its own env.
 GH_WRAPPER_REAL_PATH = "/usr/bin/gh"
 GH_WRAPPER_BODY = (
     "#!/bin/sh\n"
     f'REAL_GH="{GH_WRAPPER_REAL_PATH}"\n'
-    'if [ "${VCS_HOST:-github.com}" != "github.com" ]; then\n'
-    '  exec "$REAL_GH" "$@"\n'
-    "fi\n"
-    "# A real user token wins; a marked fallback token does not.\n"
-    'if [ -n "$GH_TOKEN" ]; then\n'
-    '  exec "$REAL_GH" "$@"\n'
-    "fi\n"
-    'if [ "$OI_GITHUB_TOKEN_IS_FALLBACK" != "1" ] && '
-    '{ [ -n "$GITHUB_TOKEN" ] || [ -n "$GITHUB_APP_TOKEN" ]; }; then\n'
-    '  exec "$REAL_GH" "$@"\n'
-    "fi\n"
-    'if [ "$OI_GITHUB_TOKEN_IS_FALLBACK" = "1" ] && '
-    '[ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_APP_TOKEN" ] && '
-    '[ "$GITHUB_TOKEN" != "$GITHUB_APP_TOKEN" ]; then\n'
-    '  exec "$REAL_GH" "$@"\n'
-    "fi\n"
     # stderr is left attached so the helper's diagnostic surfaces when a
     # refresh fails — otherwise the user just sees an opaque gh 401.
-    "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper token || true)\n"
+    "token=$(python3 -m sandbox_runtime.credentials.git_credential_helper gh-token || true)\n"
     'if [ -n "$token" ]; then\n'
-    '  exec env GH_TOKEN="$token" "$REAL_GH" "$@"\n'
+    # export (not `env GH_TOKEN=… exec`) so the token never lands in argv.
+    '  export GH_TOKEN="$token"\n'
     "fi\n"
-    "# Refresh unavailable — fall back to whatever was in env (may be stale).\n"
     'exec "$REAL_GH" "$@"\n'
 )
 
@@ -1468,6 +1444,9 @@ class SandboxSupervisor:
         elif from_repo_image:
             repo_image_sha = os.environ.get("REPO_IMAGE_SHA", "unknown")
             self.log.info("supervisor.from_repo_image", build_sha=repo_image_sha)
+        repo_image_callback = (
+            RepoImageBuildCallback.from_env(self.log) if image_build_mode else None
+        )
 
         # Clear stale tunnel file on every restore: a snapshot taken with
         # tunnels configured retains the previous session's URLs even if this
@@ -1482,6 +1461,7 @@ class SandboxSupervisor:
             loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(self._handle_signal(s)))
 
         git_sync_success = False
+        head_sha = ""
         opencode_ready = False
         try:
             # Phase 0: Make sure the git credential helper is configured
@@ -1531,6 +1511,13 @@ class SandboxSupervisor:
             if image_build_mode:
                 duration_ms = int((time.time() - startup_start) * 1000)
                 self.log.info("image_build.complete", duration_ms=duration_ms)
+                if repo_image_callback:
+                    reported = await repo_image_callback.report_success(
+                        base_sha=head_sha,
+                        build_duration_seconds=time.time() - startup_start,
+                    )
+                    if not reported:
+                        raise RuntimeError("repo image build-complete callback failed")
                 await self.shutdown_event.wait()
                 return
 
@@ -1583,6 +1570,8 @@ class SandboxSupervisor:
 
         except Exception as e:
             self.log.error("supervisor.error", exc=e)
+            if image_build_mode and repo_image_callback:
+                await repo_image_callback.report_failure(str(e))
             await self._report_fatal_error(str(e))
 
         finally:

@@ -43,9 +43,9 @@ most common examples:
 | `ANTHROPIC_API_KEY`             | Optional metered Claude API key for control-plane classification.     |
 | `OPENAI_API_KEY`                | Optional metered OpenAI API key for control-plane classification.     |
 
-> **Daytona users**: For the default Claude subscription path, add `ANTHROPIC_OAUTH_REFRESH_TOKEN`
-> as a global secret after deploying. Add provider API keys only if you intentionally want those
-> standard SDK credentials available to sandbox code.
+> **Daytona and Vercel sandbox users**: For the default Claude subscription path, add
+> `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret after deploying. Add provider API keys only if
+> you intentionally want those standard SDK credentials available to sandbox code.
 
 ### When to use repository secrets
 
@@ -135,11 +135,12 @@ If you try to save a reserved key, the UI will show a validation error.
 
 ## Troubleshooting
 
-### "Model not found" errors (Daytona provider)
+### "Model not found" errors (Daytona or Vercel sandbox provider)
 
 If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
 confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
-`ANTHROPIC_API_KEY` only if you intentionally use metered API billing.
+`ANTHROPIC_API_KEY` only if you intentionally use metered API billing. If you're using
+`sandbox_provider = "vercel"` with Claude models, the same credential guidance applies.
 
 ### Secret not appearing in sandbox
 
