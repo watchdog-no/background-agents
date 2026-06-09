@@ -17,6 +17,7 @@ export const VALID_MODELS = [
   "anthropic/claude-opus-4-6",
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
+  "anthropic/claude-fable-5",
   "openai/gpt-5.2",
   "openai/gpt-5.4",
   "openai/gpt-5.5",
@@ -64,6 +65,10 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
   "anthropic/claude-opus-4-8": {
     efforts: ["low", "medium", "high", "xhigh", "max"],
     default: "high",
+  },
+  "anthropic/claude-fable-5": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: "xhigh",
   },
   "openai/gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: undefined },
   "openai/gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: undefined },
@@ -127,6 +132,11 @@ export const MODEL_OPTIONS: ModelCategory[] = [
         name: "Claude Opus 4.8",
         description: "Latest, most capable",
       },
+      {
+        id: "anthropic/claude-fable-5",
+        name: "Claude Fable 5",
+        description: "Most powerful, new tier above Opus",
+      },
     ],
   },
   {
@@ -167,6 +177,7 @@ export const DEFAULT_ENABLED_MODELS: ValidModel[] = [
   "anthropic/claude-opus-4-6",
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
+  "anthropic/claude-fable-5",
   "openai/gpt-5.2",
   "openai/gpt-5.4",
   "openai/gpt-5.5",
