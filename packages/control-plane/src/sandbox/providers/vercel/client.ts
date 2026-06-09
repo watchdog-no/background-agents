@@ -11,7 +11,7 @@ import type { CorrelationContext } from "../../../logger";
 
 const log = createLogger("vercel-sandbox-client");
 
-const DEFAULT_VERCEL_API_BASE_URL = "https://vercel.com/api";
+const DEFAULT_VERCEL_API_BASE_URL = "https://api.vercel.com";
 const USER_AGENT = "open-inspect/vercel-sandbox";
 
 export interface VercelSandboxClientConfig {

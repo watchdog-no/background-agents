@@ -6,6 +6,7 @@ import { computeHmacHex, MAX_TUNNEL_PORTS, type SandboxSettings } from "@open-in
 import { createLogger } from "../../../logger";
 import type { CorrelationContext } from "../../../logger";
 import type { SourceControlProviderName } from "../../../source-control";
+import { ANTHROPIC_OAUTH_SANDBOX_FLAG } from "../../oauth-env";
 import { buildSessionConfig } from "../../sandbox-env";
 import {
   DEFAULT_SANDBOX_TIMEOUT_SECONDS,
@@ -334,6 +335,9 @@ export class VercelSandboxProvider implements SandboxProvider {
 
     this.injectScmEnvVars(envVars);
 
+    if (config.anthropicOauthEnabled) {
+      envVars[ANTHROPIC_OAUTH_SANDBOX_FLAG] = "true";
+    }
     if (mode.restoredFromSnapshot) envVars.RESTORED_FROM_SNAPSHOT = "true";
     if (mode.fromRepoImage) {
       envVars.FROM_REPO_IMAGE = "true";

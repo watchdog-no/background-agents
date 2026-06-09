@@ -47,6 +47,13 @@ function createClient(): VercelSandboxClient {
   });
 }
 
+function createDefaultClient(): VercelSandboxClient {
+  return new VercelSandboxClient({
+    token: "vercel-token",
+    projectId: "project-123",
+  });
+}
+
 function lastFetchInit(): RequestInit {
   return fetchSpy.mock.calls.at(-1)?.[1] as RequestInit;
 }
@@ -126,6 +133,21 @@ describe("VercelSandboxClient", () => {
       source: { type: "snapshot", snapshotId: "snapshot-1" },
     });
     expect(result.session.id).toBe("session-1");
+  });
+
+  it("defaults requests to the public Vercel API host", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        snapshots: [],
+      })
+    );
+
+    await createDefaultClient().listSnapshots();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://api.vercel.com/v2/sandboxes/snapshots?project=project-123",
+      expect.objectContaining({ method: "GET" })
+    );
   });
 
   it("starts a command and maps the command id", async () => {

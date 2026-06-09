@@ -342,6 +342,20 @@ describe("VercelSandboxProvider", () => {
     expect(createCall.env?.PATH).not.toContain("/vercel/runtimes/node24/bin");
   });
 
+  it("sets the Anthropic OAuth sandbox flag when configured", async () => {
+    const client = createMockClient();
+    const provider = new VercelSandboxProvider(client, providerConfig);
+
+    await provider.createSandbox({ ...baseCreateConfig, anthropicOauthEnabled: true });
+
+    const createCall = vi.mocked(client.createSandbox).mock.calls[0][0];
+    expect(createCall.env).toEqual(
+      expect.objectContaining({
+        ANTHROPIC_OAUTH_ENABLED: "true",
+      })
+    );
+  });
+
   it("restores from a session snapshot and sets restore mode env vars", async () => {
     const client = createMockClient();
     const provider = new VercelSandboxProvider(client, providerConfig);
