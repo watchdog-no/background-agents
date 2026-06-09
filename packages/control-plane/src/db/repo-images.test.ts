@@ -5,6 +5,8 @@ type RepoImageRow = {
   id: string;
   repo_owner: string;
   repo_name: string;
+  provider: string;
+  provider_session_id: string | null;
   provider_image_id: string;
   base_sha: string;
   sandbox_version: string;
@@ -12,22 +14,31 @@ type RepoImageRow = {
   status: string;
   build_duration_seconds: number | null;
   error_message: string | null;
+  callback_token_hash: string | null;
+  callback_token_expires_at: number | null;
+  callback_token_used_at: number | null;
   created_at: number;
 };
 
 const QUERY_PATTERNS = {
   INSERT_BUILD: /^INSERT INTO repo_images/,
-  SELECT_BY_ID: /^SELECT repo_owner, repo_name, base_branch FROM repo_images WHERE id = \?$/,
+  SELECT_BY_ID:
+    /^SELECT repo_owner, repo_name, provider, base_branch FROM repo_images WHERE id = \? AND provider = \? AND status = 'building'$/,
+  UPDATE_PROVIDER_SESSION:
+    /^UPDATE repo_images SET provider_session_id = \? WHERE id = \? AND provider = \? AND status = 'building'$/,
+  SELECT_CALLBACK_BUILD:
+    /^SELECT id, provider, provider_session_id, status, callback_token_hash, callback_token_expires_at, callback_token_used_at FROM repo_images WHERE id = \? AND provider = \?$/,
+  UPDATE_CALLBACK_USED:
+    /^UPDATE repo_images SET callback_token_used_at = \? WHERE id = \? AND provider = \? AND status = 'building' AND callback_token_hash = \? AND callback_token_used_at IS NULL$/,
   SELECT_READY_FOR_REPO:
-    /^SELECT id, provider_image_id FROM repo_images WHERE repo_owner = \? AND repo_name = \? AND base_branch = \? AND status = 'ready' AND sandbox_version = \?$/,
+    /^SELECT id, provider_image_id FROM repo_images WHERE repo_owner = \? AND repo_name = \? AND provider = \? AND base_branch = \? AND status = 'ready' AND sandbox_version = \?$/,
   UPDATE_READY:
-    /^UPDATE repo_images SET status = 'ready', provider_image_id = \?, base_sha = \?, build_duration_seconds = \?, sandbox_version = \? WHERE id = \?$/,
+    /^UPDATE repo_images SET status = 'ready', provider_image_id = \?, base_sha = \?, build_duration_seconds = \?, sandbox_version = \? WHERE id = \? AND provider = \? AND status = 'building'$/,
   DELETE_BY_ID: /^DELETE FROM repo_images WHERE id = \?$/,
-  UPDATE_FAILED: /^UPDATE repo_images SET status = 'failed', error_message = \? WHERE id = \?$/,
+  UPDATE_FAILED:
+    /^UPDATE repo_images SET status = 'failed', error_message = \? WHERE id = \? AND provider = \? AND status = 'building'$/,
   SELECT_LATEST_READY:
-    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 AND ri\.sandbox_version = \? ORDER BY ri\.created_at DESC LIMIT 1$/,
-  SELECT_LATEST_READY_WITH_BRANCH:
-    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \? AND ri\.base_branch = \? AND ri\.status = 'ready' AND rm\.image_build_enabled = 1 AND ri\.sandbox_version = \? ORDER BY ri\.created_at DESC LIMIT 1$/,
+    /^SELECT ri\.\* FROM repo_images ri INNER JOIN repo_metadata rm ON ri\.repo_owner = rm\.repo_owner AND ri\.repo_name = rm\.repo_name WHERE ri\.repo_owner = \? AND ri\.repo_name = \?.*ORDER BY ri\.created_at DESC LIMIT 1$/,
   SELECT_STATUS:
     /^SELECT \* FROM repo_images WHERE repo_owner = \? AND repo_name = \? ORDER BY created_at DESC LIMIT 10$/,
   SELECT_ALL_STATUS: /^SELECT \* FROM repo_images ORDER BY created_at DESC LIMIT 100$/,
@@ -63,19 +74,47 @@ class FakeD1Database {
     const normalized = normalizeQuery(query);
 
     if (QUERY_PATTERNS.SELECT_BY_ID.test(normalized)) {
-      const [id] = args as [string];
+      const [id, provider] = args as [string, string];
       const row = this.rows.get(id);
-      return row
-        ? { repo_owner: row.repo_owner, repo_name: row.repo_name, base_branch: row.base_branch }
+      return row && row.provider === provider && row.status === "building"
+        ? {
+            repo_owner: row.repo_owner,
+            repo_name: row.repo_name,
+            provider: row.provider,
+            base_branch: row.base_branch,
+          }
+        : null;
+    }
+
+    if (QUERY_PATTERNS.SELECT_CALLBACK_BUILD.test(normalized)) {
+      const [id, provider] = args as [string, string];
+      const row = this.rows.get(id);
+      return row && row.provider === provider
+        ? {
+            id: row.id,
+            provider: row.provider,
+            provider_session_id: row.provider_session_id,
+            status: row.status,
+            callback_token_hash: row.callback_token_hash,
+            callback_token_expires_at: row.callback_token_expires_at,
+            callback_token_used_at: row.callback_token_used_at,
+          }
         : null;
     }
 
     if (QUERY_PATTERNS.SELECT_READY_FOR_REPO.test(normalized)) {
-      const [owner, name, branch, sandboxVersion] = args as [string, string, string, string];
+      const [owner, name, provider, branch, sandboxVersion] = args as [
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
       for (const row of this.rows.values()) {
         if (
           row.repo_owner === owner &&
           row.repo_name === name &&
+          row.provider === provider &&
           row.base_branch === branch &&
           row.status === "ready" &&
           row.sandbox_version === sandboxVersion
@@ -86,36 +125,30 @@ class FakeD1Database {
       return null;
     }
 
-    if (QUERY_PATTERNS.SELECT_LATEST_READY_WITH_BRANCH.test(normalized)) {
-      const [owner, name, branch, sandboxVersion] = args as [string, string, string, string];
-      if (!this.isImageBuildEnabled(owner, name)) return null;
-      let latest: RepoImageRow | null = null;
-      for (const row of this.rows.values()) {
-        if (
-          row.repo_owner === owner &&
-          row.repo_name === name &&
-          row.base_branch === branch &&
-          row.status === "ready" &&
-          row.sandbox_version === sandboxVersion
-        ) {
-          if (!latest || row.created_at > latest.created_at) {
-            latest = row;
-          }
-        }
-      }
-      return latest ? { ...latest } : null;
-    }
-
     if (QUERY_PATTERNS.SELECT_LATEST_READY.test(normalized)) {
-      const [owner, name, sandboxVersion] = args as [string, string, string];
+      const [owner, name, ...rest] = args as string[];
+      let branch: string | undefined;
+      let provider: string | undefined;
+      let sandboxVersion: string | undefined;
+      if (normalized.includes("ri.base_branch = ?")) {
+        branch = rest.shift();
+      }
+      if (normalized.includes("ri.provider = ?")) {
+        provider = rest.shift();
+      }
+      if (normalized.includes("ri.sandbox_version = ?")) {
+        sandboxVersion = rest.shift();
+      }
       if (!this.isImageBuildEnabled(owner, name)) return null;
       let latest: RepoImageRow | null = null;
       for (const row of this.rows.values()) {
         if (
           row.repo_owner === owner &&
           row.repo_name === name &&
+          (!branch || row.base_branch === branch) &&
+          (!provider || row.provider === provider) &&
           row.status === "ready" &&
-          row.sandbox_version === sandboxVersion
+          (!sandboxVersion || row.sandbox_version === sandboxVersion)
         ) {
           if (!latest || row.created_at > latest.created_at) {
             latest = row;
@@ -157,13 +190,22 @@ class FakeD1Database {
     const normalized = normalizeQuery(query);
 
     if (QUERY_PATTERNS.INSERT_BUILD.test(normalized)) {
-      // SQL: INSERT ... VALUES (?, ?, ?, ?, '', 'building', '', ?)
-      // Bound args: [id, owner, name, branch, createdAt]
-      const [id, owner, name, branch, createdAt] = args as [string, string, string, string, number];
+      const [
+        id,
+        owner,
+        name,
+        provider,
+        branch,
+        callbackTokenHash,
+        callbackTokenExpiresAt,
+        createdAt,
+      ] = args as [string, string, string, string, string, string | null, number | null, number];
       this.rows.set(id, {
         id,
         repo_owner: owner,
         repo_name: name,
+        provider,
+        provider_session_id: null,
         base_branch: branch,
         provider_image_id: "",
         status: "building",
@@ -171,21 +213,51 @@ class FakeD1Database {
         sandbox_version: "",
         build_duration_seconds: null,
         error_message: null,
+        callback_token_hash: callbackTokenHash,
+        callback_token_expires_at: callbackTokenExpiresAt,
+        callback_token_used_at: null,
         created_at: createdAt,
       });
       return { meta: { changes: 1 } };
     }
 
+    if (QUERY_PATTERNS.UPDATE_PROVIDER_SESSION.test(normalized)) {
+      const [providerSessionId, id, provider] = args as [string, string, string];
+      const row = this.rows.get(id);
+      if (row && row.provider === provider && row.status === "building") {
+        row.provider_session_id = providerSessionId;
+        return { meta: { changes: 1 } };
+      }
+      return { meta: { changes: 0 } };
+    }
+
+    if (QUERY_PATTERNS.UPDATE_CALLBACK_USED.test(normalized)) {
+      const [usedAt, id, provider, tokenHash] = args as [number, string, string, string];
+      const row = this.rows.get(id);
+      if (
+        row &&
+        row.provider === provider &&
+        row.status === "building" &&
+        row.callback_token_hash === tokenHash &&
+        row.callback_token_used_at === null
+      ) {
+        row.callback_token_used_at = usedAt;
+        return { meta: { changes: 1 } };
+      }
+      return { meta: { changes: 0 } };
+    }
+
     if (QUERY_PATTERNS.UPDATE_READY.test(normalized)) {
-      const [providerImageId, baseSha, buildDuration, sandboxVersion, id] = args as [
+      const [providerImageId, baseSha, buildDuration, sandboxVersion, id, provider] = args as [
         string,
         string,
         number,
         string,
         string,
+        string,
       ];
       const row = this.rows.get(id);
-      if (row) {
+      if (row && row.provider === provider && row.status === "building") {
         row.status = "ready";
         row.provider_image_id = providerImageId;
         row.base_sha = baseSha;
@@ -203,9 +275,9 @@ class FakeD1Database {
     }
 
     if (QUERY_PATTERNS.UPDATE_FAILED.test(normalized)) {
-      const [error, id] = args as [string, string];
+      const [error, id, provider] = args as [string, string, string];
       const row = this.rows.get(id);
-      if (row) {
+      if (row && row.provider === provider && row.status === "building") {
         row.status = "failed";
         row.error_message = error;
         return { meta: { changes: 1 } };
@@ -297,6 +369,7 @@ describe("RepoImageStore", () => {
         id: "img-acme-repo-1000",
         repoOwner: "Acme",
         repoName: "Repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -305,9 +378,23 @@ describe("RepoImageStore", () => {
       expect(status[0].status).toBe("building");
       expect(status[0].repo_owner).toBe("acme");
       expect(status[0].repo_name).toBe("repo");
+      expect(status[0].provider).toBe("modal");
       expect(status[0].provider_image_id).toBe("");
       expect(status[0].base_sha).toBe("");
       expect(status[0].sandbox_version).toBe("");
+    });
+
+    it("stores the requested provider", async () => {
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+      });
+
+      const status = await store.getStatus("acme", "repo");
+      expect(status[0].provider).toBe("vercel");
     });
 
     it("normalizes owner and name to lowercase", async () => {
@@ -315,6 +402,7 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "ACME",
         repoName: "MyRepo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -325,6 +413,87 @@ describe("RepoImageStore", () => {
     });
   });
 
+  describe("Vercel callback binding", () => {
+    it("binds a provider session to a building Vercel build", async () => {
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+        callbackTokenHash: "token-hash",
+        callbackTokenExpiresAt: Date.now() + 60_000,
+      });
+
+      await expect(
+        store.bindProviderSession("img-vercel", "vercel", "vercel-session-1")
+      ).resolves.toBe(true);
+
+      const status = await store.getStatus("acme", "repo");
+      expect(status[0].provider_session_id).toBe("vercel-session-1");
+    });
+
+    it("consumes callback tokens once and rejects replays", async () => {
+      const now = Date.now();
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+        callbackTokenHash: "token-hash",
+        callbackTokenExpiresAt: now + 60_000,
+      });
+      await store.bindProviderSession("img-vercel", "vercel", "vercel-session-1");
+
+      const consumed = await store.consumeCallbackToken({
+        buildId: "img-vercel",
+        provider: "vercel",
+        providerSessionId: "vercel-session-1",
+        tokenHash: "token-hash",
+        now,
+      });
+      expect(consumed).toEqual({
+        id: "img-vercel",
+        provider: "vercel",
+        provider_session_id: "vercel-session-1",
+      });
+
+      const replay = await store.consumeCallbackToken({
+        buildId: "img-vercel",
+        provider: "vercel",
+        providerSessionId: "vercel-session-1",
+        tokenHash: "token-hash",
+        now,
+      });
+      expect(replay).toBeNull();
+    });
+
+    it("rejects callback tokens for a mismatched provider session", async () => {
+      const now = Date.now();
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+        callbackTokenHash: "token-hash",
+        callbackTokenExpiresAt: now + 60_000,
+      });
+      await store.bindProviderSession("img-vercel", "vercel", "vercel-session-1");
+
+      await expect(
+        store.consumeCallbackToken({
+          buildId: "img-vercel",
+          provider: "vercel",
+          providerSessionId: "other-session",
+          tokenHash: "token-hash",
+          now,
+        })
+      ).resolves.toBeNull();
+    });
+  });
+
   describe("markReady", () => {
     it("updates build to ready with provider image details", async () => {
       db.setImageBuildEnabled("acme", "repo", true);
@@ -332,14 +501,15 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
-      const result = await store.markReady("img-1", "modal-img-abc", "sha123", 45.2);
+      const result = await store.markReady("img-1", "modal", "modal-img-abc", "sha123", 45.2);
 
       expect(result.replacedImageId).toBeNull();
 
-      const ready = await store.getLatestReady("acme", "repo");
+      const ready = await store.getLatestReady("acme", "repo", "modal");
       expect(ready).not.toBeNull();
       expect(ready!.provider_image_id).toBe("modal-img-abc");
       expect(ready!.base_sha).toBe("sha123");
@@ -354,9 +524,10 @@ describe("RepoImageStore", () => {
         id: "img-old",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-old", "modal-img-old", "sha-old", 30);
+      await store.markReady("img-old", "modal", "modal-img-old", "sha-old", 30);
 
       vi.advanceTimersByTime(60000);
 
@@ -364,13 +535,14 @@ describe("RepoImageStore", () => {
         id: "img-new",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      const result = await store.markReady("img-new", "modal-img-new", "sha-new", 40);
+      const result = await store.markReady("img-new", "modal", "modal-img-new", "sha-new", 40);
 
       expect(result.replacedImageId).toBe("modal-img-old");
 
-      const ready = await store.getLatestReady("acme", "repo");
+      const ready = await store.getLatestReady("acme", "repo", "modal");
       expect(ready).not.toBeNull();
       expect(ready!.id).toBe("img-new");
       expect(ready!.provider_image_id).toBe("modal-img-new");
@@ -382,9 +554,10 @@ describe("RepoImageStore", () => {
         id: "img-current",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-current", "modal-img-current", "sha-current", 30);
+      await store.markReady("img-current", "modal", "modal-img-current", "sha-current", 30);
 
       vi.advanceTimersByTime(1000);
 
@@ -392,12 +565,21 @@ describe("RepoImageStore", () => {
         id: "img-stale",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      const result = await store.markReady("img-stale", "modal-img-stale", "sha-stale", 20, "");
+      const result = await store.markReady(
+        "img-stale",
+        "modal",
+        "modal-img-stale",
+        "sha-stale",
+        20,
+        ""
+      );
 
+      expect(result.updated).toBe(true);
       expect(result.replacedImageId).toBeNull();
-      const ready = await store.getLatestReady("acme", "repo");
+      const ready = await store.getLatestReady("acme", "repo", "modal");
       expect(ready).not.toBeNull();
       expect(ready!.id).toBe("img-current");
       expect(ready!.provider_image_id).toBe("modal-img-current");
@@ -408,16 +590,53 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
-      const result = await store.markReady("img-1", "modal-img-1", "sha1", 20);
+      const result = await store.markReady("img-1", "modal", "modal-img-1", "sha1", 20);
       expect(result.replacedImageId).toBeNull();
     });
 
     it("returns null for unknown buildId", async () => {
-      const result = await store.markReady("nonexistent", "img", "sha", 10);
+      const result = await store.markReady("nonexistent", "modal", "img", "sha", 10);
       expect(result.replacedImageId).toBeNull();
+    });
+
+    it("only replaces a previous ready image for the same provider", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-modal",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "modal",
+        baseBranch: "main",
+      });
+      await store.markReady("img-modal", "modal", "modal-img", "sha-modal", 30);
+
+      vi.advanceTimersByTime(1000);
+
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+      });
+      const result = await store.markReady(
+        "img-vercel",
+        "vercel",
+        "vercel-snapshot",
+        "sha-vercel",
+        40
+      );
+
+      expect(result.replacedImageId).toBeNull();
+
+      const modalReady = await store.getLatestReady("acme", "repo", "modal", "main");
+      const vercelReady = await store.getLatestReady("acme", "repo", "vercel", "main");
+      expect(modalReady!.provider_image_id).toBe("modal-img");
+      expect(vercelReady!.provider_image_id).toBe("vercel-snapshot");
     });
   });
 
@@ -427,10 +646,11 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
-      await store.markFailed("img-1", "npm install failed");
+      await store.markFailed("img-1", "modal", "npm install failed");
 
       const status = await store.getStatus("acme", "repo");
       expect(status[0].status).toBe("failed");
@@ -441,7 +661,7 @@ describe("RepoImageStore", () => {
   describe("getLatestReady", () => {
     it("returns null when no ready images exist", async () => {
       db.setImageBuildEnabled("acme", "repo", true);
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).toBeNull();
     });
 
@@ -451,10 +671,11 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).toBeNull();
     });
 
@@ -464,11 +685,12 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-1", "modal-img-1", "sha1", 30);
+      await store.markReady("img-1", "modal", "modal-img-1", "sha1", 30);
 
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).not.toBeNull();
       expect(result!.id).toBe("img-1");
       expect(result!.provider_image_id).toBe("modal-img-1");
@@ -480,11 +702,12 @@ describe("RepoImageStore", () => {
         id: "img-old-version",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-old-version", "modal-img-old", "sha1", 30, "v53-old");
+      await store.markReady("img-old-version", "modal", "modal-img-old", "sha1", 30, "v53-old");
 
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).toBeNull();
     });
 
@@ -494,11 +717,12 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-1", "modal-img-1", "sha1", 30);
+      await store.markReady("img-1", "modal", "modal-img-1", "sha1", 30);
 
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).toBeNull();
     });
 
@@ -508,11 +732,12 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-1", "modal-img-1", "sha1", 30);
+      await store.markReady("img-1", "modal", "modal-img-1", "sha1", 30);
 
-      const result = await store.getLatestReady("acme", "repo");
+      const result = await store.getLatestReady("acme", "repo", "modal");
       expect(result).toBeNull();
     });
 
@@ -522,11 +747,12 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-1", "modal-img-1", "sha1", 30);
+      await store.markReady("img-1", "modal", "modal-img-1", "sha1", 30);
 
-      const result = await store.getLatestReady("ACME", "REPO");
+      const result = await store.getLatestReady("ACME", "REPO", "modal");
       expect(result).not.toBeNull();
     });
 
@@ -536,9 +762,10 @@ describe("RepoImageStore", () => {
         id: "img-main",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-main", "modal-img-main", "sha-main", 30);
+      await store.markReady("img-main", "modal", "modal-img-main", "sha-main", 30);
 
       vi.advanceTimersByTime(1000);
 
@@ -546,28 +773,112 @@ describe("RepoImageStore", () => {
         id: "img-dev",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "develop",
       });
-      await store.markReady("img-dev", "modal-img-dev", "sha-dev", 25);
+      await store.markReady("img-dev", "modal", "modal-img-dev", "sha-dev", 25);
 
       // Without branch filter: returns most recent (develop)
-      const anyBranch = await store.getLatestReady("acme", "repo");
+      const anyBranch = await store.getLatestReady("acme", "repo", "modal");
       expect(anyBranch).not.toBeNull();
       expect(anyBranch!.id).toBe("img-dev");
 
       // With branch filter: returns the matching branch only
-      const mainOnly = await store.getLatestReady("acme", "repo", "main");
+      const mainOnly = await store.getLatestReady("acme", "repo", "modal", "main");
       expect(mainOnly).not.toBeNull();
       expect(mainOnly!.id).toBe("img-main");
       expect(mainOnly!.base_branch).toBe("main");
 
-      const devOnly = await store.getLatestReady("acme", "repo", "develop");
+      const devOnly = await store.getLatestReady("acme", "repo", "modal", "develop");
       expect(devOnly).not.toBeNull();
       expect(devOnly!.id).toBe("img-dev");
 
       // No image for this branch
-      const staging = await store.getLatestReady("acme", "repo", "staging");
+      const staging = await store.getLatestReady("acme", "repo", "modal", "staging");
       expect(staging).toBeNull();
+    });
+
+    it("filters by provider", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-modal",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "modal",
+        baseBranch: "main",
+      });
+      await store.markReady("img-modal", "modal", "modal-img", "sha-modal", 30);
+
+      vi.advanceTimersByTime(1000);
+
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+      });
+      await store.markReady("img-vercel", "vercel", "vercel-snapshot", "sha-vercel", 40);
+
+      const modalImage = await store.getLatestReady("acme", "repo", "modal");
+      const vercelImage = await store.getLatestReady("acme", "repo", "vercel");
+      expect(modalImage!.provider_image_id).toBe("modal-img");
+      expect(vercelImage!.provider_image_id).toBe("vercel-snapshot");
+    });
+
+    it("does not return a newer image from another provider", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+      });
+      await store.markReady("img-vercel", "vercel", "vercel-snapshot", "sha-vercel", 40);
+
+      vi.advanceTimersByTime(1000);
+
+      await store.registerBuild({
+        id: "img-modal",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "modal",
+        baseBranch: "main",
+      });
+      await store.markReady("img-modal", "modal", "modal-img", "sha-modal", 30);
+
+      const vercelImage = await store.getLatestReady("acme", "repo", "vercel");
+      expect(vercelImage!.provider_image_id).toBe("vercel-snapshot");
+    });
+  });
+
+  describe("getLatestReadyForAnyProvider", () => {
+    it("returns the latest ready image across providers explicitly", async () => {
+      db.setImageBuildEnabled("acme", "repo", true);
+      await store.registerBuild({
+        id: "img-vercel",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "vercel",
+        baseBranch: "main",
+      });
+      await store.markReady("img-vercel", "vercel", "vercel-snapshot", "sha-vercel", 40);
+
+      vi.advanceTimersByTime(1000);
+
+      await store.registerBuild({
+        id: "img-modal",
+        repoOwner: "acme",
+        repoName: "repo",
+        provider: "modal",
+        baseBranch: "main",
+      });
+      await store.markReady("img-modal", "modal", "modal-img", "sha-modal", 30);
+
+      const latest = await store.getLatestReadyForAnyProvider("acme", "repo");
+      expect(latest!.provider_image_id).toBe("modal-img");
+      expect(latest!.provider).toBe("modal");
     });
   });
 
@@ -579,9 +890,10 @@ describe("RepoImageStore", () => {
         id: "img-main",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-main", "modal-img-main", "sha-main", 30);
+      await store.markReady("img-main", "modal", "modal-img-main", "sha-main", 30);
 
       vi.advanceTimersByTime(1000);
 
@@ -590,15 +902,16 @@ describe("RepoImageStore", () => {
         id: "img-dev",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "develop",
       });
-      const result = await store.markReady("img-dev", "modal-img-dev", "sha-dev", 25);
+      const result = await store.markReady("img-dev", "modal", "modal-img-dev", "sha-dev", 25);
 
       // No replacement since no previous ready image on "develop"
       expect(result.replacedImageId).toBeNull();
 
       // main image should still be intact
-      const mainImage = await store.getLatestReady("acme", "repo", "main");
+      const mainImage = await store.getLatestReady("acme", "repo", "modal", "main");
       expect(mainImage).not.toBeNull();
       expect(mainImage!.id).toBe("img-main");
     });
@@ -615,6 +928,7 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -624,6 +938,7 @@ describe("RepoImageStore", () => {
         id: "img-2",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -640,12 +955,14 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo-a",
+        provider: "modal",
         baseBranch: "main",
       });
       await store.registerBuild({
         id: "img-2",
         repoOwner: "acme",
         repoName: "repo-b",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -660,6 +977,7 @@ describe("RepoImageStore", () => {
         id: "img-old",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -678,6 +996,7 @@ describe("RepoImageStore", () => {
         id: "img-recent",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 
@@ -695,9 +1014,10 @@ describe("RepoImageStore", () => {
         id: "img-ready",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markReady("img-ready", "modal-img", "sha1", 30);
+      await store.markReady("img-ready", "modal", "modal-img", "sha1", 30);
 
       vi.advanceTimersByTime(3600000);
 
@@ -712,9 +1032,10 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markFailed("img-1", "error");
+      await store.markFailed("img-1", "modal", "error");
 
       vi.advanceTimersByTime(86400001); // just over 24 hours
 
@@ -730,9 +1051,10 @@ describe("RepoImageStore", () => {
         id: "img-1",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
-      await store.markFailed("img-1", "error");
+      await store.markFailed("img-1", "modal", "error");
 
       vi.advanceTimersByTime(60000); // 1 minute
 
@@ -745,6 +1067,7 @@ describe("RepoImageStore", () => {
         id: "img-building",
         repoOwner: "acme",
         repoName: "repo",
+        provider: "modal",
         baseBranch: "main",
       });
 

@@ -16,11 +16,15 @@ const mockGlobalStore = vi.hoisted(() => ({
 }));
 
 vi.mock("../db/repo-secrets", () => ({
-  RepoSecretsStore: vi.fn().mockImplementation(() => mockRepoStore),
+  RepoSecretsStore: vi.fn().mockImplementation(function () {
+    return mockRepoStore;
+  }),
 }));
 
 vi.mock("../db/global-secrets", () => ({
-  GlobalSecretsStore: vi.fn().mockImplementation(() => mockGlobalStore),
+  GlobalSecretsStore: vi.fn().mockImplementation(function () {
+    return mockGlobalStore;
+  }),
 }));
 
 vi.mock("./shared", async (importOriginal) => {

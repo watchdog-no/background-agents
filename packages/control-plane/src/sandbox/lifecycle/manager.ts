@@ -10,10 +10,9 @@
  * spawn attempts within the same request.
  */
 
-import { MAX_TUNNEL_PORTS, type SandboxSettings } from "@open-inspect/shared";
+import type { McpServerConfig, SandboxSettings } from "@open-inspect/shared";
 import type { SandboxStatus } from "../../types";
 import type { SandboxRow, SessionRow } from "../../session/types";
-import type { McpServerConfig } from "@open-inspect/shared";
 import { SandboxProviderError, type SandboxProvider, type CreateSandboxConfig } from "../provider";
 import { prepareSandboxOAuthEnv } from "../oauth-env";
 import {
@@ -38,6 +37,7 @@ import { extractProviderAndModel } from "../../utils/models";
 import { createLogger, type Logger } from "../../logger";
 import { hashToken } from "../../auth/crypto";
 import { mintJwt } from "../../auth/jwt";
+import { normalizeSandboxSettings } from "../settings";
 
 const log = createLogger("lifecycle-manager");
 
@@ -204,8 +204,8 @@ export interface McpServerLookup {
 // ==================== Repo Image Lookup ====================
 
 /**
- * Lookup interface for pre-built repo images.
- * Returns the latest ready image for a repo, if any.
+ * Provider-scoped lookup interface for pre-built repo images.
+ * The Durable Object binds this to the active sandbox backend before injection.
  */
 export interface RepoImageLookup {
   getLatestReady(
@@ -864,10 +864,17 @@ export class SandboxLifecycleManager {
   }
 
   /**
-   * Whether the active provider owns stop/resume of long-lived sandboxes.
+   * Whether the active provider can stop a sandbox via its API.
+   */
+  private canStopProviderSandbox(): boolean {
+    return !!this.provider.capabilities.supportsExplicitStop && !!this.provider.stopSandbox;
+  }
+
+  /**
+   * Whether stopping should preserve provider-owned state for in-place resume.
    */
   private usesProviderManagedStop(): boolean {
-    return !!this.provider.capabilities.supportsExplicitStop && !!this.provider.stopSandbox;
+    return this.canStopProviderSandbox() && !!this.provider.capabilities.supportsPersistentResume;
   }
 
   /**
@@ -958,7 +965,7 @@ export class SandboxLifecycleManager {
       await this.callbacks.onSandboxTerminating?.();
       this.storage.updateSandboxStatus("failed");
       this.clearSandboxAccessState();
-      if (this.usesProviderManagedStop()) {
+      if (this.canStopProviderSandbox()) {
         try {
           await this.stopProviderSandbox("connecting_timeout");
         } catch (error) {
@@ -1004,12 +1011,23 @@ export class SandboxLifecycleManager {
           });
         }
       } else {
-        // Fire-and-forget snapshot so status broadcast isn't delayed.
-        this.triggerSnapshot("heartbeat_timeout").catch((e) =>
-          this.log.error("Heartbeat snapshot failed", {
-            error: e instanceof Error ? e : String(e),
-          })
-        );
+        if (this.canStopProviderSandbox()) {
+          await this.triggerSnapshot("heartbeat_timeout");
+          try {
+            await this.stopProviderSandbox("heartbeat_timeout");
+          } catch (error) {
+            this.log.warn("Provider stop failed after heartbeat timeout", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        } else {
+          // Fire-and-forget snapshot so status broadcast isn't delayed.
+          this.triggerSnapshot("heartbeat_timeout").catch((e) =>
+            this.log.error("Heartbeat snapshot failed", {
+              error: e instanceof Error ? e : String(e),
+            })
+          );
+        }
         this.wsManager.sendToSandbox({ type: "shutdown" });
       }
 
@@ -1056,6 +1074,15 @@ export class SandboxLifecycleManager {
         } else {
           await this.triggerSnapshot("inactivity_timeout");
           this.wsManager.sendToSandbox({ type: "shutdown" });
+          if (this.canStopProviderSandbox()) {
+            try {
+              await this.stopProviderSandbox("inactivity_timeout");
+            } catch (error) {
+              this.log.error("Provider stop failed after inactivity timeout", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
         }
 
         this.wsManager.closeSandboxWebSocket(1000, "Inactivity timeout");
@@ -1197,25 +1224,7 @@ export class SandboxLifecycleManager {
     if (!session.sandbox_settings) return {};
     try {
       const parsed: unknown = JSON.parse(session.sandbox_settings);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-
-      const settings = parsed as Record<string, unknown>;
-      const result: SandboxSettings = {};
-
-      // Validate tunnelPorts at the boundary — data may come from untrusted callers
-      if (settings.tunnelPorts !== undefined) {
-        if (!Array.isArray(settings.tunnelPorts)) return {};
-        const valid = settings.tunnelPorts.filter(
-          (p: unknown) => typeof p === "number" && Number.isInteger(p) && p >= 1 && p <= 65535
-        );
-        result.tunnelPorts = valid.slice(0, MAX_TUNNEL_PORTS);
-      }
-
-      if (typeof settings.terminalEnabled === "boolean") {
-        result.terminalEnabled = settings.terminalEnabled;
-      }
-
-      return result;
+      return normalizeSandboxSettings(parsed, { invalid: "omit" });
     } catch {
       this.log.warn("Failed to parse sandbox_settings, using defaults");
       return {};

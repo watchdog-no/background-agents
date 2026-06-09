@@ -18,21 +18,21 @@ const { mockOpenAIRefreshGlobal, mockAnthropicRefreshGlobal, mockGetDecryptedSec
 );
 
 vi.mock("../db/global-secrets", () => ({
-  GlobalSecretsStore: vi
-    .fn()
-    .mockImplementation(() => ({ getDecryptedSecrets: mockGetDecryptedSecrets })),
+  GlobalSecretsStore: vi.fn().mockImplementation(function () {
+    return { getDecryptedSecrets: mockGetDecryptedSecrets };
+  }),
 }));
 
 vi.mock("../session/openai-token-refresh-service", () => ({
-  OpenAITokenRefreshService: vi
-    .fn()
-    .mockImplementation(() => ({ refreshGlobal: mockOpenAIRefreshGlobal })),
+  OpenAITokenRefreshService: vi.fn().mockImplementation(function () {
+    return { refreshGlobal: mockOpenAIRefreshGlobal };
+  }),
 }));
 
 vi.mock("../session/anthropic-token-refresh-service", () => ({
-  AnthropicTokenRefreshService: vi
-    .fn()
-    .mockImplementation(() => ({ refreshGlobal: mockAnthropicRefreshGlobal })),
+  AnthropicTokenRefreshService: vi.fn().mockImplementation(function () {
+    return { refreshGlobal: mockAnthropicRefreshGlobal };
+  }),
 }));
 
 import { classifyRoutes } from "./classify";

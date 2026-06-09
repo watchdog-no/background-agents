@@ -61,7 +61,10 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
   "anthropic/claude-sonnet-4-6": { efforts: ["low", "medium", "high", "max"], default: "high" },
   "anthropic/claude-opus-4-5": { efforts: ["high", "max"], default: "max" },
   "anthropic/claude-opus-4-6": { efforts: ["low", "medium", "high", "max"], default: "high" },
-  "anthropic/claude-opus-4-7": { efforts: ["low", "medium", "high", "max"], default: "high" },
+  "anthropic/claude-opus-4-7": {
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default: "high",
+  },
   "anthropic/claude-opus-4-8": {
     efforts: ["low", "medium", "high", "xhigh", "max"],
     default: "high",
@@ -125,7 +128,7 @@ export const MODEL_OPTIONS: ModelCategory[] = [
       {
         id: "anthropic/claude-opus-4-7",
         name: "Claude Opus 4.7",
-        description: "Most capable",
+        description: "Most capable, adaptive thinking",
       },
       {
         id: "anthropic/claude-opus-4-8",
