@@ -255,8 +255,8 @@ class TestBuildPromptRequestBody:
             "outputConfig": {"effort": "xhigh"},
         }
 
-    def test_with_opus_4_7_xhigh_keeps_current_behavior(self, bridge: AgentBridge):
-        """Opus 4.7 stays scoped to the existing adaptive efforts."""
+    def test_with_opus_4_7_xhigh_adaptive_thinking(self, bridge: AgentBridge):
+        """Opus 4.7 should pass xhigh as an adaptive output effort."""
         body = bridge._build_prompt_request_body(
             "Hello",
             "anthropic/claude-opus-4-7",
@@ -265,6 +265,7 @@ class TestBuildPromptRequestBody:
 
         assert body["model"]["options"] == {
             "thinking": {"type": "adaptive"},
+            "outputConfig": {"effort": "xhigh"},
         }
 
     def test_with_sonnet_4_6_adaptive_thinking(self, bridge: AgentBridge):
