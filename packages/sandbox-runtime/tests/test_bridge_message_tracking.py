@@ -255,6 +255,19 @@ class TestBuildPromptRequestBody:
             "outputConfig": {"effort": "xhigh"},
         }
 
+    def test_with_fable_5_xhigh_adaptive_thinking(self, bridge: AgentBridge):
+        """Fable 5 should pass xhigh as an adaptive output effort."""
+        body = bridge._build_prompt_request_body(
+            "Hello",
+            "anthropic/claude-fable-5",
+            reasoning_effort="xhigh",
+        )
+
+        assert body["model"]["options"] == {
+            "thinking": {"type": "adaptive"},
+            "outputConfig": {"effort": "xhigh"},
+        }
+
     def test_with_opus_4_7_xhigh_adaptive_thinking(self, bridge: AgentBridge):
         """Opus 4.7 should pass xhigh as an adaptive output effort."""
         body = bridge._build_prompt_request_body(

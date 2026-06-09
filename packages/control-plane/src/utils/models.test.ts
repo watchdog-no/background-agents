@@ -26,6 +26,7 @@ describe("model utilities", () => {
       expect(isValidModel("anthropic/claude-opus-4-6")).toBe(true);
       expect(isValidModel("anthropic/claude-opus-4-7")).toBe(true);
       expect(isValidModel("anthropic/claude-opus-4-8")).toBe(true);
+      expect(isValidModel("anthropic/claude-fable-5")).toBe(true);
     });
 
     it("accepts bare Claude model names via normalization", () => {
@@ -35,6 +36,7 @@ describe("model utilities", () => {
       expect(isValidModel("claude-opus-4-6")).toBe(true);
       expect(isValidModel("claude-opus-4-7")).toBe(true);
       expect(isValidModel("claude-opus-4-8")).toBe(true);
+      expect(isValidModel("claude-fable-5")).toBe(true);
     });
 
     it("returns true for OpenAI models", () => {
@@ -284,6 +286,7 @@ describe("model utilities", () => {
       expect(supportsReasoning("anthropic/claude-opus-4-6")).toBe(true);
       expect(supportsReasoning("anthropic/claude-opus-4-7")).toBe(true);
       expect(supportsReasoning("anthropic/claude-opus-4-8")).toBe(true);
+      expect(supportsReasoning("anthropic/claude-fable-5")).toBe(true);
     });
 
     it("supports bare Claude model names via normalization", () => {
@@ -293,6 +296,7 @@ describe("model utilities", () => {
       expect(supportsReasoning("claude-opus-4-6")).toBe(true);
       expect(supportsReasoning("claude-opus-4-7")).toBe(true);
       expect(supportsReasoning("claude-opus-4-8")).toBe(true);
+      expect(supportsReasoning("claude-fable-5")).toBe(true);
     });
 
     it("returns true for OpenAI models with reasoning config", () => {
@@ -320,6 +324,7 @@ describe("model utilities", () => {
       expect(getDefaultReasoningEffort("anthropic/claude-opus-4-6")).toBe("high");
       expect(getDefaultReasoningEffort("anthropic/claude-opus-4-7")).toBe("high");
       expect(getDefaultReasoningEffort("anthropic/claude-opus-4-8")).toBe("high");
+      expect(getDefaultReasoningEffort("anthropic/claude-fable-5")).toBe("xhigh");
     });
 
     it("returns expected defaults for bare Claude model names via normalization", () => {
@@ -329,6 +334,7 @@ describe("model utilities", () => {
       expect(getDefaultReasoningEffort("claude-opus-4-6")).toBe("high");
       expect(getDefaultReasoningEffort("claude-opus-4-7")).toBe("high");
       expect(getDefaultReasoningEffort("claude-opus-4-8")).toBe("high");
+      expect(getDefaultReasoningEffort("claude-fable-5")).toBe("xhigh");
     });
 
     it("returns high for OpenAI codex models", () => {
@@ -377,6 +383,12 @@ describe("model utilities", () => {
       expect(opus48Config).toEqual({
         efforts: ["low", "medium", "high", "xhigh", "max"],
         default: "high",
+      });
+
+      const fable5Config = getReasoningConfig("anthropic/claude-fable-5");
+      expect(fable5Config).toEqual({
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        default: "xhigh",
       });
     });
 
@@ -477,6 +489,15 @@ describe("model utilities", () => {
       expect(isValidReasoningEffort("anthropic/claude-opus-4-8", "xhigh")).toBe(true);
       expect(isValidReasoningEffort("anthropic/claude-opus-4-8", "max")).toBe(true);
       expect(isValidReasoningEffort("anthropic/claude-opus-4-8", "none")).toBe(false);
+    });
+
+    it("supports xhigh adaptive effort for Fable 5", () => {
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "low")).toBe(true);
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "medium")).toBe(true);
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "high")).toBe(true);
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "xhigh")).toBe(true);
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "max")).toBe(true);
+      expect(isValidReasoningEffort("anthropic/claude-fable-5", "none")).toBe(false);
     });
 
     it("accepts bare Claude model names via normalization", () => {
