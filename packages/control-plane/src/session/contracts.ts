@@ -22,6 +22,7 @@ export const SessionInternalPaths = {
   openaiTokenRefresh: "/internal/openai-token-refresh",
   anthropicTokenRefresh: "/internal/anthropic-token-refresh",
   scmCredentials: "/internal/scm-credentials",
+  tunnelUrls: "/internal/tunnel-urls",
   spawnContext: "/internal/spawn-context",
   childSummary: "/internal/child-summary",
   updateTitle: "/internal/update-title",

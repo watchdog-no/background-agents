@@ -173,12 +173,13 @@ Choose the AI model that fits your task, with per-session reasoning effort contr
 
 | Provider     | Models                                                               |
 | ------------ | -------------------------------------------------------------------- |
-| Anthropic    | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8               |
+| Anthropic    | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5      |
 | OpenAI       | GPT 5.2, GPT 5.4, GPT 5.5, GPT 5.2 Codex, 5.3 Codex, 5.3 Codex Spark |
 | OpenCode Zen | Kimi K2.5, MiniMax M2.5, GLM 5 (opt-in)                              |
 
 Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
 work with your existing ChatGPT subscription via OAuth. See
+**[docs/AVAILABLE_MODELS.md](docs/AVAILABLE_MODELS.md)** for the full model list,
 **[docs/ANTHROPIC_MODELS.md](docs/ANTHROPIC_MODELS.md)** and
 **[docs/OPENAI_MODELS.md](docs/OPENAI_MODELS.md)** for setup instructions.
 

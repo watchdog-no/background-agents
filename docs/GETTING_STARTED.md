@@ -757,6 +757,7 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `ANTHROPIC_API_KEY`              | Optional Anthropic API key for metered Claude fallback                                      |
 | `ANTHROPIC_OAUTH_CLIENT_ID`      | Optional Claude subscription OAuth public client ID override                                |
 | `ANTHROPIC_OAUTH_TOKEN_URL`      | Optional Claude subscription OAuth token endpoint override                                  |
+| `DEEPSEEK_API_KEY`               | DeepSeek API key (optional, required only for DeepSeek models)                              |
 | `TOKEN_ENCRYPTION_KEY`           | Generated encryption key (OAuth tokens)                                                     |
 | `REPO_SECRETS_ENCRYPTION_KEY`    | Generated encryption key (repo secrets)                                                     |
 | `INTERNAL_CALLBACK_SECRET`       | Generated callback secret                                                                   |
@@ -780,6 +781,7 @@ Instead of adding secrets one by one, create a `.secrets` file (don't commit thi
 CLOUDFLARE_API_TOKEN=your-token
 CLOUDFLARE_ACCOUNT_ID=your-account-id
 TOKEN_ENCRYPTION_KEY=your-generated-key
+DEEPSEEK_API_KEY=sk-...
 # ... add all secrets
 ```
 
@@ -925,7 +927,8 @@ missing. Add the required credential as a global secret:
 
 1. Go to **Settings > Secrets** in the web app
 2. Select **All Repositories (Global)** from the scope dropdown
-3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path
+3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path (or
+   `DEEPSEEK_API_KEY` for DeepSeek models)
 4. Click **Save**
 
 See [Secrets Management](SECRETS.md) for more on global and repository secrets.
@@ -1001,4 +1004,5 @@ For details on the infrastructure components, see:
 
 - [terraform/README.md](../terraform/README.md) - Terraform module documentation
 - [README.md](../README.md) - System architecture overview
+- [AVAILABLE_MODELS.md](AVAILABLE_MODELS.md) - Supported model list and reasoning efforts
 - [OPENAI_MODELS.md](OPENAI_MODELS.md) - Configuring OpenAI Codex models

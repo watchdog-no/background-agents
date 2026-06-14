@@ -42,6 +42,7 @@ most common examples:
 | `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.                |
 | `ANTHROPIC_API_KEY`             | Optional metered Claude API key for control-plane classification.     |
 | `OPENAI_API_KEY`                | Optional metered OpenAI API key for control-plane classification.     |
+| `DEEPSEEK_API_KEY`              | Required for DeepSeek models with any sandbox provider.               |
 
 > **Daytona and Vercel sandbox users**: For the default Claude subscription path, add
 > `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret after deploying. Add provider API keys only if
@@ -124,6 +125,7 @@ If you try to save a reserved key, the UI will show a validation error.
 | ------------------------------- | ------ | --------------------------------------------------------------- |
 | `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md)) |
 | `ANTHROPIC_API_KEY`             | Global | Optional Claude API key for control-plane classification        |
+| `DEEPSEEK_API_KEY`              | Global | DeepSeek API access                                             |
 | `OPENAI_API_KEY`                | Global | Optional OpenAI API key for control-plane classification        |
 | `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
 | `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
@@ -135,12 +137,13 @@ If you try to save a reserved key, the UI will show a validation error.
 
 ## Troubleshooting
 
-### "Model not found" errors (Daytona or Vercel sandbox provider)
+### "Model not found" errors
 
 If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
 confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
 `ANTHROPIC_API_KEY` only if you intentionally use metered API billing. If you're using
-`sandbox_provider = "vercel"` with Claude models, the same credential guidance applies.
+`sandbox_provider = "vercel"` with Claude models, the same credential guidance applies. For DeepSeek
+models, add `DEEPSEEK_API_KEY` as a global secret.
 
 ### Secret not appearing in sandbox
 
