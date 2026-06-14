@@ -245,6 +245,12 @@ export const sessionRuntimeProxyRoutes: Route[] = [
     internalPath: SessionInternalPaths.scmCredentials,
     runtimeMethod: "POST",
   }),
+  simpleProxyRoute({
+    method: "GET",
+    routePath: "/sessions/:id/tunnel-urls",
+    internalPath: SessionInternalPaths.tunnelUrls,
+    runtimeMethod: "GET",
+  }),
   sessionRoute({
     method: "PATCH",
     pattern: parsePattern("/sessions/:id/title"),

@@ -32,6 +32,7 @@ export interface SessionInternalRouteHandlers {
   openaiTokenRefresh: SessionInternalRouteHandler;
   anthropicTokenRefresh: SessionInternalRouteHandler;
   scmCredentials: SessionInternalRouteHandler;
+  tunnelUrls: SessionInternalRouteHandler;
   spawnContext: SessionInternalRouteHandler;
   childSummary: SessionInternalRouteHandler;
   cancel: SessionInternalRouteHandler;
@@ -94,6 +95,7 @@ export function createSessionInternalRoutes(
       path: SessionInternalPaths.scmCredentials,
       handler: handlers.scmCredentials,
     },
+    { method: "GET", path: SessionInternalPaths.tunnelUrls, handler: handlers.tunnelUrls },
     { method: "GET", path: SessionInternalPaths.spawnContext, handler: handlers.spawnContext },
     { method: "GET", path: SessionInternalPaths.childSummary, handler: handlers.childSummary },
     { method: "POST", path: SessionInternalPaths.cancel, handler: handlers.cancel },

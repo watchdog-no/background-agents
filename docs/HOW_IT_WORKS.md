@@ -476,7 +476,8 @@ already mint a fresh fallback token on restore.
 
 You can configure environment variables (API keys, credentials) at global or per-repository scope:
 
-- **Global secrets** apply to all repositories (e.g., `ANTHROPIC_OAUTH_REFRESH_TOKEN`)
+- **Global secrets** apply to all repositories (e.g., `ANTHROPIC_OAUTH_REFRESH_TOKEN`,
+  `DEEPSEEK_API_KEY`)
 - **Repository secrets** apply to a single repo and override global secrets with the same key
 - Stored encrypted (AES-256-GCM) in D1 database
 - Generally injected into sandboxes at startup
@@ -488,6 +489,9 @@ You can configure environment variables (API keys, credentials) at global or per
 > **Daytona and Vercel users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the
 > default Claude subscription path. Add provider API keys only if you intentionally use metered API
 > billing.
+>
+> **DeepSeek (all providers)**: DeepSeek models require `DEEPSEEK_API_KEY` as a global secret with
+> any sandbox provider — unlike `ANTHROPIC_API_KEY`, Modal does not inject it automatically.
 
 See [Secrets Management](./SECRETS.md) for setup instructions.
 

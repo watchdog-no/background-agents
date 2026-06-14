@@ -7,6 +7,7 @@ import type { ScmCredentialsResult } from "../../scm-credentials-service";
 import type { SessionRepository } from "../../repository";
 import type { SandboxRow, SessionRow } from "../../types";
 import { assertArtifactType } from "../../artifacts";
+import { parseTunnelUrls } from "../../tunnel-urls";
 
 interface AddParticipantRequest {
   userId: string;
@@ -51,6 +52,8 @@ export interface SandboxHandler {
   openaiTokenRefresh: () => Promise<Response>;
   anthropicTokenRefresh: () => Promise<Response>;
   scmCredentials: () => Promise<Response>;
+  /** Return the sandbox's resolved tunnel URLs as a `{ [port]: url }` map. */
+  tunnelUrls: () => Promise<Response>;
 }
 
 export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
@@ -216,6 +219,48 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
           expires_in: result.expiresIn,
         },
         { status: 200 }
+      );
+    },
+
+    /**
+     * Return the sandbox's resolved tunnel URLs as a `{ [port]: url }` map.
+     *
+     * `sandbox.tunnel_urls` is a JSON-encoded `{ [port: string]: string }`
+     * stored by `SandboxLifecycleManager#storeAndBroadcastTunnelUrls`. When the
+     * control plane has resolved Modal tunnel URLs but the in-sandbox file write
+     * (`sandbox.open` from outside) hasn't propagated to the sandbox's own
+     * filesystem view — a real failure mode on the Modal provider — this
+     * endpoint is the in-sandbox fallback for retrieving them via
+     * `SANDBOX_AUTH_TOKEN`.
+     *
+     * Responses:
+     * - `404` when no sandbox exists for the session.
+     * - `500` when the stored value is malformed — invalid JSON, not a plain
+     *   object, or holding a non-string value — so the in-sandbox setup hard-
+     *   fails on corrupt data instead of writing a garbage `.tunnels.env`. Note
+     *   a not-yet-resolved sandbox still returns `200` with an empty map, so the
+     *   client must tolerate an empty result and retry until ports appear.
+     * - `200` with `{ tunnelUrls }` otherwise (empty map when none are stored).
+     */
+    async tunnelUrls(): Promise<Response> {
+      const sandbox = deps.getSandbox();
+      if (!sandbox) {
+        return Response.json({ error: "No sandbox" }, { status: 404 });
+      }
+
+      let urls: Record<string, string> = {};
+      if (sandbox.tunnel_urls) {
+        const parsed = parseTunnelUrls(sandbox.tunnel_urls);
+        if (!parsed) {
+          deps.getLog().warn("Invalid stored tunnel_urls");
+          return Response.json({ error: "Invalid stored tunnel URLs" }, { status: 500 });
+        }
+        urls = parsed;
+      }
+
+      return Response.json(
+        { tunnelUrls: urls },
+        { status: 200, headers: { "Cache-Control": "no-store" } }
       );
     },
 

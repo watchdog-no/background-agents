@@ -883,11 +883,11 @@ class AgentBridge:
         "max": 31_999,
     }
     ANTHROPIC_ADAPTIVE_THINKING_MODELS: ClassVar[set[str]] = {
+        "claude-fable-5",
         "claude-opus-4-6",
         "claude-opus-4-7",
         "claude-opus-4-8",
         "claude-sonnet-4-6",
-        "claude-fable-5",
     }
     ANTHROPIC_ADAPTIVE_EFFORTS: ClassVar[set[str]] = {"low", "medium", "high", "xhigh", "max"}
 
