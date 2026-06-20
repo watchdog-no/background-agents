@@ -642,13 +642,26 @@ class AgentBridge:
 
             had_error = False
             error_message = None
+            emitted_output = False
             async for event in self._stream_opencode_response_sse(
                 message_id, content, model, reasoning_effort
             ):
                 if event.get("type") == "error":
                     had_error = True
                     error_message = event.get("error")
+                elif event.get("type") in ("token", "tool_call"):
+                    emitted_output = True
                 await self._send_event(event)
+
+            if not had_error and not emitted_output:
+                had_error = True
+                error_message = "OpenCode completed without emitting assistant output."
+                self.log.error(
+                    "prompt.no_output",
+                    message_id=message_id,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                )
 
             if had_error:
                 outcome = "error"
@@ -1034,6 +1047,7 @@ class AgentBridge:
         emitted_tool_states: set[str] = set()
         emitted_step_finish_part_ids: set[str] = set()
         allowed_assistant_msg_ids: set[str] = set()
+        user_message_ids: set[str] = {opencode_message_id}
         pending_parts: dict[str, list[tuple[dict[str, Any], Any]]] = {}
         pending_parts_total = 0
         pending_drop_logged = False
@@ -1184,6 +1198,7 @@ class AgentBridge:
                 cumulative_text,
                 allowed_assistant_msg_ids,
                 emitted_step_finish_part_ids,
+                user_message_ids=user_message_ids,
                 compaction_occurred=compaction_occurred,
                 completion_msg_id=completion_msg_id,
             )
@@ -1277,7 +1292,16 @@ class AgentBridge:
                                         role = info.get("role", "")
                                         finish = info.get("finish", "")
 
-                                        parent_matches = parent_id == opencode_message_id
+                                        if role == "user" and oc_msg_id:
+                                            if oc_msg_id not in user_message_ids:
+                                                self.log.info(
+                                                    "bridge.user_message_id_discovered",
+                                                    expected_id=opencode_message_id,
+                                                    actual_id=oc_msg_id,
+                                                )
+                                            user_message_ids.add(oc_msg_id)
+
+                                        parent_matches = parent_id in user_message_ids
                                         is_compaction_summary = info.get("summary") is True
 
                                         self.log.debug(
@@ -1605,6 +1629,7 @@ class AgentBridge:
         cumulative_text: dict[str, str],
         tracked_msg_ids: set[str] | None = None,
         emitted_step_finish_part_ids: set[str] | None = None,
+        user_message_ids: set[str] | None = None,
         compaction_occurred: bool = False,
         completion_msg_id: str | None = None,
     ) -> FinalMessageState:
@@ -1620,6 +1645,7 @@ class AgentBridge:
             cumulative_text: Text already sent, keyed by part ID
             tracked_msg_ids: Assistant message IDs tracked during SSE streaming
             emitted_step_finish_part_ids: step-finish parts already sent
+            user_message_ids: OpenCode user message IDs that assistant messages may parent to
             compaction_occurred: Whether session compaction happened during this prompt.
                 When True, accepts non-summary assistant messages even if parentID
                 doesn't match, since compaction changes the message chain.
@@ -1659,7 +1685,8 @@ class AgentBridge:
                 if role != "assistant":
                     continue
 
-                parent_matches = parent_id == opencode_message_id
+                valid_parent_ids = user_message_ids or {opencode_message_id}
+                parent_matches = parent_id in valid_parent_ids
                 in_tracked_set = bool(tracked_msg_ids and msg_id in tracked_msg_ids)
                 is_compaction_summary = info.get("summary") is True
 

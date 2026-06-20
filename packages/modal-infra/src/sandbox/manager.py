@@ -22,8 +22,10 @@ import modal
 
 from sandbox_runtime.constants import (
     CODE_SERVER_PORT,
+    CODE_SERVER_PORT_ENV_VAR,
     EXPECTED_TUNNEL_PORTS_ENV_VAR,
     TTYD_PROXY_PORT,
+    TTYD_PROXY_PORT_ENV_VAR,
     TUNNEL_ENV_FILE_PATH,
 )
 from sandbox_runtime.log_config import get_logger
@@ -36,6 +38,11 @@ log = get_logger("manager")
 
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 7200  # 2 hours
 SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS = 300
+# Mirrors DEFAULT_BUILD_TIMEOUT_SECONDS in shared (packages/shared/src/types/integrations.ts).
+DEFAULT_BUILD_TIMEOUT_SECONDS = 1800
+# Mirrors MAX_BUILD_TIMEOUT_SECONDS in shared.
+MAX_BUILD_TIMEOUT_SECONDS = 3600
+BUILD_FUNCTION_TIMEOUT_MARGIN_SECONDS = 300
 MAX_TUNNEL_PORTS = 10
 ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = {
     "ANTHROPIC_OAUTH_REFRESH_TOKEN",
@@ -58,6 +65,20 @@ def _filter_sandbox_user_env_vars(user_env_vars: dict[str, str] | None) -> dict[
         for key, value in user_env_vars.items()
         if key.upper() not in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS
     }
+
+
+def build_function_timeout_seconds(build_timeout_seconds: int) -> int:
+    """Modal function timeout for the build worker (build_repo_image).
+
+    The worker idles until the build sandbox finishes, then snapshots it
+    (SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS) and reports back, so its timeout must
+    exceed the sandbox lifetime plus the snapshot budget plus a margin.
+    """
+    return (
+        build_timeout_seconds
+        + SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS
+        + BUILD_FUNCTION_TIMEOUT_MARGIN_SECONDS
+    )
 
 
 def _resource_kwargs(settings: dict[str, Any] | None) -> dict:
@@ -206,20 +227,41 @@ class SandboxManager:
         return ports
 
     @staticmethod
+    def _resolve_service_ports(settings: dict[str, Any] | None) -> tuple[int, int]:
+        """Return effective (code_server_port, ttyd_proxy_port) from settings.
+
+        Falls back to the CODE_SERVER_PORT / TTYD_PROXY_PORT defaults when unset
+        or invalid. The control plane validates these before they reach here.
+        """
+        s = settings or {}
+
+        def coerce(value: Any, default: int) -> int:
+            if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
+                return value
+            return default
+
+        return (
+            coerce(s.get("codeServerPort"), CODE_SERVER_PORT),
+            coerce(s.get("terminalPort"), TTYD_PROXY_PORT),
+        )
+
+    @staticmethod
     def _collect_exposed_ports(
         code_server_enabled: bool,
         terminal_enabled: bool,
         settings: dict[str, Any] | None,
+        code_server_port: int,
+        ttyd_proxy_port: int,
     ) -> tuple[list[int], list[int]]:
         """Return (all_exposed_ports, extra_tunnel_ports) from settings and feature flags."""
         reserved: set[int] = set()
         exposed: list[int] = []
         if code_server_enabled:
-            exposed.append(CODE_SERVER_PORT)
-            reserved.add(CODE_SERVER_PORT)
+            exposed.append(code_server_port)
+            reserved.add(code_server_port)
         if terminal_enabled:
-            exposed.append(TTYD_PROXY_PORT)
-            reserved.add(TTYD_PROXY_PORT)
+            exposed.append(ttyd_proxy_port)
+            reserved.add(ttyd_proxy_port)
 
         raw_ports = (settings or {}).get("tunnelPorts", [])
         tunnel_ports = SandboxManager._validate_ports(raw_ports) if raw_ports else []
@@ -235,13 +277,15 @@ class SandboxManager:
         code_server_enabled: bool,
         terminal_enabled: bool,
         extra_ports: list[int],
+        code_server_port: int,
+        ttyd_proxy_port: int,
     ) -> tuple[str | None, str | None, dict[int, str] | None]:
         """Resolve all tunnels in a single pass. Returns (code_server_url, ttyd_url, extra_urls)."""
         all_ports: list[int] = []
         if code_server_enabled:
-            all_ports.append(CODE_SERVER_PORT)
+            all_ports.append(code_server_port)
         if terminal_enabled:
-            all_ports.append(TTYD_PROXY_PORT)
+            all_ports.append(ttyd_proxy_port)
         all_ports.extend(extra_ports)
 
         if not all_ports:
@@ -249,8 +293,11 @@ class SandboxManager:
 
         resolved = await SandboxManager._resolve_tunnels(sandbox, sandbox_id, all_ports)
 
-        code_server_url = resolved.pop(CODE_SERVER_PORT, None)
-        ttyd_url = resolved.pop(TTYD_PROXY_PORT, None)
+        # Only pull a service port out of the resolved map when that service owns
+        # it. Otherwise a user's own port (e.g. 8080 with code-server disabled)
+        # would be misrouted to code_server_url and dropped from the tunnel map.
+        code_server_url = resolved.pop(code_server_port, None) if code_server_enabled else None
+        ttyd_url = resolved.pop(ttyd_proxy_port, None) if terminal_enabled else None
         extra_urls = resolved if resolved else None
 
         if extra_urls:
@@ -424,8 +471,18 @@ class SandboxManager:
         else:
             image = base_image
 
+        code_server_port, ttyd_proxy_port = self._resolve_service_ports(config.settings)
+        if config.code_server_enabled:
+            env_vars[CODE_SERVER_PORT_ENV_VAR] = str(code_server_port)
+        if terminal_enabled:
+            env_vars[TTYD_PROXY_PORT_ENV_VAR] = str(ttyd_proxy_port)
+
         exposed_ports, tunnel_ports = self._collect_exposed_ports(
-            config.code_server_enabled, terminal_enabled, config.settings
+            config.code_server_enabled,
+            terminal_enabled,
+            config.settings,
+            code_server_port,
+            ttyd_proxy_port,
         )
         if tunnel_ports:
             env_vars[EXPECTED_TUNNEL_PORTS_ENV_VAR] = ",".join(str(p) for p in tunnel_ports)
@@ -451,7 +508,13 @@ class SandboxManager:
 
         modal_object_id = sandbox.object_id
         code_server_url, ttyd_url, extra_tunnel_urls = await self._resolve_and_setup_tunnels(
-            sandbox, sandbox_id, config.code_server_enabled, terminal_enabled, tunnel_ports
+            sandbox,
+            sandbox_id,
+            config.code_server_enabled,
+            terminal_enabled,
+            tunnel_ports,
+            code_server_port,
+            ttyd_proxy_port,
         )
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -485,6 +548,7 @@ class SandboxManager:
         default_branch: str = "main",
         clone_token: str = "",
         user_env_vars: dict[str, str] | None = None,
+        timeout_seconds: int = DEFAULT_BUILD_TIMEOUT_SECONDS,
     ) -> SandboxHandle:
         """
         Create a sandbox specifically for image building.
@@ -492,14 +556,13 @@ class SandboxManager:
         Like create_sandbox() but:
         - Sets IMAGE_BUILD_MODE=true (exits after setup, no OpenCode/bridge)
         - No SANDBOX_AUTH_TOKEN, CONTROL_PLANE_URL, or LLM secrets
-        - Shorter timeout (30 min vs 2 hours)
+        - Configurable, shorter lifetime (defaults to DEFAULT_BUILD_TIMEOUT_SECONDS
+          vs the 2-hour session default)
         - Always uses base_image (builds start from the universal base)
 
         Note: MCP servers are not available during image builds (no session config).
         MCP packages are installed at first use via npx instead.
         """
-        BUILD_TIMEOUT_SECONDS = 1800
-
         start_time = time.time()
         sandbox_id = f"build-{repo_owner}-{repo_name}-{int(time.time() * 1000)}"
 
@@ -528,7 +591,7 @@ class SandboxManager:
             image=base_image,
             app=app,
             secrets=[],
-            timeout=BUILD_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
             workdir="/workspace",
             env=env_vars,
         )
@@ -756,8 +819,18 @@ class SandboxManager:
         if anthropic_oauth_enabled:
             env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
+        code_server_port, ttyd_proxy_port = self._resolve_service_ports(settings)
+        if code_server_enabled:
+            env_vars[CODE_SERVER_PORT_ENV_VAR] = str(code_server_port)
+        if terminal_enabled:
+            env_vars[TTYD_PROXY_PORT_ENV_VAR] = str(ttyd_proxy_port)
+
         exposed_ports, tunnel_ports = self._collect_exposed_ports(
-            code_server_enabled, terminal_enabled, settings
+            code_server_enabled,
+            terminal_enabled,
+            settings,
+            code_server_port,
+            ttyd_proxy_port,
         )
         if tunnel_ports:
             env_vars[EXPECTED_TUNNEL_PORTS_ENV_VAR] = ",".join(str(p) for p in tunnel_ports)
@@ -783,7 +856,13 @@ class SandboxManager:
 
         modal_object_id = sandbox.object_id
         code_server_url, ttyd_url, extra_tunnel_urls = await self._resolve_and_setup_tunnels(
-            sandbox, sandbox_id, code_server_enabled, terminal_enabled, tunnel_ports
+            sandbox,
+            sandbox_id,
+            code_server_enabled,
+            terminal_enabled,
+            tunnel_ports,
+            code_server_port,
+            ttyd_proxy_port,
         )
 
         duration_ms = int((time.time() - start_time) * 1000)

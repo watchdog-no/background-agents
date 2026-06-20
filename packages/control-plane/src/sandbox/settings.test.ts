@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_CODE_SERVER_PORT,
+  DEFAULT_TERMINAL_PORT,
+  INTERNAL_TTYD_PORT,
+} from "@open-inspect/shared";
 import { normalizeSandboxSettings, SandboxSettingsValidationError } from "./settings";
 
 class CustomSettingsValidationError extends Error {}
@@ -47,6 +52,115 @@ describe("normalizeSandboxSettings", () => {
       terminalEnabled: true,
       maxTotalChildSessions: 5,
       memoryMib: 2048,
+    });
+  });
+
+  it("accepts a valid buildTimeoutSeconds", () => {
+    expect(normalizeSandboxSettings({ buildTimeoutSeconds: 2400 })).toEqual({
+      buildTimeoutSeconds: 2400,
+    });
+  });
+
+  it("throws for a non-positive or non-integer buildTimeoutSeconds", () => {
+    expect(() => normalizeSandboxSettings({ buildTimeoutSeconds: 0 })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ buildTimeoutSeconds: 12.5 })).toThrow(
+      SandboxSettingsValidationError
+    );
+  });
+
+  it("omits an invalid buildTimeoutSeconds in omit mode while keeping valid fields", () => {
+    expect(
+      normalizeSandboxSettings(
+        { buildTimeoutSeconds: -5, terminalEnabled: true },
+        { invalid: "omit" }
+      )
+    ).toEqual({ terminalEnabled: true });
+  });
+
+  it("accepts valid codeServerPort and terminalPort", () => {
+    expect(normalizeSandboxSettings({ codeServerPort: 8081, terminalPort: 7000 })).toEqual({
+      codeServerPort: 8081,
+      terminalPort: 7000,
+    });
+  });
+
+  it("throws for out-of-range service ports", () => {
+    expect(() => normalizeSandboxSettings({ codeServerPort: 0 })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ terminalPort: 70000 })).toThrow(
+      SandboxSettingsValidationError
+    );
+  });
+
+  it("rejects the reserved internal terminal port", () => {
+    expect(() => normalizeSandboxSettings({ codeServerPort: INTERNAL_TTYD_PORT })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ tunnelPorts: [INTERNAL_TTYD_PORT] })).toThrow(
+      SandboxSettingsValidationError
+    );
+  });
+
+  it("rejects duplicate ports across code-server, terminal, and tunnels", () => {
+    expect(() => normalizeSandboxSettings({ codeServerPort: 3000, tunnelPorts: [3000] })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ codeServerPort: 9000, terminalPort: 9000 })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ tunnelPorts: [DEFAULT_CODE_SERVER_PORT] })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ tunnelPorts: [DEFAULT_TERMINAL_PORT] })).toThrow(
+      SandboxSettingsValidationError
+    );
+  });
+
+  it("frees the default port for a tunnel when code-server is moved", () => {
+    expect(normalizeSandboxSettings({ codeServerPort: 8081, tunnelPorts: [8080] })).toEqual({
+      codeServerPort: 8081,
+      tunnelPorts: [8080],
+    });
+  });
+
+  it("frees the default terminal port for a tunnel when terminal is moved", () => {
+    expect(normalizeSandboxSettings({ terminalPort: 7682, tunnelPorts: [7680] })).toEqual({
+      terminalPort: 7682,
+      tunnelPorts: [7680],
+    });
+  });
+
+  it("drops colliding ports in omit mode so the merged config stays conflict-free", () => {
+    // Mirrors getResolvedConfig: a global service port and a repo tunnel port can
+    // merge into a collision that must not survive omit-mode normalization (or it
+    // would be silently dropped again at sandbox spawn).
+    expect(
+      normalizeSandboxSettings(
+        { codeServerPort: 9000, tunnelPorts: [9000, 3000] },
+        { invalid: "omit" }
+      )
+    ).toEqual({
+      codeServerPort: 9000,
+      tunnelPorts: [3000],
+    });
+    expect(
+      normalizeSandboxSettings(
+        { tunnelPorts: [DEFAULT_CODE_SERVER_PORT, DEFAULT_TERMINAL_PORT, 3000] },
+        { invalid: "omit" }
+      )
+    ).toEqual({
+      tunnelPorts: [3000],
+    });
+  });
+
+  it("drops the reserved internal terminal port from tunnels in omit mode", () => {
+    expect(
+      normalizeSandboxSettings({ tunnelPorts: [INTERNAL_TTYD_PORT, 3000] }, { invalid: "omit" })
+    ).toEqual({
+      tunnelPorts: [3000],
     });
   });
 });

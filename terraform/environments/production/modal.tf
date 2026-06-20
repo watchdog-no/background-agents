@@ -4,16 +4,17 @@
 
 # Calculate hash of Modal source files for change detection
 # Uses sha256sum (Linux) or shasum (macOS) for cross-platform compatibility
-# Includes runtime code plus bundled Skill markdown files.
+# Includes runtime code, bundled Skill markdown files, and modal-infra dependency
+# manifests so dependency-only changes also trigger a redeploy.
 data "external" "modal_source_hash" {
   count = local.use_modal_backend ? 1 : 0
 
   program = ["bash", "-c", <<-EOF
     cd ${var.project_root}
     if command -v sha256sum &> /dev/null; then
-      hash=$(find packages/modal-infra/src packages/sandbox-runtime/src -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.md" \) -exec sha256sum {} \; | sha256sum | cut -d' ' -f1)
+      hash=$( ( find packages/modal-infra/src packages/sandbox-runtime/src -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.md" \) -exec sha256sum {} \; ; sha256sum packages/modal-infra/pyproject.toml packages/modal-infra/uv.lock ) | sha256sum | cut -d' ' -f1)
     else
-      hash=$(find packages/modal-infra/src packages/sandbox-runtime/src -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.md" \) -exec shasum -a 256 {} \; | shasum -a 256 | cut -d' ' -f1)
+      hash=$( ( find packages/modal-infra/src packages/sandbox-runtime/src -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.md" \) -exec shasum -a 256 {} \; ; shasum -a 256 packages/modal-infra/pyproject.toml packages/modal-infra/uv.lock ) | shasum -a 256 | cut -d' ' -f1)
     fi
     echo "{\"hash\": \"$hash\"}"
   EOF

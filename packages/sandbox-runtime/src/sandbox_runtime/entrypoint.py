@@ -24,15 +24,29 @@ import httpx
 
 from .constants import (
     CODE_SERVER_PORT,
+    CODE_SERVER_PORT_ENV_VAR,
     EXPECTED_TUNNEL_PORTS_ENV_VAR,
     TTYD_PORT,
     TTYD_PROXY_PORT,
+    TTYD_PROXY_PORT_ENV_VAR,
     TUNNEL_ENV_FILE_PATH,
 )
 from .log_config import configure_logging, get_logger
 from .repo_image_callback import RepoImageBuildCallback
 
 configure_logging()
+
+
+def _port_from_env(env_var: str, default: int) -> int:
+    """Read an integer port from the environment, falling back to ``default``."""
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    try:
+        port = int(raw)
+    except ValueError:
+        return default
+    return port if 1 <= port <= 65535 else default
 
 
 AGENT_TOOLS_GATED_ON_ENV: dict[str, str] = {
@@ -457,20 +471,98 @@ class SandboxSupervisor:
                     continue
                 shutil.copy(tool_file, tool_dest / tool_file.name)
 
-        # Copy pre-built deps (package.json, package-lock.json, node_modules)
-        # from the image staging directory.  This gives OpenCode a lockfile
-        # that matches the declared dependencies so Npm.install() finds
-        # everything in sync and skips arborist reify() entirely.
-        deps_cache = Path("/app/opencode-deps")
+        # Copy pre-built deps (package.json, package-lock.json, node_modules) from the image
+        # staging directory so OpenCode's Npm.install() finds the tree in sync and skips the
+        # arborist reify() that would otherwise block the first request.
+        staged_at = time.monotonic()
+        self._stage_opencode_deps(Path("/app/opencode-deps"), opencode_dir)
+        self.log.info(
+            "opencode.repo_deps_staged",
+            dir=str(opencode_dir),
+            duration_ms=round((time.monotonic() - staged_at) * 1000),
+        )
+
+    @staticmethod
+    def _stage_opencode_deps(deps_cache: Path, dest_dir: Path) -> None:
+        """Copy the pre-staged OpenCode plugin deps into dest_dir.
+
+        Copies package.json, package-lock.json and node_modules from the image staging
+        directory (base.py's /app/opencode-deps) into dest_dir, per file and only when the
+        destination is absent. This gives OpenCode a lockfile that matches node_modules so
+        Npm.install() finds @opencode-ai/plugin in sync and skips the arborist reify() that
+        would otherwise block the first request.
+        """
         for name in ("package.json", "package-lock.json"):
             src = deps_cache / name
-            dest = opencode_dir / name
+            dest = dest_dir / name
             if src.exists() and not dest.exists():
                 shutil.copy2(src, dest)
         cached_modules = deps_cache / "node_modules"
-        local_modules = opencode_dir / "node_modules"
+        local_modules = dest_dir / "node_modules"
         if cached_modules.is_dir() and not local_modules.exists():
             shutil.copytree(cached_modules, local_modules, symlinks=True)
+
+    @staticmethod
+    def _resolve_opencode_global_config_dir() -> Path:
+        """Resolve OpenCode's global config directory the way OpenCode does.
+
+        OpenCode (via xdg-basedir) uses OPENCODE_CONFIG_DIR when set, otherwise
+        $XDG_CONFIG_HOME/opencode, otherwise ~/.config/opencode.
+        """
+        override = os.environ.get("OPENCODE_CONFIG_DIR")
+        if override:
+            return Path(override)
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg) if xdg else Path.home() / ".config"
+        return base / "opencode"
+
+    def _seed_global_opencode_deps(self) -> None:
+        """Fallback seed of OpenCode's global config dir with the staged plugin tree.
+
+        OpenCode bootstraps every directory in its config search path and forks
+        ``npm install @opencode-ai/plugin`` for each. The global config dir is created empty and
+        is never seeded by _install_tools (which only covers the repo's .opencode/), so with a
+        plugin configured the first POST /session would block on an arborist reify() of it.
+
+        The image bakes this tree into the global dir at build time (base.py), so this is
+        normally a no-op (we skip when node_modules already exists); it stays as a fallback for
+        environments where the baked dir is absent (e.g. a different HOME).
+        """
+        deps_cache = Path("/app/opencode-deps")
+        if not deps_cache.is_dir():
+            return
+        config_dir = self._resolve_opencode_global_config_dir()
+        # Only seed a pristine dir — never mix our modules into a user's manifest. The image
+        # bakes this tree in (base.py), so node_modules is normally already present and we skip.
+        nm_exists = (config_dir / "node_modules").exists()
+        if nm_exists or (config_dir / "package.json").exists():
+            self.log.info(
+                "opencode.global_deps_skip",
+                config_dir=str(config_dir),
+                reason="already_present" if nm_exists else "foreign_manifest",
+            )
+            return
+        seeded_at = time.monotonic()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        self._stage_opencode_deps(deps_cache, config_dir)
+        self.log.info(
+            "opencode.global_deps_seeded",
+            config_dir=str(config_dir),
+            duration_ms=round((time.monotonic() - seeded_at) * 1000),
+        )
+
+    def _prepare_opencode_filesystem(self, workdir: Path) -> None:
+        """Stage OpenCode's filesystem assets (tools, deps, skills, bin) before launch.
+
+        The global seed is best-effort (degrades to a slower reify); the rest fail fast.
+        """
+        self._install_tools(workdir)
+        try:
+            self._seed_global_opencode_deps()
+        except Exception as e:
+            self.log.warn("opencode.global_deps_seed_failed", exc=e)
+        self._install_skills(workdir)
+        self._install_bin_scripts()
 
     def _install_bin_scripts(self) -> None:
         """Install standalone CLI scripts into /usr/local/bin.
@@ -616,10 +708,11 @@ class SandboxSupervisor:
         if self.repo_path.exists() and (self.repo_path / ".git").exists():
             workdir = self.repo_path
 
+        code_server_port = _port_from_env(CODE_SERVER_PORT_ENV_VAR, CODE_SERVER_PORT)
         self.code_server_process = await asyncio.create_subprocess_exec(
             "code-server",
             "--bind-addr",
-            f"0.0.0.0:{CODE_SERVER_PORT}",
+            f"0.0.0.0:{code_server_port}",
             "--auth",
             "password",
             "--disable-telemetry",
@@ -631,7 +724,7 @@ class SandboxSupervisor:
         )
 
         asyncio.create_task(self._forward_code_server_logs())
-        self.log.info("code_server.started", port=CODE_SERVER_PORT)
+        self.log.info("code_server.started", port=code_server_port)
 
     async def _forward_code_server_logs(self) -> None:
         """Forward code-server stdout to supervisor stdout."""
@@ -761,7 +854,7 @@ class SandboxSupervisor:
         cmd = [
             "ttyd",
             "--port",
-            str(TTYD_PORT),
+            str(TTYD_PORT),  # localhost-only internal port; fixed (never exposed)
             "--interface",
             "127.0.0.1",  # localhost only — proxy is the only external gateway
             "--writable",
@@ -788,7 +881,10 @@ class SandboxSupervisor:
 
         cmd = ["bun", "run", "/app/sandbox_runtime/ttyd_proxy/server.ts"]
 
-        self.log.info("ttyd_proxy.starting", port=TTYD_PROXY_PORT)
+        self.log.info(
+            "ttyd_proxy.starting",
+            port=_port_from_env(TTYD_PROXY_PORT_ENV_VAR, TTYD_PROXY_PORT),
+        )
 
         self.ttyd_proxy_process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -870,9 +966,7 @@ class SandboxSupervisor:
         if self.repo_path.exists() and (self.repo_path / ".git").exists():
             workdir = self.repo_path
 
-        self._install_tools(workdir)
-        self._install_skills(workdir)
-        self._install_bin_scripts()
+        self._prepare_opencode_filesystem(workdir)
 
         # Deploy codex auth proxy plugin if OpenAI OAuth is configured
         opencode_dir = workdir / ".opencode"
@@ -1533,7 +1627,8 @@ class SandboxSupervisor:
 
             if self.ttyd_process is not None:
                 ttyd_ready = await self._wait_for_port(
-                    TTYD_PORT, timeout_seconds=self.SIDECAR_TIMEOUT_SECONDS
+                    TTYD_PORT,
+                    timeout_seconds=self.SIDECAR_TIMEOUT_SECONDS,
                 )
                 if ttyd_ready:
                     try:

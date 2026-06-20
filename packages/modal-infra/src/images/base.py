@@ -54,19 +54,7 @@ LINEAR_CLI_VERSION = "2.0.0"
 # from a user secret when set in Settings → Secrets.
 CTX7_VERSION = "0.4.4"
 
-# Cache buster - change this to force Modal image rebuild
-# v52: git credential helper backed by control plane; remove embedded VCS tokens
-# v53: upgrade OpenCode to 1.15.10 after the SSE event subscription fix
-# v54: install schpet/linear-cli for agent-side Linear access
-# v55: install ctx7 (Context7) for agent-side library documentation
-# v56: adopt upstream host-scoped SCM credential broker (PR #679)
-# v57: upgrade OpenCode to 1.15.12 for the OpenAI WebSocket response fix
-# v58: add Claude Pro/Max subscription OAuth path
-# v59: add Claude Opus 4.8 model support
-# v60: upgrade OpenCode to 1.15.13; inject Claude Code identity in the Anthropic
-#      OAuth plugin so subscription requests are authorized (fixes spurious 429s)
-# v64: match the official Claude Code SDK request envelope for Anthropic OAuth;
-#      preserve the OpenCode prompt/tools instead of stripping request fragments
+# Cache buster value lives in images/version.py; bump it to force Modal image rebuilds.
 
 # Base image with all development tools
 base_image = (
@@ -151,6 +139,13 @@ base_image = (
     # OpenCode's Npm.install() finds package-lock.json in sync and skips
     # the slow arborist reify() call (2-22s) that would otherwise block
     # the first prompt and exceed the bridge's HTTP timeout.
+    #
+    # Also bake the same tree into OpenCode's GLOBAL config dir. OpenCode installs
+    # @opencode-ai/plugin into every config directory it discovers — including the
+    # global one (HOME=/root, so ~/.config/opencode), which it creates empty on
+    # startup — so without this the runtime _seed_global_opencode_deps() pays a
+    # multi-second node_modules copy on every boot. Baking it makes that seed a
+    # no-op (it skips when node_modules already exists). See #767 / #790.
     .run_commands(
         "mkdir -p /app/opencode-deps",
         # Pin staged plugin to OPENCODE_VERSION so the pre-staged tree copied
@@ -159,6 +154,9 @@ base_image = (
         f'"dependencies":{{"@opencode-ai/plugin":"{OPENCODE_VERSION}"}}}}\''
         " > /app/opencode-deps/package.json",
         "cd /app/opencode-deps && npm install --ignore-scripts --no-audit --no-fund",
+        # Bake the in-sync tree into the global config dir so the runtime seed is a no-op.
+        "mkdir -p /root/.config/opencode",
+        "cp -a /app/opencode-deps/. /root/.config/opencode/",
     )
     # Install code-server for browser-based VS Code editing (direct .deb from GitHub releases)
     .run_commands(

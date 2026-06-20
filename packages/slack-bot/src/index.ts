@@ -33,6 +33,12 @@ import { createKvCacheStore } from "@open-inspect/shared";
 import { getUserRepoBranchPreference } from "./branch-preferences";
 import { setAssistantThreadStatusBestEffort } from "./activity-status";
 import { handleAppHomeInteractionRoute, publishAppHome } from "./app-home";
+import {
+  SELECT_REPO_ACTION_ID,
+  SELECT_REPO_QUICK_PICK_ACTION_ID,
+  getRepoClarificationOptions,
+  buildRepoClarificationBlocks,
+} from "./repo-clarification";
 import { getResolvedUserPreferences } from "./user-preferences";
 
 const log = createLogger("handler");
@@ -606,7 +612,31 @@ app.post("/interactions", async (c) => {
   }
 
   if (payload.type === "block_suggestion") {
-    return c.json({ options: [] });
+    const options =
+      payload.action_id === SELECT_REPO_ACTION_ID
+        ? await getRepoClarificationOptions(c.env, payload.value, traceId).catch((e) => {
+            // A repo-lookup failure must not surface as a 500 on /interactions —
+            // return no matches instead.
+            log.error("slack.repo_clarification_options", {
+              trace_id: traceId,
+              query: payload.value,
+              error: e instanceof Error ? e : new Error(String(e)),
+              duration_ms: Date.now() - startTime,
+            });
+            return [];
+          })
+        : [];
+    log.info("http.request", {
+      trace_id: traceId,
+      http_method: "POST",
+      http_path: "/interactions",
+      http_status: 200,
+      interaction_type: payload.type,
+      action_id: payload.action_id,
+      option_count: options.length,
+      duration_ms: Date.now() - startTime,
+    });
+    return c.json({ options });
   }
 
   const actionId = payload.actions?.[0]?.action_id ?? payload.action_id;
@@ -875,52 +905,15 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
       { expirationTtl: 3600 } // Expire after 1 hour
     );
 
-    // Build repo selection message
-    const repoOptions = (result.alternatives || repos.slice(0, 5)).map((r) => ({
-      text: {
-        type: "plain_text" as const,
-        text: r.displayName,
-      },
-      description: {
-        type: "plain_text" as const,
-        text: r.description.slice(0, 75),
-      },
-      value: r.id,
-    }));
-
     // Distinguish an infra failure (broken classifier creds) from a genuine
     // low-confidence result so the team knows there's a bug to fix.
     const header = result.failureReason
-      ? `:warning: The repository classifier failed to run (\`${result.failureReason}\`) — this is a configuration issue, not a normal "couldn't decide". Please flag it to the team.`
+      ? `:warning: The repository classifier failed to run (\`${result.failureReason}\`) - this is a configuration issue, not a normal "couldn't decide". Please flag it to the team.`
       : "I couldn't determine which repository you're referring to.";
 
     await postMessage(env.SLACK_BOT_TOKEN, channel, `${header} ${result.reasoning}`, {
       thread_ts: threadTs || ts,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `${header}\n\n_${result.reasoning}_`,
-          },
-        },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: "Which repository should I work with?",
-          },
-          accessory: {
-            type: "static_select",
-            placeholder: {
-              type: "plain_text",
-              text: "Select a repository",
-            },
-            options: repoOptions,
-            action_id: "select_repo",
-          },
-        },
-      ],
+      blocks: buildRepoClarificationBlocks(result.reasoning, result.alternatives, header),
     });
     return;
   }
@@ -1190,9 +1183,11 @@ async function handleSlackInteraction(
   const threadTs = payload.message?.thread_ts;
 
   switch (action.action_id) {
-    case "select_repo": {
+    case SELECT_REPO_ACTION_ID:
+    case SELECT_REPO_QUICK_PICK_ACTION_ID: {
       if (!channel || !messageTs) return;
-      const repoId = action.selected_option?.value;
+      // external_select selection carries selected_option; quick-pick buttons carry value.
+      const repoId = action.selected_option?.value ?? action.value;
       if (repoId) {
         await handleRepoSelection(
           repoId,

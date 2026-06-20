@@ -42,11 +42,78 @@ export interface CodeServerSettings {
 /** Maximum number of tunnel ports a user can configure per sandbox. */
 export const MAX_TUNNEL_PORTS = 10;
 
+/**
+ * Default port code-server binds to inside the sandbox. Mirrors
+ * `CODE_SERVER_PORT` in `packages/sandbox-runtime/src/sandbox_runtime/constants.py`.
+ */
+export const DEFAULT_CODE_SERVER_PORT = 8080;
+
+/**
+ * Default port the web terminal (ttyd) proxy is exposed on. Mirrors
+ * `TTYD_PROXY_PORT` in `packages/sandbox-runtime/src/sandbox_runtime/constants.py`.
+ */
+export const DEFAULT_TERMINAL_PORT = 7680;
+
+/**
+ * Internal ttyd port (localhost-only, behind the proxy). Reserved: it is never
+ * exposed and cannot be chosen as a code-server, terminal, or tunnel port.
+ * Mirrors `TTYD_PORT` in `packages/sandbox-runtime/src/sandbox_runtime/constants.py`.
+ */
+export const INTERNAL_TTYD_PORT = 7681;
+
+/** A configured sandbox port plus where it came from, for conflict diagnostics. */
+export interface ConfiguredSandboxPort {
+  port: number;
+  /** Human-readable source, e.g. "codeServerPort" or "terminal port". */
+  label: string;
+}
+
+/** A port conflict: either the reserved internal port, or a duplicate. */
+export type SandboxPortConflict =
+  | { kind: "reserved"; port: number; label: string }
+  | { kind: "duplicate"; port: number; label: string };
+
+/**
+ * Find the first conflict across configured sandbox ports (code-server,
+ * terminal, and tunnel ports): a port equal to the reserved internal ttyd port
+ * ({@link INTERNAL_TTYD_PORT}), or a port used more than once. Returns null when
+ * every port is usable.
+ *
+ * Enablement-independent — every configured port must be unique so none is
+ * silently dropped at sandbox spawn. Shared by control-plane validation and the
+ * web settings UI so the rule lives in exactly one place.
+ */
+export function findSandboxPortConflict(
+  ports: ConfiguredSandboxPort[]
+): SandboxPortConflict | null {
+  const seen = new Set<number>();
+  for (const { port, label } of ports) {
+    if (port === INTERNAL_TTYD_PORT) return { kind: "reserved", port, label };
+    if (seen.has(port)) return { kind: "duplicate", port, label };
+    seen.add(port);
+  }
+  return null;
+}
+
 /** Default maximum active agent-spawned child sessions per parent session. */
 export const DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS = 5;
 
 /** Default maximum agent-spawned child sessions per parent session. */
 export const DEFAULT_MAX_TOTAL_CHILD_SESSIONS = 15;
+
+/**
+ * Default repo-image build timeout (the build sandbox lifetime), in seconds.
+ * Mirrors `DEFAULT_BUILD_TIMEOUT_SECONDS` in the Modal data plane
+ * (`packages/modal-infra/src/sandbox/manager.py`).
+ */
+export const DEFAULT_BUILD_TIMEOUT_SECONDS = 1800;
+
+/**
+ * Maximum configurable repo-image build timeout, in seconds. The Modal
+ * stale-build sweep (`STALE_BUILD_THRESHOLD_SECONDS`) is sized above this, so
+ * raising it requires raising that threshold in lockstep.
+ */
+export const MAX_BUILD_TIMEOUT_SECONDS = 3600;
 
 /**
  * Sandbox environment settings. Provider-agnostic: describes what the user
@@ -62,6 +129,18 @@ export interface SandboxSettings {
   tunnelPorts?: number[];
   /** Enable a browser-based terminal (ttyd) in sandbox sessions. */
   terminalEnabled?: boolean;
+  /**
+   * Port code-server binds to inside the sandbox (only used when code-server is
+   * enabled). Unset → DEFAULT_CODE_SERVER_PORT. Set this to free the default
+   * port for your own service on a tunnel.
+   */
+  codeServerPort?: number;
+  /**
+   * Port the web terminal (ttyd) proxy is exposed on (only used when
+   * `terminalEnabled`). Unset → DEFAULT_TERMINAL_PORT. Ignored by providers
+   * without terminal support.
+   */
+  terminalPort?: number;
   /** Maximum active agent-spawned child sessions per parent session. */
   maxConcurrentChildSessions?: number;
   /** Maximum total agent-spawned child sessions per parent session. */
@@ -78,6 +157,28 @@ export interface SandboxSettings {
    * default.
    */
   memoryMib?: number | null;
+  /**
+   * Repo-image build timeout (the build sandbox lifetime), in seconds.
+   * Build-only — sessions are unaffected. Unset → DEFAULT_BUILD_TIMEOUT_SECONDS.
+   * The trigger caps the effective value at MAX_BUILD_TIMEOUT_SECONDS via
+   * {@link resolveBuildTimeoutSeconds}.
+   */
+  buildTimeoutSeconds?: number;
+}
+
+/**
+ * Resolve the effective repo-image build timeout (seconds) from sandbox
+ * settings: the default when unset, otherwise capped at
+ * MAX_BUILD_TIMEOUT_SECONDS. Capping here keeps the Modal function-timeout and
+ * stale-sweep invariants intact regardless of how the stored value got there
+ * (old rows, direct API writes). A non-finite value falls back to the default.
+ */
+export function resolveBuildTimeoutSeconds(settings: SandboxSettings | undefined): number {
+  const requested = settings?.buildTimeoutSeconds;
+  if (typeof requested !== "number" || !Number.isFinite(requested)) {
+    return DEFAULT_BUILD_TIMEOUT_SECONDS;
+  }
+  return Math.min(MAX_BUILD_TIMEOUT_SECONDS, Math.max(1, Math.round(requested)));
 }
 
 export type SlackMentionsPolicy = "allow" | "escape" | "strip";

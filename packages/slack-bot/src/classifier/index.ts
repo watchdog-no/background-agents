@@ -297,7 +297,9 @@ export class RepoClassifier {
         confidence: "low",
         reasoning:
           "The repository classifier failed to run, so I couldn't auto-detect the repository. Please select a repository.",
-        alternatives: repos.slice(0, 5),
+        // No basis to suggest specific repos on a classification failure; the
+        // picker lets the user search the full list.
+        alternatives: undefined,
         needsClarification: true,
         failureReason,
       };

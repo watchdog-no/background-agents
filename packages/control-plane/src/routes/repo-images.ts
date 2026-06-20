@@ -8,8 +8,9 @@
  * - Maintenance operations (stale builds, cleanup)
  */
 
-import { computeHmacHex } from "@open-inspect/shared";
+import { computeHmacHex, resolveBuildTimeoutSeconds } from "@open-inspect/shared";
 import { RepoImageStore } from "../db/repo-images";
+import { resolveSandboxSettings } from "../session/integration-settings-resolution";
 import { verifyInternalToken } from "../auth/internal";
 import { RepoMetadataStore } from "../db/repo-metadata";
 import { GlobalSecretsStore } from "../db/global-secrets";
@@ -32,7 +33,7 @@ import {
   parseJsonBody,
   extractRepoParams,
   createRouteSourceControlProvider,
-  resolveInstalledRepo,
+  resolveRepoOrError,
 } from "./shared";
 
 const logger = createLogger("router:repo-images");
@@ -673,6 +674,12 @@ async function handleTriggerBuild(
   if (params instanceof Response) return params;
   const { owner, name } = params;
 
+  // Resolve the repo to get its actual default branch — never assume "main".
+  // The same resolution yields repoId, reused below for repo-scoped secrets.
+  const resolved = await resolveRepoOrError(env, owner, name, ctx, logger);
+  if (resolved instanceof Response) return resolved;
+  const { repoId, defaultBranch } = resolved;
+
   const store = new RepoImageStore(env.DB);
   const backend = getRepoImageBackend(env);
   const now = Date.now();
@@ -690,13 +697,16 @@ async function handleTriggerBuild(
       repoOwner: owner,
       repoName: name,
       provider: backend,
-      baseBranch: "main",
+      baseBranch: defaultBranch,
       callbackTokenHash,
       callbackTokenExpiresAt: callbackToken ? now + VERCEL_CALLBACK_TOKEN_TTL_MS : undefined,
     });
 
     // Construct callback URL
     const callbackUrl = `${env.WORKER_URL}/repo-images/build-complete`;
+
+    const sandboxSettings = await resolveSandboxSettings(env.DB, owner, name);
+    const buildTimeoutSeconds = resolveBuildTimeoutSeconds(sandboxSettings);
 
     // Best-effort: fetch user secrets for the build sandbox
     let userEnvVars: Record<string, string> | undefined;
@@ -715,12 +725,8 @@ async function handleTriggerBuild(
 
       let repoSecrets: Record<string, string> = {};
       try {
-        const provider = createRouteSourceControlProvider(env);
-        const resolved = await resolveInstalledRepo(provider, owner, name);
-        if (resolved) {
-          const repoStore = new RepoSecretsStore(env.DB, env.REPO_SECRETS_ENCRYPTION_KEY);
-          repoSecrets = await repoStore.getDecryptedSecrets(resolved.repoId);
-        }
+        const repoStore = new RepoSecretsStore(env.DB, env.REPO_SECRETS_ENCRYPTION_KEY);
+        repoSecrets = await repoStore.getDecryptedSecrets(repoId);
       } catch (e) {
         logger.warn("repo_image.repo_secrets_failed", {
           error: e instanceof Error ? e.message : String(e),
@@ -760,10 +766,11 @@ async function handleTriggerBuild(
           {
             repoOwner: owner,
             repoName: name,
-            defaultBranch: "main",
+            defaultBranch,
             buildId,
             callbackUrl,
             userEnvVars,
+            buildTimeoutSeconds,
           },
           { trace_id: ctx.trace_id, request_id: ctx.request_id }
         );
@@ -789,12 +796,13 @@ async function handleTriggerBuild(
         await createConfiguredVercelProvider(env).triggerRepoImageBuild({
           repoOwner: owner,
           repoName: name,
-          defaultBranch: "main",
+          defaultBranch,
           buildId,
           callbackUrl,
           callbackToken,
           userEnvVars,
           cloneToken,
+          buildTimeoutSeconds,
           onProviderSessionCreated: async (providerSessionId) => {
             const bound = await store.bindProviderSession(buildId, "vercel", providerSessionId);
             if (!bound) {
@@ -909,7 +917,9 @@ async function handleMarkStale(
     body = {};
   }
 
-  const maxAgeSeconds = body.max_age_seconds ?? 2100; // 35 minutes default
+  // Body-less fallback only; the scheduler always sends max_age_seconds explicitly.
+  // Mirrors STALE_BUILD_THRESHOLD_SECONDS in the Modal scheduler (image_builder.py).
+  const maxAgeSeconds = body.max_age_seconds ?? 4200;
   const maxAgeMs = maxAgeSeconds * 1000;
 
   const store = new RepoImageStore(env.DB);
