@@ -7,10 +7,15 @@ import { ChevronDownIcon, CheckIcon, PlusIcon } from "@/components/ui/icons";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import useSWR from "swr";
-import type { SandboxSettings } from "@open-inspect/shared";
+import type { ConfiguredSandboxPort, SandboxSettings } from "@open-inspect/shared";
 import {
+  DEFAULT_BUILD_TIMEOUT_SECONDS,
+  DEFAULT_CODE_SERVER_PORT,
   DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS,
   DEFAULT_MAX_TOTAL_CHILD_SESSIONS,
+  DEFAULT_TERMINAL_PORT,
+  findSandboxPortConflict,
+  MAX_BUILD_TIMEOUT_SECONDS,
   MAX_TUNNEL_PORTS,
 } from "@open-inspect/shared";
 
@@ -47,6 +52,12 @@ function isValidCpuCores(value: string): boolean {
 function isValidMemoryMib(value: string): boolean {
   if (!/^\d+$/.test(value)) return false;
   return Number(value) >= 1;
+}
+
+function isValidBuildTimeout(value: string): boolean {
+  if (!/^\d+$/.test(value)) return false;
+  const n = Number(value);
+  return n >= 1 && n <= MAX_BUILD_TIMEOUT_SECONDS;
 }
 
 const numOrUndef = (v: number | null | undefined): number | undefined =>
@@ -120,6 +131,18 @@ function SandboxSettingsEditor({
     ? ((data as GlobalSettingsResponse)?.settings?.defaults?.terminalEnabled ?? false)
     : ((data as RepoSettingsResponse)?.settings?.terminalEnabled ?? false);
 
+  const currentCodeServerPort: number | undefined = isGlobal
+    ? (data as GlobalSettingsResponse)?.settings?.defaults?.codeServerPort
+    : (data as RepoSettingsResponse)?.settings?.codeServerPort;
+
+  const currentTerminalPort: number | undefined = isGlobal
+    ? (data as GlobalSettingsResponse)?.settings?.defaults?.terminalPort
+    : (data as RepoSettingsResponse)?.settings?.terminalPort;
+
+  const currentBuildTimeoutSeconds: number | undefined = isGlobal
+    ? (data as GlobalSettingsResponse)?.settings?.defaults?.buildTimeoutSeconds
+    : (data as RepoSettingsResponse)?.settings?.buildTimeoutSeconds;
+
   const currentMaxConcurrentChildSessions: number = isGlobal
     ? (globalDefaults?.maxConcurrentChildSessions ?? DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS)
     : (repoSettings?.maxConcurrentChildSessions ??
@@ -142,6 +165,9 @@ function SandboxSettingsEditor({
 
   const [portRows, setPortRows] = useState<string[] | null>(null);
   const [terminalEnabled, setTerminalEnabled] = useState<boolean | null>(null);
+  const [codeServerPort, setCodeServerPort] = useState<string | null>(null);
+  const [terminalPort, setTerminalPort] = useState<string | null>(null);
+  const [buildTimeoutSeconds, setBuildTimeoutSeconds] = useState<string | null>(null);
   const [maxConcurrentChildSessions, setMaxConcurrentChildSessions] = useState<string | null>(null);
   const [maxTotalChildSessions, setMaxTotalChildSessions] = useState<string | null>(null);
   const [cpuCores, setCpuCores] = useState<string | null>(null);
@@ -163,6 +189,13 @@ function SandboxSettingsEditor({
     cpuCores ?? (currentCpuCores !== undefined ? String(currentCpuCores) : "");
   const resolvedMemoryMib =
     memoryMib ?? (currentMemoryMib !== undefined ? String(currentMemoryMib) : "");
+  const resolvedCodeServerPort =
+    codeServerPort ?? (currentCodeServerPort !== undefined ? String(currentCodeServerPort) : "");
+  const resolvedTerminalPort =
+    terminalPort ?? (currentTerminalPort !== undefined ? String(currentTerminalPort) : "");
+  const resolvedBuildTimeoutSeconds =
+    buildTimeoutSeconds ??
+    (currentBuildTimeoutSeconds !== undefined ? String(currentBuildTimeoutSeconds) : "");
 
   const handleAddRow = () => {
     if (rows.length >= MAX_TUNNEL_PORTS) return;
@@ -220,6 +253,57 @@ function SandboxSettingsEditor({
       return;
     }
 
+    const trimmedCodeServerPort = resolvedCodeServerPort.trim();
+    if (trimmedCodeServerPort !== "" && !isValidPort(trimmedCodeServerPort)) {
+      setError("Code server port must be a whole number between 1 and 65535.");
+      return;
+    }
+
+    const trimmedTerminalPort = resolvedTerminalPort.trim();
+    if (trimmedTerminalPort !== "" && !isValidPort(trimmedTerminalPort)) {
+      setError("Terminal port must be a whole number between 1 and 65535.");
+      return;
+    }
+
+    const trimmedBuildTimeout = resolvedBuildTimeoutSeconds.trim();
+    if (trimmedBuildTimeout !== "" && !isValidBuildTimeout(trimmedBuildTimeout)) {
+      setError(
+        `Build timeout must be a whole number of seconds, at most ${MAX_BUILD_TIMEOUT_SECONDS}.`
+      );
+      return;
+    }
+
+    // Validate against the EFFECTIVE service ports the runtime will bind: an
+    // explicit value, else (at repo scope) the inherited global default, else the
+    // shared default. A blank field still occupies its default port, so a tunnel
+    // on 8080/7680 must be caught here just like an explicit collision.
+    const effectiveCodeServerPort =
+      trimmedCodeServerPort !== ""
+        ? Number(trimmedCodeServerPort)
+        : isGlobal
+          ? DEFAULT_CODE_SERVER_PORT
+          : (globalDefaults?.codeServerPort ?? DEFAULT_CODE_SERVER_PORT);
+    const effectiveTerminalPort =
+      trimmedTerminalPort !== ""
+        ? Number(trimmedTerminalPort)
+        : isGlobal
+          ? DEFAULT_TERMINAL_PORT
+          : (globalDefaults?.terminalPort ?? DEFAULT_TERMINAL_PORT);
+    const configuredPorts: ConfiguredSandboxPort[] = [
+      ...ports.map((port) => ({ port, label: "tunnel port" })),
+      { port: effectiveCodeServerPort, label: "code server port" },
+      { port: effectiveTerminalPort, label: "terminal port" },
+    ];
+    const portConflict = findSandboxPortConflict(configuredPorts);
+    if (portConflict) {
+      setError(
+        portConflict.kind === "reserved"
+          ? `Port ${portConflict.port} is reserved for the internal terminal and cannot be used.`
+          : "Code server, terminal, and tunnel ports must all be different."
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       const existingEnabledRepos = isGlobal
@@ -229,6 +313,15 @@ function SandboxSettingsEditor({
         tunnelPorts: ports,
         terminalEnabled: resolvedTerminalEnabled,
       };
+      if (trimmedCodeServerPort !== "") {
+        settingsPayload.codeServerPort = Number(trimmedCodeServerPort);
+      }
+      if (trimmedTerminalPort !== "") {
+        settingsPayload.terminalPort = Number(trimmedTerminalPort);
+      }
+      if (trimmedBuildTimeout !== "") {
+        settingsPayload.buildTimeoutSeconds = Number(trimmedBuildTimeout);
+      }
       if (
         isGlobal ||
         maxConcurrentChildSessions !== null ||
@@ -274,6 +367,9 @@ function SandboxSettingsEditor({
       setMaxTotalChildSessions(null);
       setCpuCores(null);
       setMemoryMib(null);
+      setCodeServerPort(null);
+      setTerminalPort(null);
+      setBuildTimeoutSeconds(null);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 2000);
     } catch (e) {
@@ -292,6 +388,9 @@ function SandboxSettingsEditor({
     resolvedMaxTotalChildSessions,
     resolvedCpuCores,
     resolvedMemoryMib,
+    resolvedCodeServerPort,
+    resolvedTerminalPort,
+    resolvedBuildTimeoutSeconds,
     cpuCores,
     memoryMib,
     maxConcurrentChildSessions,
@@ -300,6 +399,8 @@ function SandboxSettingsEditor({
     repoSettings?.maxTotalChildSessions,
     repoSettings?.cpuCores,
     repoSettings?.memoryMib,
+    globalDefaults?.codeServerPort,
+    globalDefaults?.terminalPort,
   ]);
 
   const hasPortChanges =
@@ -316,13 +417,28 @@ function SandboxSettingsEditor({
   const currentMemoryMibString = currentMemoryMib !== undefined ? String(currentMemoryMib) : "";
   const hasCpuChange = cpuCores !== null && cpuCores.trim() !== currentCpuCoresString;
   const hasMemoryChange = memoryMib !== null && memoryMib.trim() !== currentMemoryMibString;
+  const currentCodeServerPortString =
+    currentCodeServerPort !== undefined ? String(currentCodeServerPort) : "";
+  const currentTerminalPortString =
+    currentTerminalPort !== undefined ? String(currentTerminalPort) : "";
+  const hasCodeServerPortChange =
+    codeServerPort !== null && codeServerPort.trim() !== currentCodeServerPortString;
+  const hasTerminalPortChange =
+    terminalPort !== null && terminalPort.trim() !== currentTerminalPortString;
+  const currentBuildTimeoutSecondsString =
+    currentBuildTimeoutSeconds !== undefined ? String(currentBuildTimeoutSeconds) : "";
+  const hasBuildTimeoutChange =
+    buildTimeoutSeconds !== null && buildTimeoutSeconds.trim() !== currentBuildTimeoutSecondsString;
   const hasChanges =
     hasPortChanges ||
     hasTerminalChange ||
     hasConcurrentLimitChange ||
     hasTotalLimitChange ||
     hasCpuChange ||
-    hasMemoryChange;
+    hasMemoryChange ||
+    hasCodeServerPortChange ||
+    hasTerminalPortChange ||
+    hasBuildTimeoutChange;
 
   if (isLoading || isLoadingGlobal) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -354,6 +470,49 @@ function SandboxSettingsEditor({
               }`}
             />
           </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-foreground mb-1.5">Service Ports</label>
+        <p className="text-xs text-muted-foreground mb-2">
+          Ports code-server and the web terminal bind to. Leave blank for the defaults (
+          {DEFAULT_CODE_SERVER_PORT} and {DEFAULT_TERMINAL_PORT}). Change a port to free the default
+          for your own service on a tunnel. Code-server is enabled in its own settings.
+        </p>
+        <div className="grid gap-3 max-w-sm sm:grid-cols-2">
+          <div>
+            <label
+              htmlFor="code-server-port"
+              className="block text-xs font-medium text-muted-foreground mb-1"
+            >
+              Code server port
+            </label>
+            <Input
+              id="code-server-port"
+              type="text"
+              inputMode="numeric"
+              value={resolvedCodeServerPort}
+              onChange={(e) => setCodeServerPort(e.target.value)}
+              placeholder={String(DEFAULT_CODE_SERVER_PORT)}
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="terminal-port"
+              className="block text-xs font-medium text-muted-foreground mb-1"
+            >
+              Terminal port
+            </label>
+            <Input
+              id="terminal-port"
+              type="text"
+              inputMode="numeric"
+              value={resolvedTerminalPort}
+              onChange={(e) => setTerminalPort(e.target.value)}
+              placeholder={String(DEFAULT_TERMINAL_PORT)}
+            />
+          </div>
         </div>
       </div>
 
@@ -484,6 +643,35 @@ function SandboxSettingsEditor({
               placeholder="provider default"
             />
           </div>
+        </div>
+      </div>
+
+      <div>
+        <label
+          htmlFor="sandbox-build-timeout"
+          className="block text-sm font-medium text-foreground mb-1.5"
+        >
+          Repo Image Build Timeout
+        </label>
+        <p className="text-xs text-muted-foreground mb-2">
+          How long a pre-built repo image may take to build (clone + setup), in seconds. Raise it
+          for large repos with slow setup. Leave blank for the default (
+          {DEFAULT_BUILD_TIMEOUT_SECONDS}s). Builds only — sessions are unaffected.
+        </p>
+        <div className="max-w-sm">
+          <Input
+            id="sandbox-build-timeout"
+            type="number"
+            min={1}
+            max={MAX_BUILD_TIMEOUT_SECONDS}
+            inputMode="numeric"
+            value={resolvedBuildTimeoutSeconds}
+            onChange={(e) => setBuildTimeoutSeconds(e.target.value)}
+            placeholder={String(DEFAULT_BUILD_TIMEOUT_SECONDS)}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Maximum: {MAX_BUILD_TIMEOUT_SECONDS} seconds.
+          </p>
         </div>
       </div>
 

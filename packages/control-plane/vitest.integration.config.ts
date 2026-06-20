@@ -2,8 +2,19 @@ import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-worker
 import { defineConfig } from "vitest/config";
 import path from "path";
 import { webcrypto } from "node:crypto";
+import { createRequire } from "node:module";
 
 const migrationsPath = path.resolve(__dirname, "../../terraform/d1/migrations");
+
+// Pin luxon to its CommonJS build. vite 8 resolves luxon via the "import"
+// condition to its ESM build, but cron-parser (a CJS transitive dep of
+// @open-inspect/shared, used by the scheduler's nextCronOccurrence) reads it as
+// `require("luxon").DateTime`. Under @cloudflare/vitest-pool-workers that
+// CJS->ESM interop yields `undefined`, so the scheduler tick throws "Cannot read
+// properties of undefined (reading 'DateTime')" and silently skips every overdue
+// automation (see scheduler.test.ts /internal/tick). vite 7 used the CJS build,
+// which interops correctly. Test-only — production bundles via esbuild/wrangler.
+const luxonCjsEntry = createRequire(__filename).resolve("luxon");
 
 /** Generate a random base64-encoded 32-byte AES key for tests. */
 function generateTestEncryptionKey(): string {
@@ -15,9 +26,16 @@ function generateTestEncryptionKey(): string {
 // `defineWorkersConfig` + `test.poolOptions.workers` setup with the
 // `cloudflareTest()` Vite plugin, configured via `defineConfig` from
 // "vitest/config". The old `singleWorker`/`isolatedStorage` poolOptions are not
-// configured here; integration tests share one D1 instance and rely on explicit
-// `cleanD1Tables()` cleanup (see test/integration/cleanup.ts) for isolation.
+// configured here; pool-workers isolates D1 storage per test FILE, so files run
+// in parallel without cross-file interference. Within a file, tests share one D1
+// instance and rely on explicit `cleanD1Tables()` cleanup (see
+// test/integration/cleanup.ts) for isolation.
 export default defineConfig({
+  resolve: {
+    alias: {
+      luxon: luxonCjsEntry,
+    },
+  },
   plugins: [
     cloudflareTest(async () => {
       const migrations = await readD1Migrations(migrationsPath);

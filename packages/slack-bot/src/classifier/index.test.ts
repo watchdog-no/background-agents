@@ -104,7 +104,7 @@ describe("RepoClassifier", () => {
     expect(result.needsClarification).toBe(true);
     expect(result.failureReason).toBe("oauth_unauthorized");
     expect(result.reasoning).toContain("classifier failed to run");
-    expect(result.alternatives).toHaveLength(2);
+    expect(result.alternatives).toBeUndefined();
   });
 
   it("flags a failure when the endpoint returns an invalid payload", async () => {

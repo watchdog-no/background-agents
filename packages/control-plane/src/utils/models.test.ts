@@ -58,7 +58,9 @@ describe("model utilities", () => {
 
     it("returns true for OpenCode Zen models", () => {
       expect(isValidModel("opencode/kimi-k2.5")).toBe(true);
+      expect(isValidModel("opencode/kimi-k2.6")).toBe(true);
       expect(isValidModel("opencode/minimax-m2.5")).toBe(true);
+      expect(isValidModel("opencode/qwen3.7-max")).toBe(true);
       expect(isValidModel("opencode/glm-5")).toBe(true);
       expect(isValidModel("opencode/glm-5.1")).toBe(true);
     });
@@ -632,7 +634,9 @@ describe("model utilities", () => {
 
       expect(openCodeZenCategory?.models.map((model) => model.id)).toEqual([
         "opencode/kimi-k2.5",
+        "opencode/kimi-k2.6",
         "opencode/minimax-m2.5",
+        "opencode/qwen3.7-max",
         "opencode/glm-5",
         "opencode/glm-5.1",
       ]);

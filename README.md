@@ -32,9 +32,10 @@ through the git credential helper on demand. This means:
   organization's repositories, and any user of the system can access any repo the App has access to
 - **No per-user repository access validation** - The system does not verify that a user has
   permission to access a specific repository before creating a session
-- **User OAuth tokens are used for PR creation** - PRs are created using the user's GitHub OAuth
-  token, ensuring proper attribution and that users can only create PRs on repos they have write
-  access to
+- **GitHub users' OAuth tokens are used for PR creation** - For GitHub logins, PRs are created using
+  the user's GitHub OAuth token, ensuring proper attribution and that they can only create PRs on
+  repos they have write access to. Users who sign in another way (e.g. Google) carry no SCM token,
+  so their PRs fall back to the shared GitHub App bot
 
 ### Token Architecture
 
@@ -175,7 +176,7 @@ Choose the AI model that fits your task, with per-session reasoning effort contr
 | ------------ | -------------------------------------------------------------------- |
 | Anthropic    | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5      |
 | OpenAI       | GPT 5.2, GPT 5.4, GPT 5.5, GPT 5.2 Codex, 5.3 Codex, 5.3 Codex Spark |
-| OpenCode Zen | Kimi K2.5, MiniMax M2.5, GLM 5 (opt-in)                              |
+| OpenCode Zen | Kimi K2.5/K2.6, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1 (opt-in)        |
 
 Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
 work with your existing ChatGPT subscription via OAuth. See
