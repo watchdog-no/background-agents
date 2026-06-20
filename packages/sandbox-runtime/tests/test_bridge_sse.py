@@ -1692,6 +1692,35 @@ class TestSSEStreaming:
         assert complete["success"] is False
         assert complete["error"] == "OpenCode completed without emitting assistant output."
 
+    @pytest.mark.asyncio
+    async def test_handle_prompt_fails_when_opencode_emits_only_step_finish(
+        self, bridge: AgentBridge
+    ):
+        """Step-finish metadata alone should not count as assistant output."""
+        bridge._configure_git_identity = AsyncMock()
+        bridge._send_event = AsyncMock()
+
+        async def only_step_finish(*args: Any, **kwargs: Any):
+            yield {"type": "step_finish", "messageId": "cp-msg-1", "tokens": {"input": 12}}
+
+        bridge._stream_opencode_response_sse = only_step_finish
+
+        await bridge._handle_prompt(
+            {
+                "messageId": "cp-msg-1",
+                "content": "Test prompt",
+                "model": "anthropic/claude-haiku-4-5",
+            }
+        )
+
+        sent_events = [call.args[0] for call in bridge._send_event.await_args_list]
+        assert sent_events[0]["type"] == "step_finish"
+        complete = sent_events[-1]
+        assert complete["type"] == "execution_complete"
+        assert complete["messageId"] == "cp-msg-1"
+        assert complete["success"] is False
+        assert complete["error"] == "OpenCode completed without emitting assistant output."
+
 
 class TestFetchFinalMessageState:
     """Tests for _fetch_final_message_state method.

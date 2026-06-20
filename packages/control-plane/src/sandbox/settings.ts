@@ -1,4 +1,6 @@
 import {
+  DEFAULT_CODE_SERVER_PORT,
+  DEFAULT_TERMINAL_PORT,
   findSandboxPortConflict,
   MAX_TUNNEL_PORTS,
   type ConfiguredSandboxPort,
@@ -156,9 +158,9 @@ function normalizePort(
 
 /**
  * Reject reserved-port use and any port shared across code-server, terminal, and
- * tunnel ports. Enablement-independent: every configured port must be unique so a
- * port is never silently dropped at sandbox spawn. The conflict rule itself lives
- * in `findSandboxPortConflict` (shared with the web settings UI).
+ * tunnel ports. Enablement-independent: every effective service/tunnel port must
+ * be unique so a port is never silently dropped at sandbox spawn. The conflict
+ * rule itself lives in `findSandboxPortConflict` (shared with the web settings UI).
  *
  * In `invalid: "omit"` mode `reject` returns instead of throwing, so we actively
  * drop the offending port and re-check until the result is collision-free. This
@@ -169,12 +171,11 @@ function normalizePort(
 function checkPortCollisions(result: SandboxSettings, reject: (message: string) => false): void {
   for (;;) {
     const ports: ConfiguredSandboxPort[] = [];
-    if (result.codeServerPort !== undefined) {
-      ports.push({ port: result.codeServerPort, label: "codeServerPort" });
-    }
-    if (result.terminalPort !== undefined) {
-      ports.push({ port: result.terminalPort, label: "terminalPort" });
-    }
+    ports.push({
+      port: result.codeServerPort ?? DEFAULT_CODE_SERVER_PORT,
+      label: "codeServerPort",
+    });
+    ports.push({ port: result.terminalPort ?? DEFAULT_TERMINAL_PORT, label: "terminalPort" });
     for (const port of result.tunnelPorts ?? []) {
       ports.push({ port, label: "tunnelPorts" });
     }

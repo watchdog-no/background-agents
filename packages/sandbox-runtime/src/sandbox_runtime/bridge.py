@@ -649,7 +649,7 @@ class AgentBridge:
                 if event.get("type") == "error":
                     had_error = True
                     error_message = event.get("error")
-                elif event.get("type") in ("token", "tool_call", "step_finish"):
+                elif event.get("type") in ("token", "tool_call"):
                     emitted_output = True
                 await self._send_event(event)
 

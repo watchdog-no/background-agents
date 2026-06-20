@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { INTERNAL_TTYD_PORT } from "@open-inspect/shared";
+import {
+  DEFAULT_CODE_SERVER_PORT,
+  DEFAULT_TERMINAL_PORT,
+  INTERNAL_TTYD_PORT,
+} from "@open-inspect/shared";
 import { normalizeSandboxSettings, SandboxSettingsValidationError } from "./settings";
 
 class CustomSettingsValidationError extends Error {}
@@ -107,12 +111,25 @@ describe("normalizeSandboxSettings", () => {
     expect(() => normalizeSandboxSettings({ codeServerPort: 9000, terminalPort: 9000 })).toThrow(
       SandboxSettingsValidationError
     );
+    expect(() => normalizeSandboxSettings({ tunnelPorts: [DEFAULT_CODE_SERVER_PORT] })).toThrow(
+      SandboxSettingsValidationError
+    );
+    expect(() => normalizeSandboxSettings({ tunnelPorts: [DEFAULT_TERMINAL_PORT] })).toThrow(
+      SandboxSettingsValidationError
+    );
   });
 
   it("frees the default port for a tunnel when code-server is moved", () => {
     expect(normalizeSandboxSettings({ codeServerPort: 8081, tunnelPorts: [8080] })).toEqual({
       codeServerPort: 8081,
       tunnelPorts: [8080],
+    });
+  });
+
+  it("frees the default terminal port for a tunnel when terminal is moved", () => {
+    expect(normalizeSandboxSettings({ terminalPort: 7682, tunnelPorts: [7680] })).toEqual({
+      terminalPort: 7682,
+      tunnelPorts: [7680],
     });
   });
 
@@ -127,6 +144,14 @@ describe("normalizeSandboxSettings", () => {
       )
     ).toEqual({
       codeServerPort: 9000,
+      tunnelPorts: [3000],
+    });
+    expect(
+      normalizeSandboxSettings(
+        { tunnelPorts: [DEFAULT_CODE_SERVER_PORT, DEFAULT_TERMINAL_PORT, 3000] },
+        { invalid: "omit" }
+      )
+    ).toEqual({
       tunnelPorts: [3000],
     });
   });
