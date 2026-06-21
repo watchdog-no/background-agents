@@ -412,6 +412,40 @@ describe("SlackIntegrationSettings", () => {
       });
     });
 
+    // Regression: saving rules must publish the merged blob to the shared cache
+    // (not merely revalidate), so a Defaults save before revalidation lands
+    // reads fresh rules and doesn't revert them.
+    it("publishes the merged blob to the SWR cache when saving routing rules", async () => {
+      const user = userEvent.setup();
+      setupSWR({
+        global: { defaults: { agentNotificationsEnabled: true, mentionsPolicy: "allow" } },
+        availableRepos: [repo("acme/web")],
+      });
+      fetchMock.mockResolvedValue(okJson({}));
+      render(<SlackIntegrationSettings />);
+
+      const section = routingSection();
+      await user.click(within(section).getByRole("button", { name: /add rule/i }));
+      await user.type(within(section).getByRole("textbox", { name: /keyword/i }), "Frontend");
+      await user.click(within(section).getByRole("combobox", { name: /target repository/i }));
+      await user.click(await screen.findByRole("option", { name: "acme/web" }));
+      await user.click(within(section).getByRole("button", { name: /save routing rules/i }));
+
+      expect(mutateMock).toHaveBeenCalledWith(
+        "/api/integration-settings/slack",
+        {
+          settings: {
+            defaults: {
+              agentNotificationsEnabled: true,
+              mentionsPolicy: "allow",
+              routingRules: [{ keyword: "Frontend", target: "acme/web" }],
+            },
+          },
+        },
+        { revalidate: true }
+      );
+    });
+
     it("preserves existing routing rules when the Defaults section is saved", async () => {
       const user = userEvent.setup();
       setupSWR({
@@ -438,6 +472,42 @@ describe("SlackIntegrationSettings", () => {
         mentionsPolicy: "allow",
         routingRules: [{ keyword: "frontend", target: "acme/web" }],
       });
+    });
+
+    // Regression: saving Defaults must publish the full merged blob (including
+    // existing routing rules) to the shared cache, so a routing-rules save
+    // before revalidation lands reads the fresh defaults and doesn't revert them.
+    it("publishes the merged blob to the SWR cache when saving Defaults", async () => {
+      const user = userEvent.setup();
+      setupSWR({
+        global: {
+          defaults: {
+            agentNotificationsEnabled: false,
+            mentionsPolicy: "allow",
+            routingRules: [{ keyword: "frontend", target: "acme/web" }],
+          },
+        },
+        availableRepos: [repo("acme/web")],
+      });
+      fetchMock.mockResolvedValue(okJson({}));
+      render(<SlackIntegrationSettings />);
+
+      await user.click(screen.getByRole("switch", { name: /enable agent notifications/i }));
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+      expect(mutateMock).toHaveBeenCalledWith(
+        "/api/integration-settings/slack",
+        {
+          settings: {
+            defaults: {
+              agentNotificationsEnabled: true,
+              mentionsPolicy: "allow",
+              routingRules: [{ keyword: "frontend", target: "acme/web" }],
+            },
+          },
+        },
+        { revalidate: true }
+      );
     });
 
     it("omits routingRules on save after the last rule is removed", async () => {

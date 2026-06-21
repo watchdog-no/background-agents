@@ -170,15 +170,21 @@ function GlobalSettingsSection({ settings }: { settings: SlackGlobalConfig | nul
       // preserve them by writing a blob that keeps just the rules (rather than
       // deleting the whole row); otherwise clear the row entirely.
       const existingRules = settings?.defaults?.routingRules;
-      const res = existingRules?.length
+      const nextSettings: SlackGlobalConfig | null = existingRules?.length
+        ? { defaults: { routingRules: existingRules } }
+        : null;
+      const res = nextSettings
         ? await fetch(GLOBAL_SETTINGS_KEY, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ settings: { defaults: { routingRules: existingRules } } }),
+            body: JSON.stringify({ settings: nextSettings }),
           })
         : await fetch(GLOBAL_SETTINGS_KEY, { method: "DELETE" });
       if (res.ok) {
-        mutate(GLOBAL_SETTINGS_KEY);
+        // Populate the shared cache with the reset state (not just revalidate)
+        // so the routing-rules section sees it immediately and a save there
+        // won't resurrect the defaults we just cleared.
+        mutate(GLOBAL_SETTINGS_KEY, { settings: nextSettings }, { revalidate: true });
         setAgentNotificationsEnabled(false);
         setMentionsPolicy(DEFAULT_MENTIONS_POLICY);
         setDirty(false);
@@ -207,7 +213,11 @@ function GlobalSettingsSection({ settings }: { settings: SlackGlobalConfig | nul
         body: JSON.stringify({ settings: body }),
       });
       if (res.ok) {
-        mutate(GLOBAL_SETTINGS_KEY);
+        // Populate the shared cache with the just-saved blob (not just
+        // revalidate) so the routing-rules section, which merges onto this same
+        // `settings` prop, sees the new defaults immediately. Otherwise a save
+        // there before revalidation lands would revert these fields.
+        mutate(GLOBAL_SETTINGS_KEY, { settings: body }, { revalidate: true });
         toast.success("Settings saved.");
         setDirty(false);
       } else {
@@ -559,7 +569,11 @@ function RoutingRulesSection({
         body: JSON.stringify({ settings: body }),
       });
       if (res.ok) {
-        mutate(GLOBAL_SETTINGS_KEY);
+        // Populate the shared cache with the just-saved blob (not just
+        // revalidate) so the defaults section, which merges onto this same
+        // `settings` prop, sees the new rules immediately. Otherwise a save
+        // there before revalidation lands would revert these rules.
+        mutate(GLOBAL_SETTINGS_KEY, { settings: body }, { revalidate: true });
         toast.success("Routing rules saved.");
         setDirty(false);
       } else {
