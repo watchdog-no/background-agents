@@ -100,12 +100,6 @@ module "web_app" {
       sensitive = false
     },
     {
-      key       = "ALLOWED_GITHUB_ORGS"
-      value     = var.allowed_github_orgs
-      targets   = ["production", "preview"]
-      sensitive = false
-    },
-    {
       key       = "UNSAFE_ALLOW_ALL_USERS"
       value     = tostring(var.unsafe_allow_all_users)
       targets   = ["production", "preview"]
@@ -141,6 +135,14 @@ module "web_app" {
     {
       key       = "ALLOWED_EMAILS"
       value     = var.allowed_emails
+      targets   = ["production", "preview"]
+      sensitive = false
+    },
+    # Org-membership allowlist (GitHub auth). Appended to keep env-var indices
+    # stable for existing Vercel projects (see the count-index note above).
+    {
+      key       = "ALLOWED_GITHUB_ORGS"
+      value     = var.allowed_github_orgs
       targets   = ["production", "preview"]
       sensitive = false
     },
