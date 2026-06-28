@@ -2,6 +2,11 @@
  * Shared type definitions used across Open-Inspect packages.
  */
 
+import { z } from "zod";
+import type { Attachment } from "./websocket";
+export { attachmentSchema, clientMessageSchema } from "./websocket";
+export type { Attachment, ClientMessage } from "./websocket";
+
 // Session states
 export type SessionStatus =
   | "created"
@@ -52,6 +57,18 @@ export type SpawnSource =
   | "slack-bot";
 export type ConfidenceLevel = "high" | "medium" | "low";
 
+const gitSyncStatusSchema = z.enum(["pending", "in_progress", "completed", "failed"]);
+const spawnSourceSchema = z.enum([
+  "user",
+  "agent",
+  "automation",
+  "github-bot",
+  "linear-bot",
+  "slack-bot",
+]);
+
+const recordSchema = z.record(z.string(), z.unknown());
+
 // Participant in a session
 export interface SessionParticipant {
   id: string;
@@ -92,15 +109,6 @@ export interface SessionMessage {
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
-}
-
-// Attachment to a message
-export interface Attachment {
-  type: "file" | "image" | "url";
-  name: string;
-  url?: string;
-  content?: string;
-  mimeType?: string;
 }
 
 // Agent event
@@ -203,16 +211,18 @@ export interface PullRequest {
  * Token usage reported by the agent runtime for a single step. Providers can
  * split prompt cache and generated tokens across fields; use
  * {@link contextTokensFromUsage} for the best available context-pressure value.
+ * The runtime forwards provider usage verbatim and omits fields the provider
+ * doesn't report, so only `input` is guaranteed.
  */
-export interface TokenUsage {
-  input: number;
-  // The runtime forwards provider usage verbatim and omits fields the provider
-  // doesn't report, so only `input` is guaranteed.
-  output?: number;
-  reasoning?: number;
-  total?: number;
-  cache?: { read?: number; write?: number };
-}
+const tokenUsageSchema = z.object({
+  input: z.number(),
+  output: z.number().optional(),
+  reasoning: z.number().optional(),
+  total: z.number().optional(),
+  cache: z.object({ read: z.number().optional(), write: z.number().optional() }).optional(),
+});
+
+export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 
 /**
  * Best available post-step context pressure for the gauge. Prefer an explicit
@@ -233,159 +243,132 @@ export function contextTokensFromUsage(tokens: TokenUsage): number {
   );
 }
 
+const sandboxEventBaseSchema = z.object({
+  sandboxId: z.string(),
+  timestamp: z.number(),
+  ackId: z.string().optional(),
+});
+
+const messageSandboxEventBaseSchema = sandboxEventBaseSchema.extend({
+  messageId: z.string(),
+});
+
 // Sandbox events (from Modal / control-plane synthesized)
-export type SandboxEvent =
-  | { type: "heartbeat"; sandboxId: string; status: string; timestamp: number }
-  | {
-      type: "token";
-      content: string;
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      // Model reasoning / "thinking" content. For Anthropic thinking models this
-      // is the full thinking text; for OpenAI/Codex models it is the reasoning
-      // summary. Streams cumulatively like "token" (content is the full text so
-      // far for the current reasoning block).
-      type: "reasoning";
-      content: string;
-      messageId: string;
-      // Identifies the reasoning block within a message so multiple blocks are
-      // kept distinct (persisted and rendered separately) rather than coalesced.
-      blockId?: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "tool_call";
-      tool: string;
-      args: Record<string, unknown>;
-      callId: string;
-      status?: string;
-      output?: string;
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "step_start";
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-      isSubtask?: boolean;
-    }
-  | {
-      type: "step_finish";
-      cost?: number;
-      tokens?: TokenUsage;
-      reason?: string;
-      // The model's effective context window as the runtime sees it (used as
-      // the denominator for the context-usage gauge / "distance to compaction").
-      // Constant for a session; the runtime may attach it to every step.
-      contextLimit?: number;
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-      isSubtask?: boolean;
-    }
-  | {
-      type: "tool_result";
-      callId: string;
-      result: string;
-      error?: string;
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "git_sync";
-      status: GitSyncStatus;
-      sha?: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "error";
-      error: string;
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "execution_complete";
-      messageId: string;
-      success: boolean;
-      error?: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      // Emitted when the agent runtime compacts the session context (summarizes
-      // earlier turns to free up the context window). Surfaced as a marker in
-      // the timeline so users can see why earlier detail may have been dropped.
-      type: "compaction";
-      messageId: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "artifact";
-      artifactType: string;
-      artifactId?: string;
-      url: string;
-      metadata?: Record<string, unknown>;
-      messageId?: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "push_complete";
-      branchName: string;
-      sandboxId?: string;
-      timestamp: number;
-    }
-  | {
-      type: "push_error";
-      branchName: string;
-      error: string;
-      sandboxId?: string;
-      timestamp: number;
-    }
-  | {
-      type: "session_title";
-      title: string;
-      sandboxId: string;
-      timestamp: number;
-    }
-  | {
-      type: "user_message";
-      content: string;
-      messageId: string;
-      timestamp: number;
-      author?: {
-        participantId: string;
-        name: string;
-        avatar?: string;
-      };
-    };
+export const sandboxEventSchema = z.discriminatedUnion("type", [
+  sandboxEventBaseSchema.extend({
+    type: z.literal("heartbeat"),
+    status: z.string(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("token"),
+    content: z.string(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    // Model reasoning / "thinking" content. For Anthropic thinking models this
+    // is the full thinking text; for OpenAI/Codex models it is the reasoning
+    // summary. Streams cumulatively like "token" (content is the full text so
+    // far for the current reasoning block). `blockId` keeps multiple blocks in
+    // one message distinct (persisted and rendered separately) rather than
+    // coalesced.
+    type: z.literal("reasoning"),
+    content: z.string(),
+    blockId: z.string().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("tool_call"),
+    tool: z.string(),
+    args: recordSchema,
+    callId: z.string(),
+    status: z.string().optional(),
+    output: z.string().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("step_start"),
+    isSubtask: z.boolean().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("step_finish"),
+    cost: z.number().optional(),
+    tokens: tokenUsageSchema.optional(),
+    reason: z.string().optional(),
+    // The model's effective context window as the runtime sees it (used as the
+    // denominator for the context-usage gauge / "distance to compaction").
+    // Constant for a session; the runtime may attach it to every step.
+    contextLimit: z.number().optional(),
+    isSubtask: z.boolean().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("tool_result"),
+    callId: z.string(),
+    result: z.string(),
+    error: z.string().optional(),
+  }),
+  sandboxEventBaseSchema.extend({
+    type: z.literal("git_sync"),
+    status: gitSyncStatusSchema,
+    sha: z.string().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("error"),
+    error: z.string(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    type: z.literal("execution_complete"),
+    success: z.boolean(),
+    error: z.string().optional(),
+  }),
+  messageSandboxEventBaseSchema.extend({
+    // Emitted when the agent runtime compacts the session context (summarizes
+    // earlier turns to free up the context window). Surfaced as a timeline
+    // marker so users can see why earlier detail may have been dropped.
+    type: z.literal("compaction"),
+  }),
+  sandboxEventBaseSchema.extend({
+    type: z.literal("artifact"),
+    artifactType: z.string(),
+    artifactId: z.string().optional(),
+    url: z.string(),
+    metadata: recordSchema.optional(),
+    messageId: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("push_complete"),
+    branchName: z.string(),
+    sandboxId: z.string().optional(),
+    timestamp: z.number(),
+    ackId: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("push_error"),
+    branchName: z.string(),
+    error: z.string(),
+    sandboxId: z.string().optional(),
+    timestamp: z.number(),
+    ackId: z.string().optional(),
+  }),
+  sandboxEventBaseSchema.extend({
+    type: z.literal("session_title"),
+    title: z.string(),
+  }),
+  z.object({
+    type: z.literal("user_message"),
+    content: z.string(),
+    messageId: z.string(),
+    timestamp: z.number(),
+    ackId: z.string().optional(),
+    author: z
+      .object({
+        participantId: z.string(),
+        name: z.string(),
+        avatar: z.string().optional(),
+      })
+      .optional(),
+  }),
+]);
+
+export type SandboxEvent = z.infer<typeof sandboxEventSchema>;
 
 // WebSocket message types
-export type ClientMessage =
-  | { type: "ping" }
-  | { type: "subscribe"; token: string; clientId: string }
-  | {
-      type: "prompt";
-      content: string;
-      model?: string;
-      reasoningEffort?: string;
-      attachments?: Attachment[];
-    }
-  | { type: "stop" }
-  | { type: "typing" }
-  | { type: "presence"; status: "active" | "idle"; cursor?: { line: number; file: string } }
-  | { type: "fetch_history"; cursor: { timestamp: number; id: string }; limit?: number };
-
 export type ServerMessage =
   | { type: "pong"; timestamp: number }
   | {
@@ -639,11 +622,18 @@ export interface AgentResponse {
 
 export interface UserPreferences {
   userId: string;
-  model: string;
+  model?: string;
   reasoningEffort?: string;
   branch?: string;
   updatedAt: number;
 }
+
+export const userPreferencesRequestSchema = z.object({
+  model: z.string().optional(),
+  reasoningEffort: z.string().optional(),
+});
+
+export type UserPreferencesRequest = z.infer<typeof userPreferencesRequestSchema>;
 
 export interface Logger {
   debug(msg: string, data?: Record<string, unknown>): void;
@@ -690,14 +680,49 @@ export type CallbackContext =
   | AutomationCallbackContext;
 
 // API response types
-export interface CreateSessionRequest {
-  repoOwner: string;
-  repoName: string;
-  title?: string;
-  model?: string;
-  reasoningEffort?: string;
-  branch?: string;
-}
+export const createSessionRequestSchema = z.object({
+  repoOwner: z.string(),
+  repoName: z.string(),
+  title: z.string().optional(),
+  model: z.string().optional(),
+  reasoningEffort: z.string().optional(),
+  branch: z.string().optional(),
+});
+
+export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
+
+export const createSessionInputSchema = createSessionRequestSchema.extend({
+  userId: z.string().optional(),
+  spawnSource: spawnSourceSchema.optional(),
+  authProvider: z.enum(["github", "google"]).optional(),
+  authUserId: z.string().optional(),
+  authEmail: z.string().optional(),
+  authName: z.string().optional(),
+  authAvatarUrl: z.string().optional(),
+  scmUserId: z.string().optional(),
+  scmLogin: z.string().optional(),
+  scmName: z.string().optional(),
+  scmEmail: z.string().optional(),
+  scmAvatarUrl: z.string().optional(),
+  actorUserId: z.string().optional(),
+  actorDisplayName: z.string().optional(),
+  actorEmail: z.string().optional(),
+  actorAvatarUrl: z.string().optional(),
+  scmToken: z.string().optional(),
+  scmRefreshToken: z.string().optional(),
+  scmTokenExpiresAt: z.number().optional(),
+});
+
+export type CreateSessionInput = z.infer<typeof createSessionInputSchema>;
+
+export const createMediaArtifactRequestSchema = z.object({
+  artifactId: z.string(),
+  artifactType: z.string(),
+  objectKey: z.string(),
+  metadata: recordSchema.optional(),
+});
+
+export type CreateMediaArtifactRequest = z.infer<typeof createMediaArtifactRequestSchema>;
 
 export interface CreateSessionResponse {
   sessionId: string;
@@ -836,7 +861,8 @@ export type AutomationTriggerType =
   | "github_event"
   | "linear_event"
   | "sentry"
-  | "webhook";
+  | "webhook"
+  | "slack_event";
 
 export type AutomationRunStatus = "starting" | "running" | "completed" | "failed" | "skipped";
 

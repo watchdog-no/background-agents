@@ -19,6 +19,12 @@ export interface Env {
   DEFAULT_MODEL: string;
   CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: anthropic/claude-haiku-4-5)
   APP_NAME?: string;
+  /**
+   * Kill switch for Slack channel-message automation triggers. The bot only
+   * ingests/forwards channel messages when this is exactly "true". Dark by
+   * default — any other value (or unset) disables the feature entirely.
+   */
+  SLACK_TRIGGERS_ENABLED?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;
@@ -99,30 +105,7 @@ export interface SlackAppMentionEvent {
   thread_ts?: string;
 }
 
-/**
- * Slack interaction payload (buttons, selects, modals).
- */
-export type SlackInteractionPayload = {
-  type: string;
-  action_id?: string;
-  value?: string;
-  trigger_id?: string;
-  actions?: Array<{
-    action_id: string;
-    selected_option?: { value: string };
-    value?: string;
-  }>;
-  channel?: { id: string };
-  message?: { ts: string; thread_ts?: string };
-  user?: { id: string };
-  view?: {
-    callback_id?: string;
-    private_metadata?: string;
-    state?: {
-      values?: Record<string, Record<string, { type?: string; value?: string }>>;
-    };
-  };
-};
+export type { SlackInteractionPayload } from "../interaction-payload";
 
 /**
  * Callback context passed with prompts for follow-up notifications.

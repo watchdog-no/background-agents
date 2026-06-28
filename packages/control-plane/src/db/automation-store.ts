@@ -5,7 +5,12 @@
  * snake_case rows in the database, camelCase types at the API boundary.
  */
 
-import type { Automation, AutomationRun, AutomationRunStatus } from "@open-inspect/shared";
+import type {
+  Automation,
+  AutomationRun,
+  AutomationRunStatus,
+  TriggerConfig,
+} from "@open-inspect/shared";
 
 // ─── Internal row types ──────────────────────────────────────────────────────
 
@@ -48,6 +53,9 @@ export interface AutomationRunRow {
   created_at: number;
   trigger_key: string | null;
   concurrency_key: string | null;
+  // Source-specific run metadata as JSON (slack-origin runs only today; absent
+  // otherwise). Opaque to the store — interpreted by the owning source's layer.
+  trigger_run_metadata?: string | null;
 }
 
 export interface EnrichedRunRow extends AutomationRunRow {
@@ -58,6 +66,9 @@ export interface EnrichedRunRow extends AutomationRunRow {
 // ─── Mappers ─────────────────────────────────────────────────────────────────
 
 export function toAutomation(row: AutomationRow): Automation {
+  const triggerConfig: TriggerConfig | null = row.trigger_config
+    ? JSON.parse(row.trigger_config)
+    : null;
   return {
     id: row.id,
     name: row.name,
@@ -79,7 +90,7 @@ export function toAutomation(row: AutomationRow): Automation {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
     eventType: row.event_type ?? null,
-    triggerConfig: row.trigger_config ? JSON.parse(row.trigger_config) : null,
+    triggerConfig,
   };
 }
 
@@ -109,8 +120,12 @@ export class AutomationStore {
 
   // --- Automation CRUD ---
 
-  async create(row: AutomationRow): Promise<void> {
-    await this.db
+  /**
+   * Prepared INSERT for an automation row. Public so a route can compose it with
+   * `SlackChannelStore.bindChannelStatements` into one atomic `db.batch`.
+   */
+  bindAutomationInsert(row: AutomationRow): D1PreparedStatement {
+    return this.db
       .prepare(
         `INSERT INTO automations
          (id, name, repo_owner, repo_name, base_branch, repo_id, instructions,
@@ -143,8 +158,11 @@ export class AutomationStore {
         row.event_type,
         row.trigger_config,
         row.trigger_auth_data
-      )
-      .run();
+      );
+  }
+
+  async create(row: AutomationRow): Promise<void> {
+    await this.bindAutomationInsert(row).run();
   }
 
   async getById(id: string): Promise<AutomationRow | null> {
@@ -180,7 +198,12 @@ export class AutomationStore {
     return { automations, total: automations.length };
   }
 
-  async update(id: string, fields: Partial<AutomationRow>): Promise<AutomationRow | null> {
+  /**
+   * Build the dynamic UPDATE statement for the allowed automation fields, or
+   * null when `fields` carries nothing to write. Public so a route can compose it
+   * with `SlackChannelStore.bindChannelStatements` into one atomic `db.batch`.
+   */
+  bindAutomationUpdate(id: string, fields: Partial<AutomationRow>): D1PreparedStatement | null {
     const setClauses: string[] = [];
     const params: unknown[] = [];
 
@@ -207,19 +230,22 @@ export class AutomationStore {
       }
     }
 
-    if (setClauses.length === 0) return this.getById(id);
+    if (setClauses.length === 0) return null;
 
     setClauses.push("updated_at = ?");
     params.push(Date.now());
     params.push(id);
 
-    await this.db
+    return this.db
       .prepare(
         `UPDATE automations SET ${setClauses.join(", ")} WHERE id = ? AND deleted_at IS NULL`
       )
-      .bind(...params)
-      .run();
+      .bind(...params);
+  }
 
+  async update(id: string, fields: Partial<AutomationRow>): Promise<AutomationRow | null> {
+    const statement = this.bindAutomationUpdate(id, fields);
+    if (statement) await statement.run();
     return this.getById(id);
   }
 
@@ -291,8 +317,9 @@ export class AutomationStore {
       .prepare(
         `INSERT INTO automation_runs
          (id, automation_id, session_id, status, skip_reason, failure_reason,
-          scheduled_at, started_at, completed_at, created_at, trigger_key, concurrency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          scheduled_at, started_at, completed_at, created_at, trigger_key, concurrency_key,
+          trigger_run_metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         run.id,
@@ -306,7 +333,8 @@ export class AutomationStore {
         run.completed_at,
         run.created_at,
         run.trigger_key ?? null,
-        run.concurrency_key ?? null
+        run.concurrency_key ?? null,
+        run.trigger_run_metadata ?? null
       );
   }
 
@@ -353,6 +381,54 @@ export class AutomationStore {
       .prepare(`UPDATE automation_runs SET ${setClauses.join(", ")} WHERE id = ?`)
       .bind(...params)
       .run();
+  }
+
+  async bulkFailRuns(runIds: string[], reason: string, completedAt: number): Promise<void> {
+    if (runIds.length === 0) return;
+    const placeholders = runIds.map(() => "?").join(", ");
+    await this.db
+      .prepare(
+        `UPDATE automation_runs
+         SET status = 'failed', failure_reason = ?, completed_at = ?
+         WHERE id IN (${placeholders})`
+      )
+      .bind(reason, completedAt, ...runIds)
+      .run();
+  }
+
+  async bulkIncrementFailures(
+    automationIdCounts: Map<string, number>
+  ): Promise<Map<string, number>> {
+    if (automationIdCounts.size === 0) return new Map();
+
+    const now = Date.now();
+    const automationIds = [...automationIdCounts.keys()];
+
+    const statements = automationIds.map((automationId) =>
+      this.db
+        .prepare(
+          `UPDATE automations
+           SET consecutive_failures = consecutive_failures + ?, updated_at = ?
+           WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(automationIdCounts.get(automationId)!, now, automationId)
+    );
+    await this.db.batch(statements);
+
+    const placeholders = automationIds.map(() => "?").join(", ");
+    const result = await this.db
+      .prepare(
+        `SELECT id, consecutive_failures FROM automations
+         WHERE id IN (${placeholders}) AND deleted_at IS NULL`
+      )
+      .bind(...automationIds)
+      .all<{ id: string; consecutive_failures: number }>();
+
+    const counts = new Map<string, number>();
+    for (const row of result.results ?? []) {
+      counts.set(row.id, row.consecutive_failures);
+    }
+    return counts;
   }
 
   async getActiveRunForAutomation(automationId: string): Promise<AutomationRunRow | null> {
@@ -429,6 +505,47 @@ export class AutomationStore {
     return result.results || [];
   }
 
+  /**
+   * Record a `skipped` run for observability (concurrency skips).
+   * Leaves trigger_key null so repeated skips never collide on the dedup index
+   * (NULLs are distinct under the unique automation_id/trigger_key index).
+   * `runMetadata` carries the run's source-specific metadata as a unit — the same
+   * value a materialized run is inserted with — so there is no re-mapping.
+   */
+  async recordSkippedRun(params: {
+    id: string;
+    automationId: string;
+    skipReason: string;
+    concurrencyKey?: string | null;
+    runMetadata?: Pick<AutomationRunRow, "trigger_run_metadata">;
+  }): Promise<void> {
+    const now = Date.now();
+    try {
+      await this.insertRun({
+        id: params.id,
+        automation_id: params.automationId,
+        session_id: null,
+        status: "skipped",
+        skip_reason: params.skipReason,
+        failure_reason: null,
+        scheduled_at: now,
+        started_at: null,
+        completed_at: now,
+        created_at: now,
+        trigger_key: null,
+        concurrency_key: params.concurrencyKey ?? null,
+        ...params.runMetadata,
+      });
+    } catch (e) {
+      // Defensive only: the insert uses a fresh unique id and a null trigger_key
+      // (NULLs are distinct under the unique automation_id/trigger_key index), so
+      // a collision is not expected. Swallow one anyway so best-effort skip
+      // bookkeeping never throws into the dispatch path.
+      if (isDuplicateKeyError(e)) return;
+      throw e;
+    }
+  }
+
   async getActiveRunForKey(
     automationId: string,
     concurrencyKey: string | null
@@ -446,6 +563,30 @@ export class AutomationStore {
       .first<AutomationRunRow>();
   }
 
+  /**
+   * The most recent materialized run (any status, with a session) for a thread's
+   * concurrency key, created at/after `sinceMs`. Powers Slack thread-session
+   * continuity: a reply continues this run's session regardless of run status.
+   * Excludes skipped rows and not-yet-started runs (session_id NULL). Backed by
+   * idx_runs_thread_continuity (migration 0028).
+   */
+  async getLatestSteerableRunForThread(
+    automationId: string,
+    concurrencyKey: string | null,
+    sinceMs: number
+  ): Promise<AutomationRunRow | null> {
+    if (concurrencyKey === null) return null;
+    return this.db
+      .prepare(
+        `SELECT * FROM automation_runs
+         WHERE automation_id = ? AND concurrency_key = ?
+           AND session_id IS NOT NULL AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .bind(automationId, concurrencyKey, sinceMs)
+      .first<AutomationRunRow>();
+  }
+
   // --- Recovery sweep queries ---
   // Backed by partial indexes (migration 0024); `status` must stay a literal, not
   // a bound param, or the planner skips the index and full-scans automation_runs.
@@ -454,20 +595,23 @@ export class AutomationStore {
   static readonly TIMED_OUT_RUNNING_RUNS_SQL =
     "SELECT * FROM automation_runs WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?";
 
-  async getOrphanedStartingRuns(thresholdMs: number): Promise<AutomationRunRow[]> {
+  async getOrphanedStartingRuns(thresholdMs: number, limit: number): Promise<AutomationRunRow[]> {
     const cutoff = Date.now() - thresholdMs;
     const result = await this.db
-      .prepare(AutomationStore.ORPHANED_STARTING_RUNS_SQL)
-      .bind(cutoff)
+      .prepare(`${AutomationStore.ORPHANED_STARTING_RUNS_SQL} ORDER BY created_at ASC LIMIT ?`)
+      .bind(cutoff, limit)
       .all<AutomationRunRow>();
     return result.results || [];
   }
 
-  async getTimedOutRunningRuns(executionTimeoutMs: number): Promise<AutomationRunRow[]> {
+  async getTimedOutRunningRuns(
+    executionTimeoutMs: number,
+    limit: number
+  ): Promise<AutomationRunRow[]> {
     const cutoff = Date.now() - executionTimeoutMs;
     const result = await this.db
-      .prepare(AutomationStore.TIMED_OUT_RUNNING_RUNS_SQL)
-      .bind(cutoff)
+      .prepare(`${AutomationStore.TIMED_OUT_RUNNING_RUNS_SQL} ORDER BY started_at ASC LIMIT ?`)
+      .bind(cutoff, limit)
       .all<AutomationRunRow>();
     return result.results || [];
   }
@@ -508,4 +652,17 @@ export class AutomationStore {
       .bind(now, automationId)
       .run();
   }
+}
+
+/**
+ * True when a D1 write failed because it violated the trigger-key dedup index
+ * (`idx_runs_trigger_key` on `automation_id, trigger_key` — the only UNIQUE on
+ * `automation_runs`). Scoping to the `trigger_key` column keeps unrelated UNIQUE
+ * violations surfacing as real errors instead of being silently swallowed as
+ * duplicates, while matching the column name (not D1's full
+ * `table.col, table.col` string) stays robust to exact message formatting.
+ */
+export function isDuplicateKeyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("UNIQUE constraint failed") && message.includes("trigger_key");
 }

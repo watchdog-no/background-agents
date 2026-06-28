@@ -305,7 +305,13 @@ export function SecretsEditor({
     });
   }, []);
 
-  const handlePasteIntoRow = useCallback(
+  // Only the key field uses this — it's the point of entry where pasting
+  // structured `.env` content (a single `KEY=VALUE` or a whole blob) should be
+  // auto-detected and imported. The value field deliberately does NOT parse:
+  // a value is a value. Reinterpreting it as `KEY=VALUE` would corrupt inputs
+  // that legitimately contain `=` (e.g. Azure connection strings begin with
+  // `DefaultEndpointsProtocol=...`).
+  const handlePasteIntoKey = useCallback(
     (event: ClipboardEvent<HTMLInputElement>) => {
       const pastedText = event.clipboardData.getData("text");
       const parsed = parseMaybeEnvContent(pastedText);
@@ -528,7 +534,7 @@ export function SecretsEditor({
                       }}
                       placeholder="KEY_NAME"
                       disabled={disabled || row.existing}
-                      onPaste={handlePasteIntoRow}
+                      onPaste={handlePasteIntoKey}
                       className="flex-1 min-w-[160px] h-auto px-2 py-1 text-xs"
                     />
                     <SecretValueField
@@ -547,7 +553,6 @@ export function SecretsEditor({
                       }}
                       placeholder={row.existing ? "••••••••" : "value"}
                       disabled={disabled}
-                      onPaste={handlePasteIntoRow}
                       label={`Value for ${row.key || "new secret"}`}
                     />
                     <Button
