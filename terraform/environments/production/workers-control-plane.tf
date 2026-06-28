@@ -144,7 +144,6 @@ module "control_plane_worker" {
     ] : [],
     local.use_opencomputer_backend ? [
       { name = "OPENCOMPUTER_API_KEY", value = var.opencomputer_api_key },
-      { name = "ANTHROPIC_API_KEY", value = var.anthropic_api_key },
     ] : [],
     local.use_vercel_backend ? [
       { name = "VERCEL_TOKEN", value = var.vercel_sandbox_token },
