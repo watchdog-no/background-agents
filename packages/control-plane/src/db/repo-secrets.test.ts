@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { RepoSecretsStore } from "./repo-secrets";
-import { SecretsValidationError } from "./secrets-validation";
+import { MAX_SECRETS_PER_SCOPE, SecretsValidationError } from "./secrets-validation";
 import { generateEncryptionKey } from "../auth/crypto";
 
 type RepoSecretRow = {
@@ -215,7 +215,7 @@ describe("RepoSecretsStore", () => {
 
   it("enforces per-repo secret limit", async () => {
     const many: Record<string, string> = {};
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < MAX_SECRETS_PER_SCOPE; i++) {
       many[`KEY_${i}`] = "x";
     }
     await store.setSecrets(1, "Owner", "Repo", many);

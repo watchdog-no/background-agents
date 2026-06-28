@@ -2,7 +2,7 @@ export const VALID_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const MAX_KEY_LENGTH = 256;
 export const MAX_VALUE_SIZE = 16384;
 export const MAX_TOTAL_VALUE_SIZE = 65536;
-export const MAX_SECRETS_PER_SCOPE = 50;
+export const MAX_SECRETS_PER_SCOPE = 100;
 
 export const RESERVED_KEYS = new Set([
   "PYTHONUNBUFFERED",
