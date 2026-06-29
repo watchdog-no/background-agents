@@ -49,7 +49,19 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
   fi
 
   echo "Applying: $FILENAME"
-  $WRANGLER d1 execute "$DATABASE_NAME" --remote --file "$file"
+  # Tolerate "duplicate column name": the migration was already applied under a
+  # different version (e.g. a file renumbered after a collision) so the schema
+  # is already in the target state. ADD COLUMN has no IF NOT EXISTS in SQLite,
+  # so record it as applied and move on instead of aborting the whole deploy.
+  # Every other error still aborts.
+  if APPLY_OUTPUT=$($WRANGLER d1 execute "$DATABASE_NAME" --remote --file "$file" 2>&1); then
+    echo "$APPLY_OUTPUT"
+  elif echo "$APPLY_OUTPUT" | grep -qi "duplicate column name"; then
+    echo "  Columns already present; recording as applied without re-running."
+  else
+    echo "$APPLY_OUTPUT" >&2
+    exit 1
+  fi
 
   SAFE_FILENAME=$(echo "$FILENAME" | sed "s/'/''/g")
   $WRANGLER d1 execute "$DATABASE_NAME" --remote \
