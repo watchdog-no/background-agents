@@ -11,12 +11,20 @@ import {
   getValidModelOrDefault,
   validateConditions,
   conditionRegistry,
+  listChannels,
   TRIGGER_TYPE_TO_SOURCE,
   type CreateAutomationRequest,
   type UpdateAutomationRequest,
   type AutomationTriggerType,
+  type TriggerConfig,
 } from "@open-inspect/shared";
-import { AutomationStore, toAutomation, toAutomationRun } from "../db/automation-store";
+import {
+  AutomationStore,
+  toAutomation,
+  toAutomationRun,
+  type AutomationRow,
+} from "../db/automation-store";
+import { SlackChannelStore } from "../db/slack-channel-store";
 import { UserStore } from "../db/user-store";
 import { resolveProviderIdentity, type SessionIdentityFields } from "../session/identity";
 import { generateId } from "../auth/crypto";
@@ -65,6 +73,38 @@ function isValidTimezone(tz: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Extract the watched channel IDs from a slack automation's `slack_channel` condition. */
+function extractSlackChannels(triggerConfig: TriggerConfig | null | undefined): string[] {
+  for (const condition of triggerConfig?.conditions ?? []) {
+    if (condition.type === "slack_channel") return condition.value;
+  }
+  return [];
+}
+
+/**
+ * Validate a slack_event trigger config before persistence. It must be scoped to
+ * an explicit channel set (net-new validation; the engine otherwise skips
+ * condition validation entirely when none are present). A text_match is optional
+ * — without one the automation fires on every message in the watched channel.
+ * Returns an error message, or null when valid.
+ */
+function validateSlackTriggerConfig(
+  triggerConfig: TriggerConfig | null | undefined
+): string | null {
+  // Guard the shape here too: this runs before the generic array-shape check in
+  // the update path, so a non-array `conditions` would otherwise throw on
+  // `.some()` and surface as a 500 instead of a 400.
+  const rawConditions = triggerConfig?.conditions;
+  if (rawConditions !== undefined && !Array.isArray(rawConditions)) {
+    return "triggerConfig.conditions must be an array";
+  }
+  const conditions = rawConditions ?? [];
+  if (!conditions.some((c) => c.type === "slack_channel")) {
+    return "slack_event triggers require a slack_channel condition";
+  }
+  return null;
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -126,6 +166,7 @@ async function handleCreateAutomation(
     "webhook",
     "github_event",
     "linear_event",
+    "slack_event",
   ];
   if (!validTriggerTypes.includes(triggerType)) {
     return error(`triggerType must be one of: ${validTriggerTypes.join(", ")}`, 400);
@@ -173,6 +214,12 @@ async function handleCreateAutomation(
         return error(conditionErrors.join("; "), 400);
       }
     }
+  }
+
+  // Slack triggers require explicit scoping (at least one watched channel).
+  if (triggerType === "slack_event") {
+    const slackError = validateSlackTriggerConfig(body.triggerConfig);
+    if (slackError) return error(slackError, 400);
   }
 
   // Validate model
@@ -240,7 +287,7 @@ async function handleCreateAutomation(
   }
 
   const store = new AutomationStore(env.DB);
-  await store.create({
+  const row: AutomationRow = {
     id,
     name: body.name.trim(),
     repo_owner: repoOwner,
@@ -264,7 +311,21 @@ async function handleCreateAutomation(
     event_type: body.eventType ?? null,
     trigger_config: body.triggerConfig ? JSON.stringify(body.triggerConfig) : null,
     trigger_auth_data: triggerAuthData,
-  });
+  };
+
+  // Persist the automation and (for slack_event) its watched-channel index in a
+  // single atomic write, so the canonical trigger_config and the channel index
+  // that drives scheduler candidate selection can never drift apart on a partial
+  // failure. The batch composes the two single-table stores' prepared statements.
+  if (triggerType === "slack_event") {
+    const slackStore = new SlackChannelStore(env.DB);
+    await env.DB.batch([
+      store.bindAutomationInsert(row),
+      ...slackStore.bindChannelStatements(row.id, extractSlackChannels(body.triggerConfig)),
+    ]);
+  } else {
+    await store.create(row);
+  }
 
   const automation = toAutomation((await store.getById(id))!);
 
@@ -408,14 +469,28 @@ async function handleUpdateAutomation(
     updateFields.event_type = body.eventType;
   }
 
-  // Update trigger config (conditions) — only for non-schedule types
+  // Validate trigger config (conditions) — only for non-schedule types
   if (body.triggerConfig !== undefined) {
     if (existing.trigger_type === "schedule") {
       return error("Cannot set triggerConfig on schedule automations", 400);
     }
     if (body.triggerConfig === null) {
-      updateFields.trigger_config = null;
+      // A slack_event's trigger_config holds its required scoping (channel +
+      // text_match) and the watched-channel index is derived from it. Clearing
+      // it would leave the automation enabled but untriggerable, so reject null
+      // — pause or delete instead. (Other sources may clear conditions to a
+      // match-all, so null stays allowed for them.)
+      if (existing.trigger_type === "slack_event") {
+        return error(
+          "Cannot clear triggerConfig on slack_event automations; pause or delete instead",
+          400
+        );
+      }
     } else {
+      if (existing.trigger_type === "slack_event") {
+        const slackError = validateSlackTriggerConfig(body.triggerConfig);
+        if (slackError) return error(slackError, 400);
+      }
       if (body.triggerConfig.conditions) {
         if (!Array.isArray(body.triggerConfig.conditions)) {
           return error("triggerConfig.conditions must be an array", 400);
@@ -432,8 +507,16 @@ async function handleUpdateAutomation(
           }
         }
       }
-      updateFields.trigger_config = JSON.stringify(body.triggerConfig);
     }
+  }
+
+  // trigger_config is a single source-interpreted JSON blob (the conditions),
+  // so a PUT replaces it wholesale (null clears it). The caller owns the full
+  // blob; the web form always re-submits the conditions within triggerConfig.
+  if (body.triggerConfig === null) {
+    updateFields.trigger_config = null;
+  } else if (body.triggerConfig !== undefined) {
+    updateFields.trigger_config = JSON.stringify(body.triggerConfig);
   }
 
   // Recompute next_run_at if schedule changed (only for schedule types)
@@ -449,7 +532,28 @@ async function handleUpdateAutomation(
     updateFields.next_run_at = nextCronOccurrence(cron, tz).getTime();
   }
 
-  const updated = await store.update(id, updateFields);
+  // Apply the update and, when a slack_event automation's conditions changed,
+  // re-sync its watched-channel index in the same atomic write so trigger_config
+  // and the channel index can never drift apart on a partial failure. The batch
+  // composes the two single-table stores' prepared statements, tolerating a null
+  // update statement (no automation fields changed, channels-only re-sync).
+  const resyncSlackChannels =
+    existing.trigger_type === "slack_event" && body.triggerConfig !== undefined;
+  let updated: AutomationRow | null;
+  if (resyncSlackChannels) {
+    const slackStore = new SlackChannelStore(env.DB);
+    const updateStatement = store.bindAutomationUpdate(id, updateFields);
+    const channelStatements = slackStore.bindChannelStatements(
+      id,
+      extractSlackChannels(body.triggerConfig)
+    );
+    await env.DB.batch(
+      updateStatement ? [updateStatement, ...channelStatements] : channelStatements
+    );
+    updated = await store.getById(id);
+  } else {
+    updated = await store.update(id, updateFields);
+  }
   if (!updated) return error("Automation not found", 404);
 
   logger.info("automation.updated", {
@@ -715,9 +819,70 @@ async function handleRegenerateKey(
   });
 }
 
+/**
+ * GET /integration-settings/slack/watched-channels
+ *
+ * Returns the distinct set of Slack channel IDs referenced by enabled
+ * `slack_event` automations. The slack-bot polls this (cached) to pre-filter
+ * channel messages before normalizing and forwarding them — only messages in a
+ * watched channel are worth forwarding to the scheduler.
+ *
+ * Grouped under the `/integration-settings/slack` prefix the bot already uses
+ * for its runtime config (routing rules), even though the data is sourced from
+ * the automations store. Internal-auth gated by the router (non-public route).
+ */
+async function handleGetWatchedSlackChannels(
+  _request: Request,
+  env: Env,
+  _match: RegExpMatchArray,
+  _ctx: RequestContext
+): Promise<Response> {
+  const channels = await new SlackChannelStore(env.DB).getWatchedSlackChannels();
+  return json({ channels });
+}
+
+/**
+ * GET /integration-settings/slack/channels
+ *
+ * Lists the workspace's channels (public + private the bot can see) so the
+ * automation form can offer a channel picker instead of a raw channel ID. Sourced
+ * live from Slack via `conversations.list` using the bot token.
+ *
+ * Returns `{ channels }` on success, or `{ channels: [], error }` when the token
+ * is unset or Slack rejects the call (e.g. missing `channels:read`/`groups:read`
+ * scope) — the form then degrades to manual channel-ID entry. Internal-auth gated
+ * by the router (non-public route).
+ */
+async function handleGetSlackChannels(
+  _request: Request,
+  env: Env,
+  _match: RegExpMatchArray,
+  _ctx: RequestContext
+): Promise<Response> {
+  if (!env.SLACK_BOT_TOKEN) {
+    return json({ channels: [], error: "not_configured" });
+  }
+  const result = await listChannels(env.SLACK_BOT_TOKEN);
+  if (!result.ok) {
+    logger.warn("slack.channels.list_failed", { slack_error: result.error });
+    return json({ channels: [], error: result.error });
+  }
+  return json({ channels: result.channels });
+}
+
 // ─── Route exports ───────────────────────────────────────────────────────────
 
 export const automationRoutes: Route[] = [
+  {
+    method: "GET",
+    pattern: parsePattern("/integration-settings/slack/watched-channels"),
+    handler: handleGetWatchedSlackChannels,
+  },
+  {
+    method: "GET",
+    pattern: parsePattern("/integration-settings/slack/channels"),
+    handler: handleGetSlackChannels,
+  },
   {
     method: "GET",
     pattern: parsePattern("/automations"),

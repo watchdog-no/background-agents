@@ -384,7 +384,7 @@ class TestBuildRepoImage:
 
         with (
             patch("src.scheduler.image_builder.validate_control_plane_url", return_value=True),
-            patch("src.scheduler.image_builder._generate_clone_token", return_value="gh-token"),
+            patch("src.scheduler.image_builder.resolve_clone_token", return_value="gh-token"),
             patch("src.sandbox.manager.SandboxManager", return_value=manager),
             patch(
                 "src.scheduler.image_builder._callback_with_retry",
@@ -417,7 +417,7 @@ class TestBuildRepoImage:
 
         with (
             patch("src.scheduler.image_builder.validate_control_plane_url", return_value=True),
-            patch("src.scheduler.image_builder._generate_clone_token", return_value="gh-token"),
+            patch("src.scheduler.image_builder.resolve_clone_token", return_value="gh-token"),
             patch("src.sandbox.manager.SandboxManager", return_value=manager),
             patch(
                 "src.scheduler.image_builder._callback_with_retry",
@@ -446,7 +446,7 @@ class TestBuildRepoImage:
 
         with (
             patch("src.scheduler.image_builder.validate_control_plane_url", return_value=True),
-            patch("src.scheduler.image_builder._generate_clone_token", return_value="gh-token"),
+            patch("src.scheduler.image_builder.resolve_clone_token", return_value="gh-token"),
             patch("src.sandbox.manager.SandboxManager", return_value=manager),
             patch(
                 "src.scheduler.image_builder._callback_with_retry",
@@ -476,7 +476,7 @@ class TestBuildRepoImage:
 
         with (
             patch("src.scheduler.image_builder.validate_control_plane_url", return_value=True),
-            patch("src.scheduler.image_builder._generate_clone_token", return_value="gh-token"),
+            patch("src.scheduler.image_builder.resolve_clone_token", return_value="gh-token"),
             patch("src.sandbox.manager.SandboxManager", return_value=manager),
             patch(
                 "src.scheduler.image_builder._callback_with_retry",
@@ -526,7 +526,7 @@ class TestBuildRepoImage:
 
         with (
             patch("src.scheduler.image_builder.validate_control_plane_url", return_value=True),
-            patch("src.scheduler.image_builder._generate_clone_token", return_value="gh-token"),
+            patch("src.scheduler.image_builder.resolve_clone_token", return_value="gh-token"),
             patch("src.sandbox.manager.SandboxManager", return_value=manager),
             patch(
                 "src.scheduler.image_builder._callback_with_retry",

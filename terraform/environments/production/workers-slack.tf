@@ -55,6 +55,9 @@ module "slack_bot_worker" {
     # Worker egress IPs. The Anthropic OAuth path hits api.anthropic.com, which
     # is reachable from Workers.
     { name = "CLASSIFICATION_MODEL", value = "anthropic/claude-haiku-4-5" },
+    # Kill switch for Slack channel-message triggers; the bot only ingests/
+    # forwards channel messages when this is exactly "true" (dark by default).
+    { name = "SLACK_TRIGGERS_ENABLED", value = var.slack_triggers_enabled ? "true" : "false" },
   ]
 
   secrets = [

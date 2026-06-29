@@ -3,32 +3,87 @@ import type { JWT } from "next-auth/jwt";
 import GitHubProvider from "next-auth/providers/github";
 import type { GithubEmail, GithubProfile } from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
+import { DEFAULT_APP_NAME } from "@open-inspect/shared";
 import {
+  type AccessAllowReason,
   type AccessControlConfig,
-  checkAccessAllowed,
+  getAccessAllowReason,
   parseAllowlist,
   parseBooleanEnv,
 } from "./access-control";
+import {
+  checkGitHubOrganizationAccess,
+  type GitHubOrganizationAccessResult,
+} from "./github-org-membership";
+import { type AuthProvider, isAuthProvider } from "./build-auth-identity";
 
-export async function getVerifiedPrimaryGitHubEmail(
-  accessToken: string | undefined
-): Promise<string | null> {
-  if (!accessToken) return null;
+const GITHUB_EMAIL_FETCH_TIMEOUT_MS = 5_000;
+
+interface GitHubEmailFetchParams {
+  accessToken: string | undefined;
+  fetchImpl?: typeof fetch;
+  userAgent?: string;
+  timeoutMs?: number;
+}
+
+type GitHubProfileWithEmails = GithubProfile & { verifiedEmails?: GithubEmail[] };
+
+/**
+ * Fetch verified email addresses from GitHub's API.
+ *
+ * Returns all verified emails for the authenticated user. If the access token
+ * is missing or the request fails, returns an empty array (fails closed).
+ * Requests are aborted after the timeout to prevent hanging.
+ */
+export async function getVerifiedGitHubEmails({
+  accessToken,
+  fetchImpl = fetch,
+  userAgent = "Open-Inspect",
+  timeoutMs = GITHUB_EMAIL_FETCH_TIMEOUT_MS,
+}: GitHubEmailFetchParams): Promise<GithubEmail[]> {
+  if (!accessToken) return [];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = performance.now();
 
   try {
-    const response = await fetch("https://api.github.com/user/emails", {
+    const response = await fetchImpl("https://api.github.com/user/emails", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": userAgent,
       },
+      signal: controller.signal,
     });
-
-    if (!response.ok) return null;
-
+    if (!response.ok) {
+      console.warn("[github-email-fetch] request failed", {
+        status: response.status,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        // A 403 here almost always means the GitHub App is missing the "Email
+        // addresses" account permission (read-only), so /user/emails is forbidden
+        // even with a valid token. Without it, ALLOWED_EMAILS /
+        // ALLOWED_EMAIL_DOMAINS can never match a GitHub sign-in, which otherwise
+        // looks like an unexplained "no_matching_policy" denial. Surface a fix.
+        // (OAuth App deployments authorize this via the user:email scope instead.)
+        ...(response.status === 403 && {
+          hint: "GitHub App is likely missing the 'Email addresses: Read-only' account permission; grant it and re-approve the installation, or ALLOWED_EMAILS/ALLOWED_EMAIL_DOMAINS will not match GitHub sign-ins.",
+        }),
+      });
+      return [];
+    }
     const emails = (await response.json()) as GithubEmail[];
-    return emails.find((email) => email.primary && email.verified)?.email ?? null;
-  } catch {
-    return null;
+    return emails.filter((e) => e.verified);
+  } catch (error) {
+    console.warn("[github-email-fetch] request error", {
+      error: error instanceof Error ? error.name : "unknown",
+      message: error instanceof Error ? error.message : String(error),
+      elapsedMs: Math.round(performance.now() - startedAt),
+    });
+    return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -39,7 +94,7 @@ declare module "next-auth" {
     user: {
       id?: string; // Canonical provider user id: GitHub numeric id or Google sub
       login?: string; // GitHub username (GitHub-only)
-      provider?: "github" | "google"; // Which provider authenticated this session
+      provider?: AuthProvider; // Which provider authenticated this session
       name?: string | null;
       email?: string | null;
       image?: string | null;
@@ -54,49 +109,87 @@ declare module "next-auth/jwt" {
     accessTokenExpiresAt?: number; // Unix timestamp in milliseconds
     githubUserId?: string;
     githubLogin?: string;
-    provider?: "github" | "google";
+    provider?: AuthProvider;
     providerUserId?: string; // GitHub numeric id or Google sub
   }
 }
 
+export const BASE_GITHUB_OAUTH_SCOPE = "read:user user:email repo";
+
+export function buildGitHubOAuthScope(
+  allowedOrganizations = parseAllowlist(process.env.ALLOWED_GITHUB_ORGS)
+): string {
+  return allowedOrganizations.length > 0
+    ? `${BASE_GITHUB_OAUTH_SCOPE} read:org`
+    : BASE_GITHUB_OAUTH_SCOPE;
+}
+
 /**
- * Decide whether a sign-in attempt is allowed. Pure and exported so the policy
- * is unit-testable — NextAuth's inline signIn callback otherwise can't be reached.
+ * Normalize Google's `email_verified` claim. Google has returned it as boolean
+ * `true` or the string "true" (case-insensitive) depending on the flow; anything
+ * else is treated as unverified and fails closed.
+ */
+function isVerifiedGoogleEmail(profile: Profile | undefined): boolean {
+  const googleProfile = profile as { email_verified?: boolean | string } | undefined;
+  return (
+    googleProfile?.email_verified === true ||
+    String(googleProfile?.email_verified).toLowerCase() === "true"
+  );
+}
+
+/**
+ * Resolve the static (synchronous) allow reason for a sign-in attempt, or null
+ * when the static allowlists don't admit it. Pure and exported so the policy is
+ * unit-testable — NextAuth's inline signIn callback otherwise can't be reached.
+ *
+ * Providers are handled explicitly; an unrecognized provider is denied
+ * (default-closed) rather than treated as GitHub.
  *
  * - GitHub: the email was already resolved to the verified primary in the
  *   provider's userinfo override, so only the allowlist gate applies.
- * - Google: the email MUST be verified before any allowlist match. All
- *   email-based admission (the email allowlist here, and cross-provider account
- *   linking downstream) trusts this flag, so it is the single most
- *   security-sensitive check in the sign-in path. `email_verified` is normalized
- *   defensively — boolean `true` or a case-insensitive "true" string — because
- *   Google has returned the string form in some flows. Anything else fails closed.
+ * - Google: the email MUST be verified (see isVerifiedGoogleEmail) before any
+ *   allowlist match. All email-based admission (the email allowlist here, and
+ *   cross-provider account linking downstream) trusts this, so it is the single
+ *   most security-sensitive check in the sign-in path.
+ *
+ * GitHub organization membership is intentionally NOT resolved here: it needs an
+ * async call to GitHub's API, so the signIn callback applies it as a fallback
+ * when this returns null.
  */
-export function buildSignInDecision(args: {
+export function getStaticSignInReason(args: {
   provider: string | undefined;
   profile: Profile | undefined;
-  email: string | null | undefined;
+  emails: string[] | undefined;
   config: AccessControlConfig;
-}): boolean {
-  const { provider, profile, email, config } = args;
+}): AccessAllowReason | null {
+  const { provider, profile, emails, config } = args;
 
-  if (provider === "google") {
-    const googleProfile = profile as { email_verified?: boolean | string } | undefined;
-    const emailVerified =
-      googleProfile?.email_verified === true ||
-      String(googleProfile?.email_verified).toLowerCase() === "true";
-    if (!emailVerified) {
-      return false;
+  switch (provider) {
+    case "google": {
+      // The email must be verified before any email-based allowlist match.
+      if (!isVerifiedGoogleEmail(profile)) {
+        return null;
+      }
+      return getAccessAllowReason(config, { emails });
     }
-    return checkAccessAllowed(config, { email: email ?? undefined });
+    case "github":
+    case undefined: {
+      // GitHub, including legacy sessions minted before the provider field
+      // existed (treated as GitHub, matching resolveAuthProvider). The email was
+      // already resolved to the verified primary in the provider's userinfo
+      // override, so only the allowlist gate applies.
+      const githubProfile = profile as { login?: string } | undefined;
+      return getAccessAllowReason(config, {
+        githubUsername: githubProfile?.login,
+        emails,
+      });
+    }
+    default:
+      // Any other provider is denied rather than treated as GitHub, so admitting
+      // a new provider is a deliberate case here and never relies on an email
+      // this app has not verified for that provider.
+      return null;
   }
-
-  // GitHub (default).
-  const githubProfile = profile as { login?: string } | undefined;
-  return checkAccessAllowed(config, {
-    githubUsername: githubProfile?.login,
-    email: email ?? undefined,
-  });
 }
 
 /**
@@ -120,13 +213,15 @@ export function applyJwtClaims(
   profile: Profile | undefined
 ): JWT {
   if (account) {
-    // The cast is not validated: it relies on only "github" and "google" being
-    // registered providers below. A new provider must widen this union (and the
-    // SCM gate) rather than silently storing an untyped value.
-    token.provider = account.provider as "github" | "google";
-    token.providerUserId = account.providerAccountId;
+    // Validate the provider against the supported set instead of casting. Only a
+    // validated provider contributes an identity: an unrecognized provider stores
+    // no provider/providerUserId and falls to the claim-clearing branch below, so
+    // it can't surface as a legacy GitHub session via resolveAuthProvider.
+    const provider = isAuthProvider(account.provider) ? account.provider : undefined;
+    token.provider = provider;
+    token.providerUserId = provider ? account.providerAccountId : undefined;
 
-    if (account.provider === "github") {
+    if (provider === "github") {
       token.accessToken = account.access_token;
       token.refreshToken = account.refresh_token as string | undefined;
       // expires_at is in seconds, convert to milliseconds (only set if provided)
@@ -183,20 +278,44 @@ export function applySessionUser(session: Session, token: JWT): Session {
   return session;
 }
 
+function logSignInDecision(
+  login: string | undefined,
+  decision: "allow" | "deny",
+  reason: string
+): void {
+  console.info("[auth] sign-in decision", {
+    login: login ?? null,
+    decision,
+    reason,
+  });
+}
+
+function getOrgMembershipDecisionReason(orgMembership: GitHubOrganizationAccessResult): string {
+  if (orgMembership.allowed) {
+    return "org_membership";
+  }
+
+  return orgMembership.reason === "unavailable"
+    ? "org_membership_unavailable"
+    : "org_membership_denied";
+}
+
 const providers: NextAuthOptions["providers"] = [
   GitHubProvider<GithubProfile>({
     clientId: process.env.GITHUB_CLIENT_ID!,
     clientSecret: process.env.GITHUB_CLIENT_SECRET!,
     authorization: {
       params: {
-        scope: "read:user user:email repo",
+        scope: buildGitHubOAuthScope(),
       },
     },
     userinfo: {
       url: "https://api.github.com/user",
       async request({ client, tokens }) {
-        const profile = (await client.userinfo(tokens.access_token!)) as GithubProfile;
-        profile.email = await getVerifiedPrimaryGitHubEmail(tokens.access_token);
+        const profile = (await client.userinfo(tokens.access_token!)) as GitHubProfileWithEmails;
+        const verifiedEmails = await getVerifiedGitHubEmails({ accessToken: tokens.access_token! });
+        profile.email = verifiedEmails.find((e) => e.primary)?.email ?? null;
+        profile.verifiedEmails = verifiedEmails;
         return profile as unknown as Profile;
       },
     },
@@ -231,15 +350,61 @@ export const authOptions: NextAuthOptions = {
         allowedDomains: parseAllowlist(process.env.ALLOWED_EMAIL_DOMAINS),
         allowedUsers: parseAllowlist(process.env.ALLOWED_USERS),
         allowedEmails: parseAllowlist(process.env.ALLOWED_EMAILS),
+        allowedOrganizations: parseAllowlist(process.env.ALLOWED_GITHUB_ORGS),
         unsafeAllowAllUsers: parseBooleanEnv(process.env.UNSAFE_ALLOW_ALL_USERS),
       };
 
-      return buildSignInDecision({
-        provider: account?.provider,
+      const provider = account?.provider;
+      const githubProfile = profile as { login?: string } | undefined;
+      const isGitHubProvider = provider === "github" || provider === undefined;
+      const hasAllowLists = config.allowedDomains.length > 0 || config.allowedEmails.length > 0;
+
+      let emails: string[] | undefined = undefined;
+      if (isGitHubProvider && hasAllowLists) {
+        const verifiedEmails = (profile as GitHubProfileWithEmails | undefined)?.verifiedEmails;
+        emails = verifiedEmails?.map((e) => e.email);
+      } else {
+        emails = user.email ? [user.email] : undefined;
+      }
+
+      // Static, synchronous allowlist gate. Provider-aware: Google requires a
+      // verified email before any email-based match (see getStaticSignInReason).
+      const staticReason = getStaticSignInReason({
+        provider,
         profile,
-        email: user.email,
+        emails,
         config,
       });
+      if (staticReason) {
+        logSignInDecision(githubProfile?.login, "allow", staticReason);
+        return true;
+      }
+
+      // GitHub organization membership fallback. Org membership is a GitHub
+      // concept and the async check calls GitHub's API with the OAuth token, so
+      // it runs only for GitHub sign-ins (including legacy sessions with no
+      // provider) when at least one org is configured. Any other provider —
+      // Google or unrecognized — fails closed here without contacting GitHub, so
+      // a non-GitHub OAuth token is never sent to GitHub's API.
+      const allowedOrganizations = config.allowedOrganizations ?? [];
+      if (!isGitHubProvider || allowedOrganizations.length === 0) {
+        logSignInDecision(githubProfile?.login, "deny", "no_matching_policy");
+        return false;
+      }
+
+      const orgMembership = await checkGitHubOrganizationAccess({
+        accessToken: account?.access_token,
+        allowedOrganizations,
+        userAgent: process.env.NEXT_PUBLIC_APP_NAME?.trim() || DEFAULT_APP_NAME,
+      });
+
+      logSignInDecision(
+        githubProfile?.login,
+        orgMembership.allowed ? "allow" : "deny",
+        getOrgMembershipDecisionReason(orgMembership)
+      );
+
+      return orgMembership.allowed;
     },
     async jwt({ token, account, profile }) {
       return applyJwtClaims(token, account, profile);

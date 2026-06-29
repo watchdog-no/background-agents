@@ -1,5 +1,10 @@
 import type { Logger } from "../../../logger";
-import type { SessionArtifact } from "@open-inspect/shared";
+import {
+  createMediaArtifactRequestSchema,
+  sandboxEventSchema,
+  type CreateMediaArtifactRequest,
+  type SessionArtifact,
+} from "@open-inspect/shared";
 import type { ParticipantRole, SandboxEvent, ServerMessage } from "../../../types";
 import type { OpenAITokenRefreshResult } from "../../openai-token-refresh-service";
 import type { AnthropicTokenRefreshResult } from "../../anthropic-token-refresh-service";
@@ -37,13 +42,6 @@ export interface SandboxHandlerDeps {
   getLog: () => Logger;
 }
 
-interface CreateMediaArtifactRequest {
-  artifactId: string;
-  artifactType: string;
-  objectKey: string;
-  metadata?: Record<string, unknown>;
-}
-
 export interface SandboxHandler {
   sandboxEvent: (request: Request) => Promise<Response>;
   createMediaArtifact: (request: Request) => Promise<Response>;
@@ -59,13 +57,37 @@ export interface SandboxHandler {
 export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
   return {
     async sandboxEvent(request: Request): Promise<Response> {
-      const event = (await request.json()) as SandboxEvent;
+      let raw: unknown;
+      try {
+        raw = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid request body" }, { status: 400 });
+      }
+
+      const result = sandboxEventSchema.safeParse(raw);
+      if (!result.success) {
+        return Response.json({ error: "Invalid sandbox event" }, { status: 400 });
+      }
+
+      const event: SandboxEvent = result.data;
       await deps.processSandboxEvent(event);
       return Response.json({ status: "ok" });
     },
 
     async createMediaArtifact(request: Request): Promise<Response> {
-      const body = (await request.json()) as CreateMediaArtifactRequest;
+      let raw: unknown;
+      try {
+        raw = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid request body" }, { status: 400 });
+      }
+
+      const result = createMediaArtifactRequestSchema.safeParse(raw);
+      if (!result.success) {
+        return Response.json({ error: "Invalid media artifact body" }, { status: 400 });
+      }
+
+      const body: CreateMediaArtifactRequest = result.data;
       const sandbox = deps.getSandbox();
       if (!sandbox) {
         return Response.json({ error: "No sandbox" }, { status: 404 });
@@ -144,9 +166,17 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
     },
 
     async verifySandboxToken(request: Request): Promise<Response> {
-      const body = (await request.json()) as { token: string };
+      let raw: unknown;
+      try {
+        raw = await request.json();
+      } catch {
+        return Response.json({ valid: false, error: "Missing token" }, { status: 400 });
+      }
 
-      if (!body.token) {
+      const body = raw && typeof raw === "object" ? raw : null;
+      const token = body && "token" in body ? body.token : undefined;
+
+      if (typeof token !== "string" || !token) {
         return Response.json({ valid: false, error: "Missing token" }, { status: 400 });
       }
 
@@ -163,7 +193,7 @@ export function createSandboxHandler(deps: SandboxHandlerDeps): SandboxHandler {
         return Response.json({ valid: false, error: "Sandbox stopped" }, { status: 410 });
       }
 
-      const isTokenValid = await deps.isValidSandboxToken(body.token, sandbox);
+      const isTokenValid = await deps.isValidSandboxToken(token, sandbox);
       if (!isTokenValid) {
         deps.getLog().warn("Sandbox token verification failed: token mismatch");
         return Response.json({ valid: false, error: "Invalid token" }, { status: 401 });

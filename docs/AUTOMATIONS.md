@@ -6,13 +6,14 @@ session whenever the trigger fires.
 
 Trigger types:
 
-| Trigger Type        | Description                               | Availability |
-| ------------------- | ----------------------------------------- | ------------ |
-| **Schedule**        | Run on a cron schedule                    | Available    |
-| **Inbound Webhook** | Trigger from any system with an HTTP POST | Available    |
-| **Sentry Alert**    | Trigger from a Sentry Custom Integration  | Available    |
-| **GitHub Event**    | Trigger on GitHub activity                | Planned      |
-| **Linear Event**    | Trigger on Linear activity                | Planned      |
+| Trigger Type        | Description                               | Availability       |
+| ------------------- | ----------------------------------------- | ------------------ |
+| **Schedule**        | Run on a cron schedule                    | Available          |
+| **Inbound Webhook** | Trigger from any system with an HTTP POST | Available          |
+| **Sentry Alert**    | Trigger from a Sentry Custom Integration  | Available          |
+| **Slack Message**   | Trigger on messages in watched channels   | Available (opt-in) |
+| **GitHub Event**    | Trigger on GitHub activity                | Planned            |
+| **Linear Event**    | Trigger on Linear activity                | Planned            |
 
 Common use cases include nightly dependency updates, reacting to deploy or incident events, triaging
 new Sentry issues, and recurring report generation.
@@ -45,11 +46,12 @@ Start by choosing a **Trigger Type**. The rest of the form adjusts based on that
 
 ### Trigger-Specific Fields
 
-| Trigger Type        | Additional Fields                           |
-| ------------------- | ------------------------------------------- |
-| **Schedule**        | **Schedule** and **Timezone**               |
-| **Inbound Webhook** | No extra required fields                    |
-| **Sentry Alert**    | **Event Type** and **Sentry Client Secret** |
+| Trigger Type        | Additional Fields                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| **Schedule**        | **Schedule** and **Timezone**                                                                |
+| **Inbound Webhook** | No extra required fields                                                                     |
+| **Sentry Alert**    | **Event Type** and **Sentry Client Secret**                                                  |
+| **Slack Message**   | **Conditions** (a Slack Channel condition is required; a Message Text condition is optional) |
 
 For non-schedule automations, schedule fields are not used.
 
@@ -192,6 +194,57 @@ concurrency protection.
 
 ---
 
+## Slack Message Triggers
+
+A **Slack Message** automation starts a session when someone posts a matching message in a watched
+Slack channel. Unlike `@mention` sessions (which are explicit, interactive requests), these triggers
+fire on ambient channel messages that match the conditions you define.
+
+This source is opt-in per deployment and ships **disabled by default**. Enabling it requires the
+operator to set the `SLACK_TRIGGERS_ENABLED` flag and configure the Slack app — see
+[the Slack integration guide](integrations/SLACK.md#channel-message-triggers) for setup and the
+threat model. The web form and these conditions are always available to author; messages are only
+ingested once the flag is on.
+
+### Conditions
+
+A Slack automation must define at least a **Slack Channel** condition; the rest are optional
+filters.
+
+- **Slack Channel** (required) — the channels to watch. Pick channels by name in the web form;
+  channel IDs (for example `C0123ABCD`) also work as a fallback when channel listing is unavailable.
+  Only messages in these channels are considered, and the bot must be a member of each.
+- **Message Text** (optional) — filter on the message text. Without it, every message in the watched
+  channels triggers the automation. Pick a mode:
+  - **contains** — the message contains the substring (optionally case-insensitive).
+  - **exact** — the message equals the text.
+  - **regex** — the message matches a regular expression. Patterns are capped in length and limited
+    to the `i` and `m` flags; an invalid pattern is rejected when you save.
+- **Slack User** (optional) — include or exclude specific Slack user IDs (an allowlist is the
+  recommended way to limit who can trigger a run).
+
+A message runs the automation only when **every** condition passes. The bot-mention token is
+stripped before matching, and messages that `@mention` the bot are handled by the interactive
+`@mention` flow instead — they never double-fire as triggers.
+
+### Run feedback
+
+A triggering message is marked with the 👀 reaction while its run is in flight. When the run
+finishes, the agent's final response is posted as a reply in that message's thread — with links to
+any pull requests it opened and to the full web session — and the reaction is cleared. A failed run
+posts a short failure notice in the thread instead.
+
+Every reply in a thread **continues the same session** — during the run and after it finishes — for
+up to 24 hours after the thread's first trigger, exactly like replying in an `@mention` thread. The
+reply is enqueued as a follow-up turn on that session (re-spawning it from a snapshot if it had gone
+idle), and the agent posts its response in-thread when the turn finishes. A follow-up does not need
+to match the trigger condition — conditions gate new runs, not replies that continue an existing
+thread. If a reply races the very first trigger before its session exists, it falls back to an
+ephemeral "a run is already active" notice (reason `concurrent_run_active`); a reply more than 24
+hours after the first trigger starts a fresh run.
+
+---
+
 ## Schedule Options
 
 The schedule picker offers four presets and a custom mode:
@@ -303,6 +356,11 @@ those triggers fires while a previous run is still in progress, the new run is r
 Event-driven automations use concurrency keys instead. For inbound webhooks, retries with the same
 `idempotencyKey` are treated as the same event, but separate deliveries without a shared
 `idempotencyKey` can overlap.
+
+Slack Message triggers key concurrency by thread. Replies in a thread are not skipped — for 24 hours
+after the thread's first trigger they continue the same session (during the run and after it
+finishes), routed to that session as follow-up prompts (see the **Run feedback** note under
+[Slack Message Triggers](#slack-message-triggers)).
 
 This prevents overlapping sessions from interfering with each other on the same repository.
 

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   AutomationStore,
+  isDuplicateKeyError,
   toAutomation,
   toAutomationRun,
   type AutomationRow,
@@ -354,7 +355,7 @@ describe("AutomationStore", () => {
         allResults: [sampleRunRow],
       });
       const store = new AutomationStore(db);
-      const result = await store.getOrphanedStartingRuns(5 * 60 * 1000);
+      const result = await store.getOrphanedStartingRuns(5 * 60 * 1000, 50);
       expect(result).toHaveLength(1);
       expect(statements[0].sql).toContain("status = 'starting'");
     });
@@ -366,7 +367,7 @@ describe("AutomationStore", () => {
         allResults: [{ ...sampleRunRow, status: "running", started_at: now }],
       });
       const store = new AutomationStore(db);
-      const result = await store.getTimedOutRunningRuns(90 * 60 * 1000);
+      const result = await store.getTimedOutRunningRuns(90 * 60 * 1000, 50);
       expect(result).toHaveLength(1);
       expect(statements[0].sql).toContain("status = 'running'");
     });
@@ -429,5 +430,29 @@ describe("AutomationStore", () => {
       expect(result.runs).toHaveLength(1);
       expect(result.runs[0].session_title).toBe("Auto session");
     });
+  });
+});
+
+describe("isDuplicateKeyError", () => {
+  it("matches the trigger-key dedup index violation", () => {
+    expect(
+      isDuplicateKeyError(
+        new Error(
+          "D1_ERROR: UNIQUE constraint failed: automation_runs.automation_id, automation_runs.trigger_key"
+        )
+      )
+    ).toBe(true);
+  });
+
+  it("ignores unrelated UNIQUE violations so they surface as real errors", () => {
+    expect(isDuplicateKeyError(new Error("UNIQUE constraint failed: automation_runs.id"))).toBe(
+      false
+    );
+    expect(isDuplicateKeyError(new Error("some other write failure"))).toBe(false);
+  });
+
+  it("handles non-Error throwables", () => {
+    expect(isDuplicateKeyError("UNIQUE constraint failed: x.trigger_key")).toBe(true);
+    expect(isDuplicateKeyError(null)).toBe(false);
   });
 });

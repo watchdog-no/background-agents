@@ -1,12 +1,6 @@
-import type { CreateSessionRequest } from "../types";
-import type { SessionIdentityFields } from "./identity";
+import { createSessionInputSchema, type CreateSessionInput } from "@open-inspect/shared";
 
-export type CreateSessionInput = CreateSessionRequest &
-  SessionIdentityFields & {
-    scmToken?: string;
-    scmRefreshToken?: string;
-    scmTokenExpiresAt?: number;
-  };
+export type { CreateSessionInput };
 
 export type CreateSessionInputParseResult =
   | { ok: true; input: CreateSessionInput }
@@ -30,5 +24,10 @@ export async function parseCreateSessionInput(
     return { ok: false, message: "JSON body must be an object" };
   }
 
-  return { ok: true, input: parsed as unknown as CreateSessionInput };
+  const result = createSessionInputSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, message: "Invalid session request body" };
+  }
+
+  return { ok: true, input: result.data };
 }

@@ -102,6 +102,11 @@ ALLOWED_USERS=
 ALLOWED_EMAIL_DOMAINS=
 # Exact emails (any provider's verified email) — for users on shared domains
 ALLOWED_EMAILS=
+# GitHub orgs whose active members can sign in. Requests read:org only when set,
+# then checks active org membership with the user's OAuth token. Requires GitHub
+# App Organization permissions: Members read-only.
+ALLOWED_GITHUB_ORGS=
+UNSAFE_ALLOW_ALL_USERS=false
 
 # Optional whitelabel branding (defaults shown). NEXT_PUBLIC_* vars are
 # inlined into the client bundle at build time — restart `npm run dev`
@@ -232,7 +237,10 @@ Your GitHub callback URL does not exactly match the running app URL.
 
 ### Access denied after sign-in
 
-Check `ALLOWED_USERS` and `ALLOWED_EMAIL_DOMAINS` in `packages/web/.env.local`.
+Check `ALLOWED_USERS`, `ALLOWED_EMAIL_DOMAINS`, and `ALLOWED_GITHUB_ORGS` in
+`packages/web/.env.local`. If `ALLOWED_GITHUB_ORGS` is set, make sure your GitHub App has
+Organization permissions: Members read-only and that the updated permission was republished and
+approved for the installation.
 
 ### Web can load, but session APIs return 401
 

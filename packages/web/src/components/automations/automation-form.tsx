@@ -11,6 +11,7 @@ import {
   type AutomationTriggerType,
   type AutomationEventSource,
   type TriggerCondition,
+  type TriggerConfig,
 } from "@open-inspect/shared";
 import { useRepos } from "@/hooks/use-repos";
 import { useBranches } from "@/hooks/use-branches";
@@ -91,7 +92,7 @@ export interface AutomationFormValues {
   instructions: string;
   triggerType: AutomationTriggerType;
   eventType?: string;
-  triggerConfig?: { conditions: TriggerCondition[] };
+  triggerConfig?: TriggerConfig;
   sentryClientSecret?: string;
 }
 
@@ -134,7 +135,11 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
   const [sentryClientSecret, setSentryClientSecret] = useState("");
 
   const isSchedule = triggerType === "schedule";
+  const isSlack = triggerType === "slack_event";
   const isScheduleValid = !isSchedule || isValidCron(scheduleCron);
+  // Mirror the server rule: a slack_event needs a slack_channel. A text_match is
+  // optional — without one it fires on every message in the watched channel.
+  const slackConditionsValid = !isSlack || conditions.some((c) => c.type === "slack_channel");
 
   // The model we display and submit. The selector only lists enabled models, so
   // a disabled default (blank create), a disabled saved model (edit), or a
@@ -186,6 +191,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
     if (loadingModels) return;
     if (!name.trim() || !selectedRepo || !instructions.trim() || !isScheduleValid) return;
     if (triggerType === "sentry" && mode === "create" && !sentryClientSecret.trim()) return;
+    if (!slackConditionsValid) return;
     if (showEventTypeSelector && !eventType) {
       setEventTypeError("Event type is required.");
       return;
@@ -258,6 +264,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
               webhook: "Inbound Webhook",
               github_event: "GitHub Event",
               linear_event: "Linear Event",
+              slack_event: "Slack Message",
             }[triggerType] || triggerType}
             <span className="text-xs ml-2">(cannot be changed)</span>
           </div>
@@ -511,6 +518,11 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             Optional filters on incoming events. When you add conditions, every condition must pass
             before a run starts.
           </FieldDescription>
+          {isSlack && !slackConditionsValid && (
+            <p className="mt-1 text-xs text-destructive">
+              Slack triggers require at least one Slack Channel condition.
+            </p>
+          )}
         </div>
       )}
 
@@ -568,6 +580,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             !selectedRepo ||
             !instructions.trim() ||
             !isScheduleValid ||
+            !slackConditionsValid ||
             (showEventTypeSelector && !eventType) ||
             (triggerType === "sentry" && mode === "create" && !sentryClientSecret.trim())
           }
