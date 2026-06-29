@@ -7,6 +7,23 @@ MIGRATIONS_DIR="${2:-$SCRIPT_DIR/../terraform/d1/migrations}"
 
 WRANGLER="npx wrangler"
 
+# 0. Guard against duplicate version numbers. Migrations are deduped by their
+# numeric prefix (the _schema_migrations version), so two files sharing a
+# prefix mean one is silently skipped forever — e.g. two PRs that each grab the
+# next number and then both merge. Fail fast instead of skipping.
+DUPES=$(
+  for file in "$MIGRATIONS_DIR"/*.sql; do
+    [ -f "$file" ] || continue
+    basename "$file" | grep -oE '^[0-9]+'
+  done | sort | uniq -d
+)
+if [ -n "$DUPES" ]; then
+  echo "ERROR: duplicate migration version prefixes detected:" >&2
+  echo "$DUPES" | sed 's/^/  /' >&2
+  echo "Renumber the colliding files so each prefix is unique before deploying." >&2
+  exit 1
+fi
+
 # 1. Ensure tracking table exists
 $WRANGLER d1 execute "$DATABASE_NAME" --remote \
   --command "CREATE TABLE IF NOT EXISTS _schema_migrations (
