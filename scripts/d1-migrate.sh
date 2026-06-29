@@ -7,6 +7,22 @@ MIGRATIONS_DIR="${2:-$SCRIPT_DIR/../terraform/d1/migrations}"
 
 WRANGLER="npx wrangler"
 
+# 0. Guard against duplicate version numbers. Migrations are deduped by their
+# numeric prefix (the _schema_migrations version), so two files sharing a
+# prefix mean one is silently skipped forever. Fail fast instead of skipping.
+DUPES=$(
+  for file in "$MIGRATIONS_DIR"/*.sql; do
+    [ -f "$file" ] || continue
+    basename "$file" | grep -oE '^[0-9]+'
+  done | sort | uniq -d
+)
+if [ -n "$DUPES" ]; then
+  echo "ERROR: duplicate migration version prefixes detected:" >&2
+  echo "$DUPES" | sed 's/^/  /' >&2
+  echo "Renumber the colliding files so each prefix is unique before deploying." >&2
+  exit 1
+fi
+
 # 1. Ensure tracking table exists
 $WRANGLER d1 execute "$DATABASE_NAME" --remote \
   --command "CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -33,7 +49,19 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
   fi
 
   echo "Applying: $FILENAME"
-  $WRANGLER d1 execute "$DATABASE_NAME" --remote --file "$file"
+  # Tolerate "duplicate column name": the migration was already applied under a
+  # different version (e.g. a file renumbered after a collision) so the schema
+  # is already in the target state. ADD COLUMN has no IF NOT EXISTS in SQLite,
+  # so record it as applied and move on instead of aborting the whole deploy.
+  # Every other error still aborts.
+  if APPLY_OUTPUT=$($WRANGLER d1 execute "$DATABASE_NAME" --remote --file "$file" 2>&1); then
+    echo "$APPLY_OUTPUT"
+  elif echo "$APPLY_OUTPUT" | grep -qi "duplicate column name"; then
+    echo "  Columns already present; recording as applied without re-running."
+  else
+    echo "$APPLY_OUTPUT" >&2
+    exit 1
+  fi
 
   SAFE_FILENAME=$(echo "$FILENAME" | sed "s/'/''/g")
   $WRANGLER d1 execute "$DATABASE_NAME" --remote \
