@@ -31,7 +31,7 @@ interface RepoImageRow {
   provider_session_id: string | null;
   base_branch: string;
   provider_image_id: string;
-  status: "building" | "ready" | "failed";
+  status: "building" | "ready" | "failed" | "superseded";
   base_sha: string;
   build_duration_seconds: number | null;
   error_message: string | null;
@@ -45,6 +45,20 @@ function createRepoImageDb(row: RepoImageRow): D1Database {
   const prepare = (sql: string) => ({
     bind: (...args: unknown[]) => ({
       first: async () => {
+        if (
+          sql.includes(
+            "SELECT id, provider, provider_session_id, status FROM repo_images WHERE id = ?"
+          )
+        ) {
+          return row.id === args[0]
+            ? {
+                id: row.id,
+                provider: row.provider,
+                provider_session_id: row.provider_session_id,
+                status: row.status,
+              }
+            : null;
+        }
         if (sql.includes("SELECT id, provider, provider_session_id")) {
           return row.id === args[0] && row.provider === args[1]
             ? {
@@ -58,25 +72,30 @@ function createRepoImageDb(row: RepoImageRow): D1Database {
               }
             : null;
         }
-        if (sql.includes("SELECT repo_owner, repo_name, provider, base_branch")) {
+        if (sql.includes("SELECT repo_owner, repo_name, provider, provider_session_id")) {
           return row.id === args[0] && row.provider === args[1] && row.status === "building"
             ? {
                 repo_owner: row.repo_owner,
                 repo_name: row.repo_name,
                 provider: row.provider,
+                provider_session_id: row.provider_session_id,
                 base_branch: row.base_branch,
+                created_at: row.created_at,
               }
             : null;
         }
-        if (sql.includes("SELECT id, provider_image_id")) {
-          return null;
-        }
         return null;
+      },
+      all: async () => {
+        if (sql.includes("SELECT id, provider_image_id")) {
+          return { results: [] };
+        }
+        return { results: [] };
       },
       run: async () => {
         if (sql.includes("UPDATE repo_images SET callback_token_used_at")) {
           row.callback_token_used_at = Number(args[0]);
-        } else if (sql.includes("UPDATE repo_images SET status = 'ready'")) {
+        } else if (sql.includes("SET status = 'ready'")) {
           row.status = "ready";
           row.provider_image_id = String(args[0]);
           row.base_sha = String(args[1]);
@@ -106,14 +125,6 @@ function buildCompleteRoute(): Route {
     candidate.pattern.test("/repo-images/build-complete")
   );
   if (!route) throw new Error("build-complete route not found");
-  return route;
-}
-
-function buildFailedRoute(): Route {
-  const route = repoImageRoutes.find((candidate) =>
-    candidate.pattern.test("/repo-images/build-failed")
-  );
-  if (!route) throw new Error("build-failed route not found");
   return route;
 }
 
@@ -275,10 +286,7 @@ describe("repo image routes", () => {
     expect(row.callback_token_used_at).toBeNull();
   });
 
-  it("stops Vercel repo image build sandboxes after failed build callbacks", async () => {
-    const waitUntilPromises: Promise<unknown>[] = [];
-    const token = VERCEL_CALLBACK_TOKEN;
-    const tokenHash = await computeHmacHex(`repo-image-callback:${token}`, "callback-secret");
+  it("rejects oversized build-complete callback bodies before parsing", async () => {
     const row: RepoImageRow = {
       id: "build-1",
       repo_owner: "acme",
@@ -291,47 +299,31 @@ describe("repo image routes", () => {
       base_sha: "",
       build_duration_seconds: null,
       error_message: null,
-      callback_token_hash: tokenHash,
-      callback_token_expires_at: Date.now() + 60_000,
+      callback_token_hash: null,
+      callback_token_expires_at: null,
       callback_token_used_at: null,
       created_at: Date.now(),
     };
 
-    const response = await buildFailedRoute().handler(
-      new Request("https://test.local/repo-images/build-failed", {
+    const response = await buildCompleteRoute().handler(
+      new Request("https://test.local/repo-images/build-complete", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           build_id: "build-1",
-          provider_session_id: "vercel-session-1",
-          error: "git sync failed",
+          padding: "x".repeat(20 * 1024),
         }),
       }),
       createEnv(createRepoImageDb(row)),
       [] as unknown as RegExpMatchArray,
-      createContext(waitUntilPromises)
+      createContext([])
     );
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true });
-
-    expect(row.status).toBe("failed");
-    expect(row.error_message).toBe("git sync failed");
-    expect(row.callback_token_used_at).toEqual(expect.any(Number));
-
-    expect(waitUntilPromises).toHaveLength(1);
-    await Promise.all(waitUntilPromises);
-
-    expect(vercelClient.stopSession).toHaveBeenCalledWith(
-      "vercel-session-1",
-      expect.objectContaining({
-        request_id: "request-1",
-        trace_id: "trace-1",
-        sandbox_id: "vercel-session-1",
-      })
-    );
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "Payload too large" });
+    expect(vercelClient.snapshotSession).not.toHaveBeenCalled();
+    expect(row.status).toBe("building");
   });
 });
