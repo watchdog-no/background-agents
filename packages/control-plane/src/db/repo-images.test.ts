@@ -742,6 +742,7 @@ describe("RepoImageStore", () => {
         callback_token_expires_at: null,
         callback_token_used_at: null,
         created_at: Date.now(),
+        sandbox_version: "",
       });
       await expect(store.getCallbackBuild("img-superseded")).resolves.toBeNull();
     });

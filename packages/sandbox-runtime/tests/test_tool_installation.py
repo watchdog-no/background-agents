@@ -253,7 +253,7 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tool"
+        tool_dest = workdir / ".opencode" / "tools"
         assert (tool_dest / "_bridge-client.js").exists()
         assert not (tool_dest / "create-pull-request.js").exists()
         assert (tool_dest / "spawn-task.js").exists()
