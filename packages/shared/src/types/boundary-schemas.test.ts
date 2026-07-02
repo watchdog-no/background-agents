@@ -217,6 +217,35 @@ describe("boundary schemas", () => {
       expect(result.success).toBe(true);
     });
 
+    it("preserves persisted context usage fields on the subscribed state", () => {
+      const result = serverMessageSchema.safeParse({
+        type: "subscribed",
+        sessionId: "session-1",
+        state: {
+          id: "session-1",
+          title: null,
+          repoOwner: null,
+          repoName: null,
+          baseBranch: null,
+          branchName: null,
+          status: "active",
+          sandboxStatus: "ready",
+          messageCount: 1,
+          createdAt: 123,
+          contextTokens: 50_000,
+          contextLimit: 200_000,
+        },
+        artifacts: [],
+        participantId: "participant-1",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success && result.data.type === "subscribed") {
+        expect(result.data.state.contextTokens).toBe(50_000);
+        expect(result.data.state.contextLimit).toBe(200_000);
+      }
+    });
+
     it("rejects a malformed partial sandbox event message", () => {
       const result = serverMessageSchema.safeParse({
         type: "sandbox_event",

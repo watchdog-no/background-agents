@@ -462,6 +462,8 @@ const sessionStateSchema = z.object({
   isProcessing: z.boolean().optional(),
   parentSessionId: z.string().nullable().optional(),
   totalCost: z.number().optional(),
+  contextTokens: z.number().optional(),
+  contextLimit: z.number().optional(),
   codeServerUrl: z.string().nullable().optional(),
   codeServerPassword: z.string().nullable().optional(),
   tunnelUrls: z.record(z.string(), z.string()).nullable().optional(),
