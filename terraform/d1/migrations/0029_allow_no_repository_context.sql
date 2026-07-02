@@ -186,9 +186,6 @@ CREATE TABLE sessions_new (
   message_count INTEGER NOT NULL DEFAULT 0,
   pr_count INTEGER NOT NULL DEFAULT 0,
   user_id TEXT,
-  -- Fork-only column (0022_add_title_updated_at_to_sessions.sql); carried
-  -- through the rebuild so title-sync gating keeps working.
-  title_updated_at INTEGER,
   CHECK ((repo_owner IS NULL) = (repo_name IS NULL)),
   CHECK (repo_owner IS NOT NULL OR base_branch IS NULL)
 );
@@ -197,13 +194,13 @@ INSERT INTO sessions_new (
   id, title, repo_owner, repo_name, model, status, created_at, updated_at,
   reasoning_effort, base_branch, parent_session_id, spawn_source, spawn_depth,
   automation_id, automation_run_id, scm_login, total_cost, active_duration_ms,
-  message_count, pr_count, user_id, title_updated_at
+  message_count, pr_count, user_id
 )
 SELECT
   id, title, repo_owner, repo_name, model, status, created_at, updated_at,
   reasoning_effort, base_branch, parent_session_id, spawn_source, spawn_depth,
   automation_id, automation_run_id, scm_login, total_cost, active_duration_ms,
-  message_count, pr_count, user_id, title_updated_at
+  message_count, pr_count, user_id
 FROM sessions;
 
 DROP TABLE sessions;
