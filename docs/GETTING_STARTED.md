@@ -15,11 +15,11 @@ This guide walks you through deploying your own instance of Open-Inspect using T
 
 Open-Inspect uses Terraform to automate deployment across multiple cloud providers:
 
-| Provider                                          | Purpose                          | What Terraform Creates                                                   |
-| ------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------ |
-| **Cloudflare**                                    | Control plane, session state     | Workers, KV namespaces, Durable Objects, D1 Database                     |
-| **Vercel** _or_ **Cloudflare Workers**            | Web application                  | Project + env vars (Vercel) _or_ Worker via OpenNext (Cloudflare)        |
-| **Modal**, **Daytona**, _or_ **Vercel Sandboxes** | Sandbox execution infrastructure | Modal app deployment, Daytona API config, _or_ Vercel Sandbox API config |
+| Provider                                                            | Purpose                          | What Terraform Creates                                                                                     |
+| ------------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Cloudflare**                                                      | Control plane, session state     | Workers, KV namespaces, Durable Objects, D1 Database                                                       |
+| **Vercel** _or_ **Cloudflare Workers**                              | Web application                  | Project + env vars (Vercel) _or_ Worker via OpenNext (Cloudflare)                                          |
+| **Modal**, **Daytona**, **Vercel Sandboxes**, _or_ **OpenComputer** | Sandbox execution infrastructure | Modal app deployment, Daytona API config, Vercel Sandbox API config, _or_ OpenComputer template/API config |
 
 > **Web platform choice**: Set `web_platform` in your `terraform.tfvars` to `"vercel"` (default) or
 > `"cloudflare"`. The Cloudflare option deploys the Next.js app as a Cloudflare Worker using
@@ -36,17 +36,18 @@ Open-Inspect uses Terraform to automate deployment across multiple cloud provide
 
 Create accounts on these services before continuing:
 
-| Service                                             | Purpose                                                        |
-| --------------------------------------------------- | -------------------------------------------------------------- |
-| [Cloudflare](https://dash.cloudflare.com)           | Control plane hosting (+ web app if using Cloudflare platform) |
-| [Vercel](https://vercel.com) _(optional)_           | Web application hosting (only if `web_platform = "vercel"`)    |
-| [Modal](https://modal.com) _(optional)_             | Sandbox infrastructure when `sandbox_provider = "modal"`       |
-| [Daytona](https://app.daytona.io) _(optional)_      | Sandbox infrastructure when `sandbox_provider = "daytona"`     |
-| [Vercel Sandboxes](https://vercel.com) _(optional)_ | Sandbox infrastructure when `sandbox_provider = "vercel"`      |
-| [GitHub](https://github.com/settings/developers)    | OAuth + repository access                                      |
-| [Anthropic](https://console.anthropic.com)          | Claude API                                                     |
-| [Slack](https://api.slack.com/apps) _(optional)_    | Slack bot integration                                          |
-| GitHub App Webhooks _(optional)_                    | GitHub bot (PR reviews)                                        |
+| Service                                                   | Purpose                                                         |
+| --------------------------------------------------------- | --------------------------------------------------------------- |
+| [Cloudflare](https://dash.cloudflare.com)                 | Control plane hosting (+ web app if using Cloudflare platform)  |
+| [Vercel](https://vercel.com) _(optional)_                 | Web application hosting (only if `web_platform = "vercel"`)     |
+| [Modal](https://modal.com) _(optional)_                   | Sandbox infrastructure when `sandbox_provider = "modal"`        |
+| [Daytona](https://app.daytona.io) _(optional)_            | Sandbox infrastructure when `sandbox_provider = "daytona"`      |
+| [Vercel Sandboxes](https://vercel.com) _(optional)_       | Sandbox infrastructure when `sandbox_provider = "vercel"`       |
+| [OpenComputer](https://app.opencomputer.dev) _(optional)_ | Sandbox infrastructure when `sandbox_provider = "opencomputer"` |
+| [GitHub](https://github.com/settings/developers)          | OAuth + repository access                                       |
+| [Anthropic](https://console.anthropic.com)                | Claude API                                                      |
+| [Slack](https://api.slack.com/apps) _(optional)_          | Slack bot integration                                           |
+| GitHub App Webhooks _(optional)_                          | GitHub bot (PR reviews)                                         |
 
 ### Required Tools
 
@@ -212,6 +213,20 @@ for the full runtime, snapshot, and resource configuration model.
 > sandboxes. If you plan to use Claude models, add `ANTHROPIC_API_KEY` as a **global secret** in
 > Settings > Secrets after deploying. See [Secrets Management](SECRETS.md) for details.
 
+### OpenComputer
+
+> Only required when `sandbox_provider = "opencomputer"`.
+
+1. Create an OpenComputer API key.
+2. Set `sandbox_provider = "opencomputer"` in `terraform.tfvars`.
+3. Set `opencomputer_api_url` and `opencomputer_api_key`.
+4. Leave `opencomputer_template = ""` to let Terraform build the OpenInspect runtime template, or
+   set it to an existing OpenComputer template name.
+5. Run `terraform apply`.
+
+For the full template build and runtime details, see
+[OpenComputer Sandbox Provider](OPENCOMPUTER_PROVIDER.md).
+
 ### Anthropic
 
 Claude subscription OAuth is the default Anthropic model path. Use
@@ -247,6 +262,7 @@ access.
    Your web app URL depends on `web_platform`:
    - **Vercel**: `https://open-inspect-{deployment_name}.vercel.app`
    - **Cloudflare**: `https://open-inspect-web-{deployment_name}.{your-subdomain}.workers.dev`
+   - **Cloudflare with `cloudflare_custom_domain` set**: `https://{your-custom-domain}`
 
    > **Important**: The callback URL must match your deployed web app URL exactly. The
    > `{deployment_name}` is the unique value you set in `terraform.tfvars` (e.g., your GitHub
@@ -399,6 +415,10 @@ cloudflare_worker_subdomain = "your-subdomain"  # e.g., "twilight-unit-b2cf" (wi
 
 # Web platform: "vercel" (default) or "cloudflare" (OpenNext)
 web_platform                = "vercel"
+
+# Optional custom domain for the web app (only when web_platform = "cloudflare")
+# cloudflare_zone_id       = "your-zone-id"
+# cloudflare_custom_domain = "app.example.com"
 
 # Vercel (only required when web_platform = "vercel")
 # If using Cloudflare, do NOT set these — leave them out so the dummy defaults are used.
@@ -621,7 +641,12 @@ The App Home provides a settings interface where users can configure their prefe
    ```
    https://open-inspect-slack-bot-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/interactions
    ```
-4. Click **Save Changes**
+4. Under **Select Menus**, enter **Options Load URL** using the same endpoint:
+   ```
+   https://open-inspect-slack-bot-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/interactions
+   ```
+   This is required for searchable Slack repository pickers that use external data sources.
+5. Click **Save Changes**
 
 ### Invite the Bot to Channels
 
@@ -684,6 +709,27 @@ For day-to-day workflows, see [GitHub Integration](./integrations/GITHUB.md).
 
 Terraform handles the full build and deploy automatically — the web app is built with OpenNext and
 deployed as a Cloudflare Worker during `terraform apply`. No manual step needed.
+
+#### Optional: serve the web app on a custom domain
+
+By default the web app is served from
+`https://open-inspect-web-{deployment_name}.YOUR-SUBDOMAIN.workers.dev`. To use your own hostname,
+set both of these in `terraform.tfvars`:
+
+```hcl
+cloudflare_zone_id       = "your-zone-id"    # zone that owns the hostname
+cloudflare_custom_domain = "app.example.com" # bare hostname, no scheme
+```
+
+Cloudflare provisions the DNS record and edge certificate automatically. Notes:
+
+- The web app URL — including `NEXTAUTH_URL` and the links the bots send — becomes
+  `https://{your-custom-domain}`, and the workers.dev route for the web Worker is disabled so the
+  app has a single canonical origin.
+- Update the GitHub App callback URL (and the Google redirect URI, if Google login is enabled) to
+  the new hostname, or sign-in will fail with a redirect URI mismatch.
+- The Cloudflare API token needs zone-level **Workers Routes: Edit** permission to attach the
+  domain.
 
 ### If using Vercel (`web_platform = "vercel"`)
 
@@ -902,6 +948,7 @@ URL to match your web app URL:
 - **Vercel**: `https://open-inspect-{deployment_name}.vercel.app/api/auth/callback/github`
 - **Cloudflare**:
   `https://open-inspect-web-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/api/auth/callback/github`
+- **Cloudflare with a custom domain**: `https://{your-custom-domain}/api/auth/callback/github`
 
 ### Modal deployment fails
 

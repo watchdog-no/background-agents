@@ -15,7 +15,7 @@ const ROTATED_REFRESH_TOKEN_PERSIST_RETRY_DELAY_MS = 100;
 
 type OpenAITokenState =
   | { type: "cached"; accessToken: string; expiresIn: number; accountId?: string }
-  | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number };
+  | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number | null };
 
 /**
  * Identifies the repo a rotated secret should be written back to. Null for the
@@ -39,10 +39,11 @@ export class OpenAITokenRefreshService {
    * Refresh using a session's repo-scoped secrets, falling back to global.
    */
   async refresh(session: SessionRow): Promise<OpenAITokenRefreshResult> {
-    return this.refreshFromState(() => this.readTokenState(session), {
-      repoOwner: session.repo_owner,
-      repoName: session.repo_name,
-    });
+    const repoContext =
+      session.repo_owner && session.repo_name
+        ? { repoOwner: session.repo_owner, repoName: session.repo_name }
+        : null;
+    return this.refreshFromState(() => this.readTokenState(session), repoContext);
   }
 
   /**
@@ -97,7 +98,7 @@ export class OpenAITokenRefreshService {
   private getTokenStateFromSecrets(
     secrets: Record<string, string>,
     source: "repo" | "global",
-    repoId: number
+    repoId: number | null
   ): OpenAITokenState | null {
     if (!secrets.OPENAI_OAUTH_REFRESH_TOKEN) {
       return null;
@@ -125,13 +126,16 @@ export class OpenAITokenRefreshService {
   }
 
   private async readTokenState(session: SessionRow): Promise<OpenAITokenState | null> {
-    const repoId = await this.ensureRepoId(session);
+    let repoId: number | null = null;
+    if (session.repo_owner && session.repo_name) {
+      repoId = await this.ensureRepoId(session);
 
-    const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-    const repoSecrets = await repoStore.getDecryptedSecrets(repoId);
-    const repoState = this.getTokenStateFromSecrets(repoSecrets, "repo", repoId);
-    if (repoState) {
-      return repoState;
+      const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
+      const repoSecrets = await repoStore.getDecryptedSecrets(repoId);
+      const repoState = this.getTokenStateFromSecrets(repoSecrets, "repo", repoId);
+      if (repoState) {
+        return repoState;
+      }
     }
 
     const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
@@ -142,8 +146,7 @@ export class OpenAITokenRefreshService {
   private async readGlobalTokenState(): Promise<OpenAITokenState | null> {
     const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
     const globalSecrets = await globalStore.getDecryptedSecrets();
-    // repoId is unused for global-scoped writes; pass a sentinel.
-    return this.getTokenStateFromSecrets(globalSecrets, "global", 0);
+    return this.getTokenStateFromSecrets(globalSecrets, "global", null);
   }
 
   private async attemptRefresh(
@@ -213,8 +216,8 @@ export class OpenAITokenRefreshService {
     secrets: Record<string, string>
   ): Promise<void> {
     if (tokenState.source === "repo") {
-      if (!repoContext) {
-        throw new Error("Repo context required to persist repo-scoped OpenAI secrets");
+      if (tokenState.repoId === null || !repoContext) {
+        throw new Error("Repository-scoped OpenAI tokens require a repository context");
       }
       const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
       await repoStore.setSecrets(

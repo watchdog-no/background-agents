@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Applies pending D1 migrations, tracking applied state by FULL FILENAME in
+# _schema_migrations. The numeric prefix only determines apply order, so two
+# files sharing a prefix (e.g. an upstream sync colliding with a fork-local
+# migration) both apply — nothing is silently skipped and nothing crashes.
+#
+# Fork convention: fork-local migrations use the 9000+ prefix band so they sort
+# after upstream's sequential numbering and never collide with it.
+
 DATABASE_NAME="${1:?Usage: d1-migrate.sh <database-name> [migrations-dir]}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MIGRATIONS_DIR="${2:-$SCRIPT_DIR/../terraform/d1/migrations}"
 
 WRANGLER="npx wrangler"
 
-# 0. Validate filenames and guard against duplicate version numbers. Migrations
-# are deduped by their numeric prefix (the _schema_migrations version), so two
-# files sharing a prefix mean one is silently skipped forever — e.g. two PRs
-# that each grab the next number and then both merge. A file with no numeric
-# prefix can't be tracked at all. Fail fast on either, with a clear message.
+# 0. Validate filenames. A numeric prefix is required for deterministic
+# ordering. Duplicate prefixes are allowed (tracking is by filename), but
+# usually signal fork/upstream numbering drift, so call them out.
 INVALID_FILES=""
 PREFIXES=""
 for file in "$MIGRATIONS_DIR"/*.sql; do
@@ -30,16 +36,14 @@ done
 if [ -n "$INVALID_FILES" ]; then
   echo "ERROR: migration files without a leading numeric prefix:" >&2
   printf '%s' "$INVALID_FILES" >&2
-  echo "Rename them as NNNN_description.sql so they can be tracked." >&2
+  echo "Rename them as NNNN_description.sql so they order deterministically." >&2
   exit 1
 fi
 
 DUPES=$(printf '%s' "$PREFIXES" | sort | uniq -d)
 if [ -n "$DUPES" ]; then
-  echo "ERROR: duplicate migration version prefixes detected:" >&2
+  echo "WARNING: duplicate migration version prefixes (safe — tracked by filename, applied in filename order):" >&2
   echo "$DUPES" | sed 's/^/  /' >&2
-  echo "Renumber the colliding files so each prefix is unique before deploying." >&2
-  exit 1
 fi
 
 # 1. Ensure tracking table exists
@@ -50,26 +54,31 @@ $WRANGLER d1 execute "$DATABASE_NAME" --remote \
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
   )"
 
-# 2. Get applied versions (parse JSON output)
-APPLIED=$($WRANGLER d1 execute "$DATABASE_NAME" --remote \
-  --command "SELECT version FROM _schema_migrations ORDER BY version" \
-  --json | jq -r '.[0].results[].version // empty' 2>/dev/null || echo "")
+# 2. Self-heal legacy rows: older versions of this script keyed rows on the
+# numeric prefix. Rekey them to the full filename (stored in `name` all along)
+# so filename-based tracking picks them up. Idempotent no-op once migrated.
+$WRANGLER d1 execute "$DATABASE_NAME" --remote \
+  --command "UPDATE _schema_migrations SET version = name WHERE version <> name"
 
-# 3. Apply pending migrations in order
+# 3. Get applied filenames (parse JSON output)
+APPLIED=$($WRANGLER d1 execute "$DATABASE_NAME" --remote \
+  --command "SELECT name FROM _schema_migrations ORDER BY name" \
+  --json | jq -r '.[0].results[].name // empty' 2>/dev/null || echo "")
+
+# 4. Apply pending migrations in filename order (the glob sorts)
 COUNT=0
 for file in "$MIGRATIONS_DIR"/*.sql; do
   [ -f "$file" ] || continue
   FILENAME=$(basename "$file")
-  VERSION=$(echo "$FILENAME" | grep -oE '^[0-9]+')
 
-  if echo "$APPLIED" | grep -qxF "$VERSION"; then
+  if echo "$APPLIED" | grep -qxF "$FILENAME"; then
     echo "Skip (already applied): $FILENAME"
     continue
   fi
 
   echo "Applying: $FILENAME"
   # Tolerate "duplicate column name": the migration was already applied under a
-  # different version (e.g. a file renumbered after a collision) so the schema
+  # different filename (e.g. a file renamed after a collision) so the schema
   # is already in the target state. ADD COLUMN has no IF NOT EXISTS in SQLite,
   # so record it as applied and move on instead of aborting the whole deploy.
   # Every other error still aborts.
@@ -84,7 +93,7 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
 
   SAFE_FILENAME=$(echo "$FILENAME" | sed "s/'/''/g")
   $WRANGLER d1 execute "$DATABASE_NAME" --remote \
-    --command "INSERT INTO _schema_migrations (version, name) VALUES ('$VERSION', '$SAFE_FILENAME')"
+    --command "INSERT INTO _schema_migrations (version, name) VALUES ('$SAFE_FILENAME', '$SAFE_FILENAME')"
 
   COUNT=$((COUNT + 1))
 done
