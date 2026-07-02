@@ -16,7 +16,7 @@ import {
   type SandboxSettings,
 } from "@open-inspect/shared";
 import type { SandboxStatus } from "../../types";
-import type { SandboxRow, SessionRow } from "../../session/types";
+import { sessionHasRepository, type SandboxRow, type SessionRow } from "../../session/types";
 import { SandboxProviderError, type SandboxProvider, type CreateSandboxConfig } from "../provider";
 import { prepareSandboxOAuthEnv } from "../oauth-env";
 import {
@@ -194,6 +194,13 @@ export const DEFAULT_LIFECYCLE_CONFIG: Omit<SandboxLifecycleConfig, "controlPlan
 /** Child (agent-spawned) sessions get a shorter sandbox timeout. */
 const CHILD_SANDBOX_TIMEOUT_SECONDS = 3600; // 1 hour (vs default 2 hours)
 
+function buildSandboxIdForSession(session: SessionRow, now: number): string {
+  const sandboxName = sessionHasRepository(session)
+    ? `${session.repo_owner}-${session.repo_name}`
+    : session.id;
+  return `sandbox-${sandboxName}-${now}`;
+}
+
 // ==================== MCP Server Lookup ====================
 
 /**
@@ -201,7 +208,10 @@ const CHILD_SANDBOX_TIMEOUT_SECONDS = 3600; // 1 hour (vs default 2 hours)
  * Keeps the lifecycle manager free of direct D1Database dependencies.
  */
 export interface McpServerLookup {
-  getDecryptedForSession(repoOwner: string, repoName: string): Promise<McpServerConfig[]>;
+  getDecryptedForSession(
+    repoOwner: string | null,
+    repoName: string | null
+  ): Promise<McpServerConfig[]>;
 }
 
 // ==================== Repo Image Lookup ====================
@@ -221,11 +231,12 @@ export interface RepoImageLookup {
 // ==================== Slack Agent-Notify Lookup ====================
 
 /**
- * Resolves the spawn-time agent-slack-notify gate for a given repo.
+ * Resolves the spawn-time agent-slack-notify gate for a repository or the
+ * global no-repository scope.
  * False (or throwing) means do not install the tool in this sandbox.
  */
 export interface SlackAgentNotifyLookup {
-  isEnabledForRepo(repoOwner: string, repoName: string): Promise<boolean>;
+  isEnabledForRepo(repoOwner: string | null, repoName: string | null): Promise<boolean>;
 }
 
 // ==================== Callbacks ====================
@@ -382,7 +393,8 @@ export class SandboxLifecycleManager {
       const sessionId = session.session_name || session.id;
       const sandboxAuthToken = this.idGenerator.generateId();
       const sandboxAuthTokenHash = await hashToken(sandboxAuthToken);
-      const expectedSandboxId = `sandbox-${session.repo_owner}-${session.repo_name}-${now}`;
+      const hasRepository = sessionHasRepository(session);
+      const expectedSandboxId = buildSandboxIdForSession(session, now);
 
       // Store expected sandbox ID and auth token BEFORE calling provider
       this.storage.updateSandboxForSpawn({
@@ -406,12 +418,12 @@ export class SandboxLifecycleManager {
       // Look up pre-built repo image (graceful fallback on failure)
       let repoImageId: string | null = null;
       let repoImageSha: string | null = null;
-      if (this.repoImageLookup) {
+      if (hasRepository && this.repoImageLookup) {
         try {
           const repoImage = await this.repoImageLookup.getLatestReady(
             session.repo_owner,
             session.repo_name,
-            session.base_branch
+            session.base_branch ?? undefined
           );
           if (repoImage) {
             repoImageId = repoImage.provider_image_id;
@@ -530,8 +542,8 @@ export class SandboxLifecycleManager {
     if (!this.config.slackAgentNotifyLookup) return false;
     try {
       return await this.config.slackAgentNotifyLookup.isEnabledForRepo(
-        session.repo_owner,
-        session.repo_name
+        sessionHasRepository(session) ? session.repo_owner : null,
+        sessionHasRepository(session) ? session.repo_name : null
       );
     } catch (err) {
       this.log.warn("Failed to resolve agent slack-notify gate; treating as disabled", {
@@ -593,7 +605,7 @@ export class SandboxLifecycleManager {
       const now = Date.now();
       const sandboxAuthToken = this.idGenerator.generateId();
       const sandboxAuthTokenHash = await hashToken(sandboxAuthToken);
-      const expectedSandboxId = `sandbox-${session.repo_owner}-${session.repo_name}-${now}`;
+      const expectedSandboxId = buildSandboxIdForSession(session, now);
 
       // Store expected sandbox ID and auth token
       this.storage.updateSandboxForSpawn({

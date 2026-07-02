@@ -1800,7 +1800,7 @@ class AgentBridge:
 
         repo_dirs = list(self.repo_path.glob("*/.git"))
         if not repo_dirs:
-            self.log.warn("git.push_error", reason="no_repository")
+            self.log.warn("git.push_error", reason="no_repo_configured")
             await self._send_event(
                 {
                     "type": "push_error",
@@ -1965,7 +1965,7 @@ class AgentBridge:
 
         repo_dirs = list(self.repo_path.glob("*/.git"))
         if not repo_dirs:
-            self.log.debug("git.identity_skip", reason="no_repository")
+            self.log.debug("git.identity_skip", reason="no_repo_configured")
             return
 
         repo_dir = repo_dirs[0].parent
