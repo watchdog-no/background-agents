@@ -8,6 +8,7 @@ import { OpenAITokenRefreshError } from "../auth/openai";
 const mockState = vi.hoisted(() => ({
   repoSecrets: new Map<number, Record<string, string>>(),
   globalSecrets: {} as Record<string, string>,
+  environmentSecrets: new Map<string, Record<string, string>>(),
   refreshImpl: vi.fn(),
   repoWrites: [] as Array<{
     repoId: number;
@@ -23,6 +24,7 @@ const mockState = vi.hoisted(() => ({
   }>,
   globalWrites: [] as Array<Record<string, string>>,
   globalWriteAttempts: [] as Array<Record<string, string>>,
+  environmentWrites: [] as Array<{ environmentId: string; secrets: Record<string, string> }>,
   failRepoWritesForKeys: new Set<string>(),
   failGlobalWritesForKeys: new Set<string>(),
 }));
@@ -85,6 +87,20 @@ vi.mock("../db/global-secrets", () => ({
   },
 }));
 
+vi.mock("../db/environment-secrets", () => ({
+  EnvironmentSecretsStore: class {
+    async getDecryptedSecrets(environmentId: string): Promise<Record<string, string>> {
+      return mockState.environmentSecrets.get(environmentId) ?? {};
+    }
+
+    async setSecrets(environmentId: string, secrets: Record<string, string>): Promise<void> {
+      mockState.environmentWrites.push({ environmentId, secrets });
+      const existing = mockState.environmentSecrets.get(environmentId) ?? {};
+      mockState.environmentSecrets.set(environmentId, { ...existing, ...secrets });
+    }
+  },
+}));
+
 function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
     id: "session-1",
@@ -109,6 +125,7 @@ function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
     context_tokens: 0,
     context_limit: 0,
     sandbox_settings: null,
+    environment_id: null,
     created_at: 1,
     updated_at: 1,
     ...overrides,
@@ -129,10 +146,12 @@ describe("OpenAITokenRefreshService", () => {
   beforeEach(() => {
     mockState.repoSecrets.clear();
     mockState.globalSecrets = {};
+    mockState.environmentSecrets.clear();
     mockState.repoWrites = [];
     mockState.repoWriteAttempts = [];
     mockState.globalWrites = [];
     mockState.globalWriteAttempts = [];
+    mockState.environmentWrites = [];
     mockState.failRepoWritesForKeys.clear();
     mockState.failGlobalWritesForKeys.clear();
     mockState.refreshImpl.mockReset();
@@ -262,5 +281,74 @@ describe("OpenAITokenRefreshService", () => {
       accountId: "acct_concurrent",
     });
     expect(mockState.refreshImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads and rotates environment secrets for an environment-launched session", async () => {
+    // Repo secrets exist but must be ignored — an environment session sources
+    // tokens from the environment, never its members (§6.4/§7.4).
+    mockState.repoSecrets.set(123, {
+      OPENAI_OAUTH_REFRESH_TOKEN: "repo-refresh-should-be-ignored",
+      OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+    mockState.environmentSecrets.set("env_flagship", {
+      OPENAI_OAUTH_REFRESH_TOKEN: "env-refresh-old",
+      OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT: "0",
+    });
+    mockState.refreshImpl.mockResolvedValue({
+      access_token: "env-access-new",
+      refresh_token: "env-refresh-new",
+      expires_in: 1800,
+      account_id: "acct_env",
+    });
+
+    const service = new OpenAITokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => 123,
+      createLogger()
+    );
+
+    const result = await service.refresh(createSession({ environment_id: "env_flagship" }));
+
+    expect(result).toEqual({
+      ok: true,
+      accessToken: "env-access-new",
+      expiresIn: 1800,
+      accountId: "acct_env",
+    });
+    // Refreshed the environment's token, not the repo's.
+    expect(mockState.refreshImpl).toHaveBeenCalledWith("env-refresh-old");
+    // Rotated credentials persisted back to the environment, never the repo.
+    expect(mockState.repoWrites).toHaveLength(0);
+    expect(mockState.environmentWrites).toHaveLength(2);
+    expect(mockState.environmentWrites[0].environmentId).toBe("env_flagship");
+    expect(mockState.environmentWrites[0].secrets.OPENAI_OAUTH_REFRESH_TOKEN).toBe(
+      "env-refresh-new"
+    );
+    expect(mockState.environmentWrites[0].secrets.OPENAI_OAUTH_ACCESS_TOKEN).toBeUndefined();
+    expect(mockState.environmentWrites[1].secrets.OPENAI_OAUTH_ACCESS_TOKEN).toBe("env-access-new");
+    expect(mockState.environmentWrites[1].secrets.OPENAI_OAUTH_ACCOUNT_ID).toBe("acct_env");
+  });
+
+  it("falls back to global for an environment session with no environment token", async () => {
+    const globalCachedTokenTtlMs = 15 * 60 * 1000;
+    mockState.globalSecrets = {
+      OPENAI_OAUTH_REFRESH_TOKEN: "global-refresh",
+      OPENAI_OAUTH_ACCESS_TOKEN: "global-access",
+      OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT: String(Date.now() + globalCachedTokenTtlMs),
+    };
+
+    const service = new OpenAITokenRefreshService(
+      {} as Env["DB"],
+      "enc-key",
+      async () => 123,
+      createLogger()
+    );
+
+    const result = await service.refresh(createSession({ environment_id: "env_flagship" }));
+
+    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ accessToken: "global-access" });
+    expect(mockState.refreshImpl).not.toHaveBeenCalled();
   });
 });

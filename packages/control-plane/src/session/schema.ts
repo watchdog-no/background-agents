@@ -5,6 +5,20 @@
  * This ensures high performance even with hundreds of concurrent sessions.
  */
 
+// Shared between SCHEMA_SQL (fresh DOs) and migration 31 (existing DOs) so
+// the two paths can never diverge.
+const SESSION_REPOSITORIES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_repositories (
+  position INTEGER NOT NULL,
+  repo_owner TEXT NOT NULL,
+  repo_name TEXT NOT NULL,
+  repo_id INTEGER,
+  base_branch TEXT NOT NULL,
+  branch_name TEXT,                                 -- Working branch (set after first push to this repo)
+  base_sha TEXT,
+  current_sha TEXT,
+  PRIMARY KEY (repo_owner, repo_name)
+)`;
+
 export const SCHEMA_SQL = `
 -- Core session state
 CREATE TABLE IF NOT EXISTS session (
@@ -30,6 +44,7 @@ CREATE TABLE IF NOT EXISTS session (
   context_tokens INTEGER NOT NULL DEFAULT 0,        -- Current context-window pressure (latest step usage estimate)
   context_limit INTEGER NOT NULL DEFAULT 0,         -- Model's effective context window (gauge denominator)
   sandbox_settings TEXT DEFAULT NULL,               -- JSON blob of SandboxSettings (resolved at session creation)
+  environment_id TEXT,                              -- Launch environment provenance; NULL for repo-launched/ad-hoc sessions
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   CHECK (
@@ -120,6 +135,14 @@ CREATE TABLE IF NOT EXISTS sandbox (
   ttyd_token TEXT,                                  -- Encrypted JWT token for ttyd auth
   created_at INTEGER NOT NULL
 );
+
+-- Member repositories for multi-repo sessions, in position order
+-- (position 0 = primary, mirrored into session.repo_owner/repo_name).
+-- Pre-feature sessions have no rows; readers synthesize a one-entry list
+-- from the session scalar columns. Per-repo git state columns are written
+-- by push handling from PR-5 onward; until then the position-0 row is
+-- overlaid with the session scalar branch/sha columns at read time.
+${SESSION_REPOSITORIES_TABLE_SQL};
 
 -- WebSocket client mapping for hibernation recovery
 CREATE TABLE IF NOT EXISTS ws_client_mapping (
@@ -401,6 +424,24 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
     id: 32,
     description: "Add context_limit to session",
     run: `ALTER TABLE session ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0`,
+  },
+  {
+    id: 33,
+    description: "Add session_repositories table for multi-repo sessions",
+    run: SESSION_REPOSITORIES_TABLE_SQL,
+  },
+  {
+    id: 34,
+    description: "Add environment_id to session (launch environment provenance)",
+    run: (sql) => runMigration(sql, `ALTER TABLE session ADD COLUMN environment_id TEXT`),
+  },
+  {
+    id: 35,
+    description: "Ensure context usage columns exist after upstream migration ID collision",
+    run: (sql) => {
+      runMigration(sql, `ALTER TABLE session ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
+      runMigration(sql, `ALTER TABLE session ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0`);
+    },
   },
 ];
 

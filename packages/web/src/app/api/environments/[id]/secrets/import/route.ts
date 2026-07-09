@@ -3,23 +3,27 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { controlPlaneFetch } from "@/lib/control-plane";
-import { buildControlPlanePath } from "@/lib/control-plane-query";
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { id } = await params;
-  const path = buildControlPlanePath(`/automations/${id}/runs`, request.nextUrl.searchParams);
 
   try {
-    const response = await controlPlaneFetch(path);
+    const body = await request.json();
+
+    const response = await controlPlaneFetch(
+      `/environments/${encodeURIComponent(id)}/secrets/import`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
-    console.error("Failed to fetch automation runs:", error);
-    return NextResponse.json({ error: "Failed to fetch automation runs" }, { status: 500 });
+    console.error("Failed to import environment secrets:", error);
+    return NextResponse.json({ error: "Failed to import environment secrets" }, { status: 500 });
   }
 }

@@ -8,8 +8,6 @@ export {
   createModalClient,
   type CreateSandboxRequest,
   type CreateSandboxResponse,
-  type WarmSandboxRequest,
-  type WarmSandboxResponse,
 } from "./client";
 
 // Provider interface
@@ -85,6 +83,7 @@ export {
   type OpenComputerRestConfig,
   type OpenComputerSandboxResponse,
   type OpenComputerCreateSandboxParams,
+  type OpenComputerDeleteSandboxOptions,
 } from "./opencomputer-rest-client";
 export {
   resolveSandboxBackendName,

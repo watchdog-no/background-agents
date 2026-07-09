@@ -41,6 +41,7 @@ export interface SessionRow {
   context_tokens: number; // Current context-window pressure (latest step usage estimate)
   context_limit: number; // Model's effective context window (gauge denominator)
   sandbox_settings: string | null; // JSON blob of SandboxSettings
+  environment_id: string | null; // Launch environment provenance; NULL for repo-launched/ad-hoc sessions
   created_at: number;
   updated_at: number;
 }
