@@ -1,25 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Env, RepoConfig } from "../types";
+import type { Env, Environment, RepoConfig } from "../types";
 
 const {
   mockFetch,
   mockGetAvailableRepos,
   mockBuildRepoDescriptions,
-  mockGetReposByChannel,
   mockGetRoutingRules,
+  mockGetAvailableEnvironments,
 } = vi.hoisted(() => ({
   mockFetch: vi.fn(),
   mockGetAvailableRepos: vi.fn(),
   mockBuildRepoDescriptions: vi.fn(),
-  mockGetReposByChannel: vi.fn(),
   mockGetRoutingRules: vi.fn(),
+  mockGetAvailableEnvironments: vi.fn(),
 }));
 
 vi.mock("./repos", () => ({
   getAvailableRepos: mockGetAvailableRepos,
   buildRepoDescriptions: mockBuildRepoDescriptions,
-  getReposByChannel: mockGetReposByChannel,
   getRoutingRules: mockGetRoutingRules,
+}));
+
+vi.mock("./environments", () => ({
+  getAvailableEnvironments: mockGetAvailableEnvironments,
+  // Imported by targets.ts (via ../targets); unused in these tests.
+  getEnvironmentById: vi.fn(),
 }));
 
 import { RepoClassifier } from "./index";
@@ -51,13 +56,25 @@ const TEST_REPOS: RepoConfig[] = [
   },
 ];
 
+const TEST_ENVIRONMENT: Environment = {
+  id: "env_abc123",
+  name: "full-stack",
+  description: null,
+  prebuildEnabled: false,
+  createdAt: 1,
+  updatedAt: 1,
+  repositories: [
+    { repoOwner: "acme", repoName: "prod", repoId: 1, baseBranch: "main" },
+    { repoOwner: "acme", repoName: "web", repoId: 2, baseBranch: "main" },
+  ],
+};
+
 const TEST_ENV = {
   CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
   INTERNAL_CALLBACK_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
 
-/** Build a JSON Response for the mocked control-plane fetch. */
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -65,12 +82,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function classifiedRepoFullName(result: {
+  target: { kind: string; repo?: { fullName: string } } | null;
+}): string | undefined {
+  return result.target?.kind === "repository" ? result.target.repo?.fullName : undefined;
+}
+
 describe("RepoClassifier", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAvailableRepos.mockResolvedValue(TEST_REPOS);
-    mockGetReposByChannel.mockResolvedValue([]);
     mockGetRoutingRules.mockResolvedValue([]);
+    mockGetAvailableEnvironments.mockResolvedValue([]);
     mockBuildRepoDescriptions.mockResolvedValue("- acme/prod\n- acme/web");
   });
 
@@ -87,7 +110,7 @@ describe("RepoClassifier", () => {
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("please fix prod slack alerts", undefined, "trace-1");
 
-    expect(result.repo?.fullName).toBe("acme/prod");
+    expect(classifiedRepoFullName(result)).toBe("acme/prod");
     expect(result.confidence).toBe("high");
     expect(result.needsClarification).toBe(false);
     expect(result.failureReason).toBeUndefined();
@@ -100,7 +123,7 @@ describe("RepoClassifier", () => {
     expect(typeof sentBody.prompt).toBe("string");
   });
 
-  it("flags an infra failure (with reason) when the endpoint errors", async () => {
+  it("flags an infra failure with the endpoint reason when the endpoint errors", async () => {
     mockFetch.mockResolvedValue(
       jsonResponse({ reason: "oauth_unauthorized", message: "rejected" }, 502)
     );
@@ -108,14 +131,15 @@ describe("RepoClassifier", () => {
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("frontend UI issue in web app");
 
-    expect(result.repo).toBeNull();
+    expect(result.target).toBeNull();
+    expect(result.confidence).toBe("low");
     expect(result.needsClarification).toBe(true);
     expect(result.failureReason).toBe("oauth_unauthorized");
     expect(result.reasoning).toContain("classifier failed to run");
     expect(result.alternatives).toBeUndefined();
   });
 
-  it("flags a failure when the endpoint returns an invalid payload", async () => {
+  it("flags a provider failure when the endpoint returns an invalid payload", async () => {
     mockFetch.mockResolvedValue(
       jsonResponse({
         repoId: "acme/prod",
@@ -128,30 +152,30 @@ describe("RepoClassifier", () => {
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("please update prod deployment config");
 
-    expect(result.repo).toBeNull();
+    expect(result.target).toBeNull();
     expect(result.needsClarification).toBe(true);
     expect(result.failureReason).toBe("provider_error");
   });
 
-  it("skips the endpoint when a channel is mapped to a single repo", async () => {
-    mockGetReposByChannel.mockResolvedValue([TEST_REPOS[1]]);
+  it("skips the endpoint when only one repository is available", async () => {
+    mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[1]]);
 
     const classifier = new RepoClassifier(TEST_ENV);
-    const result = await classifier.classify("anything", { channelId: "C123" });
+    const result = await classifier.classify("anything");
 
-    expect(result.repo?.fullName).toBe("acme/web");
+    expect(classifiedRepoFullName(result)).toBe("acme/web");
     expect(result.needsClarification).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   describe("routing rules", () => {
-    it("routes deterministically when a keyword matches, without calling the LLM", async () => {
+    it("routes deterministically when a keyword matches, without calling the endpoint", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("please fix the frontend nav bug", undefined, "t");
 
-      expect(result.repo?.fullName).toBe("acme/web");
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(result.confidence).toBe("high");
       expect(result.needsClarification).toBe(false);
       expect(result.reasoning).toContain("routing rule");
@@ -167,9 +191,11 @@ describe("RepoClassifier", () => {
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("fix the frontend on prod");
 
-      expect(result.repo).toBeNull();
+      expect(result.target).toBeNull();
       expect(result.needsClarification).toBe(true);
-      expect(result.alternatives?.map((r) => r.fullName).sort()).toEqual(["acme/prod", "acme/web"]);
+      expect(
+        result.alternatives?.map((t) => (t.kind === "repository" ? t.repo.fullName : "")).sort()
+      ).toEqual(["acme/prod", "acme/web"]);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -182,12 +208,12 @@ describe("RepoClassifier", () => {
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("frontend ui cleanup");
 
-      expect(result.repo?.fullName).toBe("acme/web");
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(result.needsClarification).toBe(false);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it("skips a rule whose target is not accessible and falls through to the LLM", async () => {
+    it("skips a rule whose target is not accessible and falls through to the endpoint", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/ghost" }]);
       mockFetch.mockResolvedValue(
         jsonResponse({
@@ -201,11 +227,11 @@ describe("RepoClassifier", () => {
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("frontend issue");
 
-      expect(result.repo?.fullName).toBe("acme/web");
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).toHaveBeenCalledOnce();
     });
 
-    it("falls through to the LLM when no rule keyword is present", async () => {
+    it("falls through to the endpoint when no rule keyword is present", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
       mockFetch.mockResolvedValue(
         jsonResponse({
@@ -219,20 +245,254 @@ describe("RepoClassifier", () => {
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("update the deployment config");
 
-      expect(result.repo?.fullName).toBe("acme/prod");
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
       expect(mockFetch).toHaveBeenCalledOnce();
     });
 
     it("takes precedence over a channel association", async () => {
-      // Channel maps to acme/prod, but an explicit keyword maps to acme/web.
-      mockGetReposByChannel.mockResolvedValue([TEST_REPOS[0]]); // acme/prod
+      mockGetAvailableRepos.mockResolvedValue([
+        { ...TEST_REPOS[0], channelAssociations: ["C123"] },
+        TEST_REPOS[1],
+      ]);
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("frontend tweak", { channelId: "C123" });
 
-      expect(result.repo?.fullName).toBe("acme/web");
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes to an environment when an environment-targeted keyword matches", async () => {
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "fullstack", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("fullstack login flow", undefined, "t");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(result.confidence).toBe("high");
+      expect(result.needsClarification).toBe(false);
+      expect(result.reasoning).toContain("full-stack");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("escapes the environment name in the mrkdwn reasoning", async () => {
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "deploy", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([
+        { ...TEST_ENVIRONMENT, name: "<!channel> & co" },
+      ]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("deploy the app");
+
+      expect(result.reasoning).toContain("&lt;!channel&gt; &amp; co");
+      expect(result.reasoning).not.toContain("<!channel>");
+    });
+
+    it("does not fetch environments when no matched rule targets one", async () => {
+      mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      await classifier.classify("frontend tweak");
+
+      expect(mockGetAvailableEnvironments).not.toHaveBeenCalled();
+    });
+
+    it("routes an environment rule even when only one repository is available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "fullstack", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("fullstack login flow");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes an environment rule even when no repositories are available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([]);
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "fullstack", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("fullstack login flow");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(result.needsClarification).toBe(false);
+      expect(result.reasoning).not.toContain("No repositories");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("asks for clarification when rules resolve to a repo and an environment", async () => {
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "frontend", target: "acme/web" },
+        { keyword: "fullstack", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("frontend or fullstack?");
+
+      expect(result.target).toBeNull();
+      expect(result.needsClarification).toBe(true);
+      expect(result.alternatives).toEqual([
+        { kind: "repository", repo: TEST_REPOS[1] },
+        { kind: "environment", environment: TEST_ENVIRONMENT },
+      ]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("skips a rule whose environment no longer exists and falls through to the endpoint", async () => {
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "fullstack", target: "env_deleted", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockFetch.mockResolvedValue(
+        jsonResponse({
+          repoId: "acme/web",
+          confidence: "high",
+          reasoning: "Mentions the web app.",
+          alternatives: [],
+        })
+      );
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("fullstack web app issue");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("channel associations", () => {
+    it("routes to the repository associated with the channel, without the endpoint", async () => {
+      mockGetAvailableRepos.mockResolvedValue([
+        { ...TEST_REPOS[0], channelAssociations: ["C123"] },
+        TEST_REPOS[1],
+      ]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
+      expect(result.confidence).toBe("high");
+      expect(result.reasoning).toContain("associated with repository acme/prod");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes to the environment associated with the channel", async () => {
+      const environment = { ...TEST_ENVIRONMENT, channelAssociations: ["C123"] };
+      mockGetAvailableEnvironments.mockResolvedValue([environment]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.target).toEqual({ kind: "environment", environment });
+      expect(result.confidence).toBe("high");
+      expect(result.reasoning).toContain("associated with environment full-stack");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("escapes the channel-associated environment name in the mrkdwn reasoning", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([
+        { ...TEST_ENVIRONMENT, name: "<!channel> & co", channelAssociations: ["C123"] },
+      ]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.reasoning).toContain("&lt;!channel&gt; &amp; co");
+      expect(result.reasoning).not.toContain("<!channel>");
+    });
+
+    it("routes an environment association even when only one repository is available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
+      const environment = { ...TEST_ENVIRONMENT, channelAssociations: ["C123"] };
+      mockGetAvailableEnvironments.mockResolvedValue([environment]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.target).toEqual({ kind: "environment", environment });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes an environment association even when no repositories are available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([]);
+      const environment = { ...TEST_ENVIRONMENT, channelAssociations: ["C123"] };
+      mockGetAvailableEnvironments.mockResolvedValue([environment]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.target).toEqual({ kind: "environment", environment });
+      expect(result.needsClarification).toBe(false);
+      expect(result.reasoning).not.toContain("No repositories");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("asks for clarification when the channel maps to a repo and an environment", async () => {
+      const associatedRepo = { ...TEST_REPOS[0], channelAssociations: ["C123"] };
+      mockGetAvailableRepos.mockResolvedValue([associatedRepo, TEST_REPOS[1]]);
+      const environment = { ...TEST_ENVIRONMENT, channelAssociations: ["C123"] };
+      mockGetAvailableEnvironments.mockResolvedValue([environment]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.target).toBeNull();
+      expect(result.needsClarification).toBe(true);
+      expect(result.alternatives).toEqual([
+        { kind: "environment", environment },
+        { kind: "repository", repo: associatedRepo },
+      ]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("falls through to the endpoint when several repositories share the channel", async () => {
+      mockGetAvailableRepos.mockResolvedValue(
+        TEST_REPOS.map((repo) => ({ ...repo, channelAssociations: ["C123"] }))
+      );
+      mockFetch.mockResolvedValue(
+        jsonResponse({
+          repoId: "acme/web",
+          confidence: "high",
+          reasoning: "Mentions the web app.",
+          alternatives: [],
+        })
+      );
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("web app issue", { channelId: "C123" });
+
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    it("does not consult environments for messages outside a channel context", async () => {
+      mockFetch.mockResolvedValue(
+        jsonResponse({
+          repoId: "acme/web",
+          confidence: "high",
+          reasoning: "Mentions the web app.",
+          alternatives: [],
+        })
+      );
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      await classifier.classify("web app issue");
+
+      expect(mockGetAvailableEnvironments).not.toHaveBeenCalled();
     });
   });
 });

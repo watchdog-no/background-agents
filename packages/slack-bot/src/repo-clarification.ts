@@ -9,8 +9,10 @@
  */
 
 import { getAvailableRepos, filterReposByQuery } from "./classifier/repos";
+import { getEnvironmentById } from "./classifier/environments";
 import { MAX_REPO_SUGGESTION_OPTIONS } from "./app-home/constants";
 import { plainTextOption } from "./slack-options";
+import { parseTargetValue, targetValue, type SlackSessionTarget } from "./targets";
 import type {
   SlackActionsBlock,
   SlackButtonElement,
@@ -67,6 +69,27 @@ function toRepoSelectOption(repo: RepoConfig): SlackSelectOption {
 }
 
 /**
+ * Resolve a selected option/button value back to a launchable target against
+ * the live lists, or null when it no longer exists (deleted environment, repo
+ * access revoked, stale message). Lives here because this module mints the
+ * values it resolves.
+ */
+export async function resolveTargetValue(
+  env: Env,
+  value: string,
+  traceId?: string
+): Promise<SlackSessionTarget | null> {
+  const ref = parseTargetValue(value);
+  if (ref.kind === "environment") {
+    const environment = await getEnvironmentById(env, ref.environmentId, traceId);
+    return environment ? { kind: "environment", environment } : null;
+  }
+  const repos = await getAvailableRepos(env, traceId);
+  const repo = repos.find((r) => r.id === ref.repoId);
+  return repo ? { kind: "repository", repo } : null;
+}
+
+/**
  * Options for the clarification picker's external_select. Slack queries this as
  * the user types; we filter on the repo's full name and cap at Slack's
  * per-response limit. With min_query_length 0 the unfiltered list shows as soon
@@ -102,58 +125,87 @@ function buildRepoPickerAccessory(
   };
 }
 
+/** Short button text for a target: the repo displayName or environment name. */
+function targetDisplayName(target: SlackSessionTarget): string {
+  return target.kind === "environment" ? target.environment.name : target.repo.displayName;
+}
+
 /**
- * One-click buttons for the classifier's ranked alternatives, capped at
- * MAX_REPO_QUICK_PICKS. Each carries the repo id and routes through the same
- * selection handler as the picker.
+ * Unambiguous fallback button text when two targets share a display name: the
+ * repo's fullName, or the environment name tagged as an environment.
  */
-export function buildRepoQuickPickButtons(alternatives: RepoConfig[]): SlackButtonElement[] {
+function targetDisambiguatedName(target: SlackSessionTarget): string {
+  return target.kind === "environment"
+    ? `${target.environment.name} (environment)`
+    : target.repo.fullName;
+}
+
+/**
+ * One-click buttons for the classifier's ranked alternatives — repositories or
+ * environments — capped at MAX_REPO_QUICK_PICKS. Each carries the target's
+ * value (repo id or `env:<id>`) and routes through the same selection handler
+ * as the picker.
+ */
+export function buildTargetQuickPickButtons(
+  alternatives: SlackSessionTarget[]
+): SlackButtonElement[] {
   const picks = alternatives.slice(0, MAX_REPO_QUICK_PICKS);
   const ambiguousNames = duplicateDisplayNames(picks);
 
-  return picks.map((repo, index) => ({
+  return picks.map((target, index) => ({
     type: "button",
     action_id: quickPickActionId(index),
-    // Two repos can share a displayName (e.g. the same repo name under different
-    // owners); fall back to the unambiguous fullName for the colliding picks.
-    text: plainTextOption(ambiguousNames.has(repo.displayName) ? repo.fullName : repo.displayName),
-    value: repo.id,
+    // Two targets can share a display name (e.g. the same repo name under
+    // different owners, or an environment named after a repo); fall back to an
+    // unambiguous form for the colliding picks.
+    text: plainTextOption(
+      ambiguousNames.has(targetDisplayName(target))
+        ? targetDisambiguatedName(target)
+        : targetDisplayName(target)
+    ),
+    value: targetValue(target),
   }));
 }
 
-/** Display names that appear more than once across the given repos. */
-function duplicateDisplayNames(repos: RepoConfig[]): Set<string> {
+/** Display names that appear more than once across the given targets. */
+function duplicateDisplayNames(targets: SlackSessionTarget[]): Set<string> {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
-  for (const repo of repos) {
-    if (seen.has(repo.displayName)) {
-      duplicates.add(repo.displayName);
+  for (const target of targets) {
+    const name = targetDisplayName(target);
+    if (seen.has(name)) {
+      duplicates.add(name);
     }
-    seen.add(repo.displayName);
+    seen.add(name);
   }
   return duplicates;
 }
 
 /**
  * Blocks for the clarification message: the classifier's reasoning, its ranked
- * alternatives as quick-pick buttons (when any), and a searchable picker over
- * every repo as the fallback.
+ * alternatives (repositories or environments) as quick-pick buttons (when
+ * any), and a searchable picker over every repo as the fallback.
  */
 export function buildRepoClarificationBlocks(
   reasoning: string,
-  alternatives: RepoConfig[] | undefined,
+  alternatives: SlackSessionTarget[] | undefined,
   repos: RepoConfig[],
-  header = "I couldn't determine which repository you're referring to."
+  header?: string
 ): Array<SlackSectionBlock | SlackActionsBlock> {
-  const quickPicks = alternatives?.length ? buildRepoQuickPickButtons(alternatives) : [];
+  const quickPicks = alternatives?.length ? buildTargetQuickPickButtons(alternatives) : [];
   const usesInlinePicker = repos.length > 0 && repos.length <= MAX_REPO_SUGGESTION_OPTIONS;
+  // The headline names environments only when one is actually on offer; the
+  // fallback picker below stays repository-only either way.
+  const subject = alternatives?.some((target) => target.kind === "environment")
+    ? "which repository or environment"
+    : "which repository";
 
   const blocks: Array<SlackSectionBlock | SlackActionsBlock> = [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `${header}\n\n_${reasoning}_`,
+        text: `${header ?? `I couldn't determine ${subject} you're referring to.`}\n\n_${reasoning}_`,
       },
     },
   ];

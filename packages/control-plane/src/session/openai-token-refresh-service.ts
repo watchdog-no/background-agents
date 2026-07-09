@@ -5,6 +5,7 @@ import {
 } from "../auth/openai";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import { RepoSecretsStore } from "../db/repo-secrets";
+import { EnvironmentSecretsStore } from "../db/environment-secrets";
 import type { Env } from "../types";
 import type { Logger } from "../logger";
 import type { SessionRow } from "./types";
@@ -13,15 +14,22 @@ const OPENAI_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS = 3;
 const ROTATED_REFRESH_TOKEN_PERSIST_RETRY_DELAY_MS = 100;
 
+/**
+ * Where a session's OpenAI OAuth tokens are read from and rotated back to. A
+ * session reads from its own secret scope first — the environment for
+ * environment-launched sessions, the repo for repo-launched ones (§6.4/§7.4) —
+ * then falls back to global. Each variant carries everything needed to write
+ * the rotated tokens back to the same place, so refresh never has to re-derive
+ * the identity (and the old repoId-null guard disappears).
+ */
+type TokenSecretSource =
+  | { kind: "environment"; environmentId: string }
+  | { kind: "repo"; repoId: number; repoOwner: string; repoName: string }
+  | { kind: "global" };
+
 type OpenAITokenState =
   | { type: "cached"; accessToken: string; expiresIn: number; accountId?: string }
-  | { type: "refresh"; refreshToken: string; source: "repo" | "global"; repoId: number | null };
-
-/**
- * Identifies the repo a rotated secret should be written back to. Null for the
- * global-only path (e.g. the repo classifier), which has no session/repo.
- */
-type RepoWriteContext = { repoOwner: string; repoName: string };
+  | { type: "refresh"; refreshToken: string; source: TokenSecretSource };
 
 export type OpenAITokenRefreshResult =
   | { ok: true; accessToken: string; expiresIn?: number; accountId?: string }
@@ -39,11 +47,7 @@ export class OpenAITokenRefreshService {
    * Refresh using a session's repo-scoped secrets, falling back to global.
    */
   async refresh(session: SessionRow): Promise<OpenAITokenRefreshResult> {
-    const repoContext =
-      session.repo_owner && session.repo_name
-        ? { repoOwner: session.repo_owner, repoName: session.repo_name }
-        : null;
-    return this.refreshFromState(() => this.readTokenState(session), repoContext);
+    return this.refreshFromState(() => this.readTokenState(session));
   }
 
   /**
@@ -51,12 +55,11 @@ export class OpenAITokenRefreshService {
    * Used by callers that run before a session exists (e.g. the repo classifier).
    */
   async refreshGlobal(): Promise<OpenAITokenRefreshResult> {
-    return this.refreshFromState(() => this.readGlobalTokenState(), null);
+    return this.refreshFromState(() => this.readGlobalTokenState());
   }
 
   private async refreshFromState(
-    readTokenState: () => Promise<OpenAITokenState | null>,
-    repoContext: RepoWriteContext | null
+    readTokenState: () => Promise<OpenAITokenState | null>
   ): Promise<OpenAITokenRefreshResult> {
     let tokenState: OpenAITokenState | null;
     try {
@@ -82,10 +85,10 @@ export class OpenAITokenRefreshService {
     }
 
     try {
-      return await this.attemptRefresh(tokenState, repoContext);
+      return await this.attemptRefresh(tokenState);
     } catch (e) {
       if (e instanceof OpenAITokenRefreshError && e.status === 401) {
-        return this.handleUnauthorizedRefresh(tokenState, readTokenState, repoContext);
+        return this.handleUnauthorizedRefresh(tokenState, readTokenState);
       }
 
       this.log.error("OpenAI token refresh failed", {
@@ -97,8 +100,7 @@ export class OpenAITokenRefreshService {
 
   private getTokenStateFromSecrets(
     secrets: Record<string, string>,
-    source: "repo" | "global",
-    repoId: number | null
+    source: TokenSecretSource
   ): OpenAITokenState | null {
     if (!secrets.OPENAI_OAUTH_REFRESH_TOKEN) {
       return null;
@@ -121,37 +123,89 @@ export class OpenAITokenRefreshService {
       type: "refresh",
       refreshToken: secrets.OPENAI_OAUTH_REFRESH_TOKEN,
       source,
-      repoId,
     };
   }
 
-  private async readTokenState(session: SessionRow): Promise<OpenAITokenState | null> {
-    let repoId: number | null = null;
+  /**
+   * The session's own secret source, or null for repo-less sessions with no
+   * environment (global-only). Environment-launched sessions resolve to the
+   * environment and never read member repo secrets (§6.4/§7.4).
+   */
+  private async resolveSessionSecretSource(session: SessionRow): Promise<TokenSecretSource | null> {
+    if (session.environment_id) {
+      return { kind: "environment", environmentId: session.environment_id };
+    }
     if (session.repo_owner && session.repo_name) {
-      repoId = await this.ensureRepoId(session);
+      const repoId = await this.ensureRepoId(session);
+      return {
+        kind: "repo",
+        repoId,
+        repoOwner: session.repo_owner,
+        repoName: session.repo_name,
+      };
+    }
+    return null;
+  }
 
-      const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-      const repoSecrets = await repoStore.getDecryptedSecrets(repoId);
-      const repoState = this.getTokenStateFromSecrets(repoSecrets, "repo", repoId);
-      if (repoState) {
-        return repoState;
+  private async readSecretsForSource(source: TokenSecretSource): Promise<Record<string, string>> {
+    switch (source.kind) {
+      case "environment":
+        return new EnvironmentSecretsStore(this.db, this.encryptionKey).getDecryptedSecrets(
+          source.environmentId
+        );
+      case "repo":
+        return new RepoSecretsStore(this.db, this.encryptionKey).getDecryptedSecrets(source.repoId);
+      case "global":
+        return new GlobalSecretsStore(this.db, this.encryptionKey).getDecryptedSecrets();
+    }
+  }
+
+  private async writeSecretsForSource(
+    source: TokenSecretSource,
+    secrets: Record<string, string>
+  ): Promise<void> {
+    switch (source.kind) {
+      case "environment":
+        await new EnvironmentSecretsStore(this.db, this.encryptionKey).setSecrets(
+          source.environmentId,
+          secrets
+        );
+        return;
+      case "repo":
+        await new RepoSecretsStore(this.db, this.encryptionKey).setSecrets(
+          source.repoId,
+          source.repoOwner,
+          source.repoName,
+          secrets
+        );
+        return;
+      case "global":
+        await new GlobalSecretsStore(this.db, this.encryptionKey).setSecrets(secrets);
+        return;
+    }
+  }
+
+  private async readTokenState(session: SessionRow): Promise<OpenAITokenState | null> {
+    const source = await this.resolveSessionSecretSource(session);
+    if (source) {
+      const secrets = await this.readSecretsForSource(source);
+      const state = this.getTokenStateFromSecrets(secrets, source);
+      if (state) {
+        return state;
       }
     }
 
-    const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
-    const globalSecrets = await globalStore.getDecryptedSecrets();
-    return this.getTokenStateFromSecrets(globalSecrets, "global", repoId);
+    const globalSecrets = await this.readSecretsForSource({ kind: "global" });
+    return this.getTokenStateFromSecrets(globalSecrets, { kind: "global" });
   }
 
   private async readGlobalTokenState(): Promise<OpenAITokenState | null> {
-    const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
-    const globalSecrets = await globalStore.getDecryptedSecrets();
-    return this.getTokenStateFromSecrets(globalSecrets, "global", null);
+    const globalSecrets = await this.readSecretsForSource({ kind: "global" });
+    return this.getTokenStateFromSecrets(globalSecrets, { kind: "global" });
   }
 
   private async attemptRefresh(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    repoContext: RepoWriteContext | null
+    tokenState: Extract<OpenAITokenState, { type: "refresh" }>
   ): Promise<OpenAITokenRefreshResult> {
     const tokens = await refreshOpenAIToken(tokenState.refreshToken);
     const accountId = extractOpenAIAccountId(tokens);
@@ -159,17 +213,17 @@ export class OpenAITokenRefreshService {
     let refreshTokenPersisted = false;
 
     try {
-      await this.writeRotatedRefreshToken(tokenState, repoContext, tokens.refresh_token);
+      await this.writeRotatedRefreshToken(tokenState, tokens.refresh_token);
       refreshTokenPersisted = true;
 
       this.log.info("OpenAI refresh token rotated", {
-        source: tokenState.source,
-        repo_id: tokenState.repoId,
+        source: tokenState.source.kind,
+        ...this.logContextForSource(tokenState.source),
       });
     } catch (e) {
       this.log.error("OPENAI_OAUTH_REFRESH_TOKEN_PERSIST_FAILED_AFTER_ROTATION", {
-        source: tokenState.source,
-        repo_id: tokenState.repoId,
+        source: tokenState.source.kind,
+        ...this.logContextForSource(tokenState.source),
         credential_state: "previous_refresh_token_invalid",
         error: e instanceof Error ? e.message : String(e),
       });
@@ -186,17 +240,17 @@ export class OpenAITokenRefreshService {
           cacheSecrets.OPENAI_OAUTH_ACCOUNT_ID = accountId;
         }
 
-        await this.writeTokenSecrets(tokenState, repoContext, cacheSecrets);
+        await this.writeSecretsForSource(tokenState.source, cacheSecrets);
 
         this.log.info("OpenAI access token cached", {
-          source: tokenState.source,
-          repo_id: tokenState.repoId,
+          source: tokenState.source.kind,
+          ...this.logContextForSource(tokenState.source),
           has_account_id: !!accountId,
         });
       } catch (e) {
         this.log.warn("Failed to cache OpenAI access token after refresh", {
-          source: tokenState.source,
-          repo_id: tokenState.repoId,
+          source: tokenState.source.kind,
+          ...this.logContextForSource(tokenState.source),
           error: e instanceof Error ? e.message : String(e),
         });
       }
@@ -210,38 +264,15 @@ export class OpenAITokenRefreshService {
     };
   }
 
-  private async writeTokenSecrets(
-    tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    repoContext: RepoWriteContext | null,
-    secrets: Record<string, string>
-  ): Promise<void> {
-    if (tokenState.source === "repo") {
-      if (tokenState.repoId === null || !repoContext) {
-        throw new Error("Repository-scoped OpenAI tokens require a repository context");
-      }
-      const repoStore = new RepoSecretsStore(this.db, this.encryptionKey);
-      await repoStore.setSecrets(
-        tokenState.repoId,
-        repoContext.repoOwner,
-        repoContext.repoName,
-        secrets
-      );
-    } else {
-      const globalStore = new GlobalSecretsStore(this.db, this.encryptionKey);
-      await globalStore.setSecrets(secrets);
-    }
-  }
-
   private async writeRotatedRefreshToken(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    repoContext: RepoWriteContext | null,
     refreshToken: string
   ): Promise<void> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= ROTATED_REFRESH_TOKEN_PERSIST_ATTEMPTS; attempt++) {
       try {
-        await this.writeTokenSecrets(tokenState, repoContext, {
+        await this.writeSecretsForSource(tokenState.source, {
           OPENAI_OAUTH_REFRESH_TOKEN: refreshToken,
         });
         return;
@@ -260,11 +291,10 @@ export class OpenAITokenRefreshService {
 
   private async handleUnauthorizedRefresh(
     tokenState: Extract<OpenAITokenState, { type: "refresh" }>,
-    readTokenState: () => Promise<OpenAITokenState | null>,
-    repoContext: RepoWriteContext | null
+    readTokenState: () => Promise<OpenAITokenState | null>
   ): Promise<OpenAITokenRefreshResult> {
     this.log.warn("OpenAI refresh got 401, checking for concurrent rotation", {
-      source: tokenState.source,
+      source: tokenState.source.kind,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -284,12 +314,12 @@ export class OpenAITokenRefreshService {
 
       if (reread?.type === "refresh" && reread.refreshToken !== tokenState.refreshToken) {
         this.log.info("Detected concurrent token rotation, retrying");
-        return this.attemptRefresh(reread, repoContext);
+        return this.attemptRefresh(reread);
       }
 
       this.log.error("OpenAI refresh token rejected and no newer token was found", {
-        source: tokenState.source,
-        repo_id: tokenState.repoId,
+        source: tokenState.source.kind,
+        ...this.logContextForSource(tokenState.source),
         action: "re-run OpenAI OAuth login",
       });
     } catch (retryErr) {
@@ -299,5 +329,20 @@ export class OpenAITokenRefreshService {
     }
 
     return { ok: false, status: 401, error: "OpenAI token refresh failed: unauthorized" };
+  }
+
+  private logContextForSource(source: TokenSecretSource): Record<string, string | number> {
+    switch (source.kind) {
+      case "environment":
+        return { environment_id: source.environmentId };
+      case "repo":
+        return {
+          repo_id: source.repoId,
+          repo_owner: source.repoOwner,
+          repo_name: source.repoName,
+        };
+      case "global":
+        return {};
+    }
   }
 }

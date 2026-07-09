@@ -111,6 +111,7 @@ function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
     context_tokens: 0,
     context_limit: 0,
     sandbox_settings: null,
+    environment_id: null,
     created_at: 1,
     updated_at: 1,
     ...overrides,

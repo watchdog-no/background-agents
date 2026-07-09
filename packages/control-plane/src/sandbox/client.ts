@@ -9,7 +9,8 @@ import { generateInternalToken, type SandboxSettings } from "@open-inspect/share
 import type { McpServerConfig } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import type { CorrelationContext } from "../logger";
-import { buildSessionConfig } from "./sandbox-env";
+import { buildSessionConfig, toRepositoryConfigPayload } from "./sandbox-env";
+import type { SessionRepositoryInfo } from "./provider";
 
 const log = createLogger("modal-client");
 
@@ -38,14 +39,16 @@ function getModalBaseUrl(workspace: string, environmentWebSuffix?: string): stri
  */
 export function buildModalSandboxDashboardUrl(params: {
   workspace: string | undefined;
-  environment?: string | undefined;
+  // Modal workspace environment (unrelated to the Environment entity); named
+  // modalEnvironment to keep the term unambiguous (design §7.1).
+  modalEnvironment?: string | undefined;
   providerObjectId: string | null | undefined;
 }): string | null {
   if (!params.workspace || !params.providerObjectId) return null;
   const workspace = encodeURIComponent(params.workspace);
-  const environment = encodeURIComponent(params.environment || DEFAULT_MODAL_ENVIRONMENT);
+  const modalEnvironment = encodeURIComponent(params.modalEnvironment || DEFAULT_MODAL_ENVIRONMENT);
   const providerObjectId = encodeURIComponent(params.providerObjectId);
-  return `https://modal.com/apps/${workspace}/${environment}/deployed/${MODAL_APP_NAME}?activeTab=sandboxes&sandboxId=${providerObjectId}`;
+  return `https://modal.com/apps/${workspace}/${modalEnvironment}/deployed/${MODAL_APP_NAME}?activeTab=sandboxes&sandboxId=${providerObjectId}`;
 }
 
 export interface CreateSandboxRequest {
@@ -61,14 +64,15 @@ export interface CreateSandboxRequest {
   model?: string;
   userEnvVars?: Record<string, string>;
   anthropicOauthEnabled?: boolean;
-  repoImageId?: string | null;
-  repoImageSha?: string | null;
+  prebuiltImageId?: string | null;
+  prebuiltImageSha?: string | null;
   timeoutSeconds?: number;
   branch?: string | null;
   codeServerEnabled?: boolean;
   agentSlackNotifyEnabled?: boolean;
   mcpServers?: McpServerConfig[];
   sandboxSettings?: SandboxSettings;
+  repositories?: SessionRepositoryInfo[];
 }
 
 export interface CreateSandboxResponse {
@@ -100,6 +104,7 @@ export interface RestoreSandboxRequest {
   agentSlackNotifyEnabled?: boolean;
   mcpServers?: McpServerConfig[];
   sandboxSettings?: SandboxSettings;
+  repositories?: SessionRepositoryInfo[];
 }
 
 export interface RestoreSandboxResponse {
@@ -125,17 +130,6 @@ export interface SnapshotSandboxResponse {
   error?: string;
 }
 
-export interface WarmSandboxRequest {
-  repoOwner: string;
-  repoName: string;
-  controlPlaneUrl?: string;
-}
-
-export interface WarmSandboxResponse {
-  sandboxId: string;
-  status: string;
-}
-
 export interface BuildRepoImageRequest {
   repoOwner: string;
   repoName: string;
@@ -152,6 +146,26 @@ export interface BuildRepoImageRequest {
 }
 
 export interface BuildRepoImageResponse {
+  buildId: string;
+  status: string;
+}
+
+export interface BuildEnvironmentImageRequest {
+  environmentId: string;
+  buildId: string;
+  callbackUrl: string;
+  /** Repositories in position order ([0] = primary), cloned at their base branches. */
+  repositories: Array<{ repoOwner: string; repoName: string; baseBranch: string }>;
+  userEnvVars?: Record<string, string>;
+  /**
+   * Build sandbox lifetime, in seconds. Already capped at
+   * MAX_BUILD_TIMEOUT_SECONDS by the trigger.
+   * Omitted → Modal applies DEFAULT_BUILD_TIMEOUT_SECONDS.
+   */
+  buildTimeoutSeconds?: number;
+}
+
+export interface BuildEnvironmentImageResponse {
   buildId: string;
   status: string;
 }
@@ -192,11 +206,11 @@ export class ModalApiError extends Error {
  */
 export class ModalClient {
   private createSandboxUrl: string;
-  private warmSandboxUrl: string;
   private healthUrl: string;
   private snapshotSandboxUrl: string;
   private restoreSandboxUrl: string;
   private buildRepoImageUrl: string;
+  private buildEnvironmentImageUrl: string;
   private deleteProviderImageUrl: string;
   private secret: string;
 
@@ -210,11 +224,11 @@ export class ModalClient {
     this.secret = secret;
     const baseUrl = getModalBaseUrl(workspace, environmentWebSuffix);
     this.createSandboxUrl = `${baseUrl}-api-create-sandbox.modal.run`;
-    this.warmSandboxUrl = `${baseUrl}-api-warm-sandbox.modal.run`;
     this.healthUrl = `${baseUrl}-api-health.modal.run`;
     this.snapshotSandboxUrl = `${baseUrl}-api-snapshot-sandbox.modal.run`;
     this.restoreSandboxUrl = `${baseUrl}-api-restore-sandbox.modal.run`;
     this.buildRepoImageUrl = `${baseUrl}-api-build-repo-image.modal.run`;
+    this.buildEnvironmentImageUrl = `${baseUrl}-api-build-environment-image.modal.run`;
     this.deleteProviderImageUrl = `${baseUrl}-api-delete-provider-image.modal.run`;
   }
 
@@ -264,14 +278,20 @@ export class ModalClient {
           model: request.model || "openai/gpt-5.5",
           user_env_vars: request.userEnvVars || null,
           anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
-          repo_image_id: request.repoImageId || null,
-          repo_image_sha: request.repoImageSha || null,
+          repo_image_id: request.prebuiltImageId || null,
+          repo_image_sha: request.prebuiltImageSha || null,
           timeout_seconds: request.timeoutSeconds || null,
           branch: request.branch || null,
           code_server_enabled: request.codeServerEnabled ?? false,
           agent_slack_notify_enabled: request.agentSlackNotifyEnabled ?? false,
           mcp_servers: request.mcpServers || null,
           sandbox_settings: request.sandboxSettings ?? null,
+          // Flat keys matching SessionConfig field names — Modal's create
+          // handler builds its SessionConfig from the request by field name
+          // (unlike restore, which carries a nested session_config).
+          repositories: request.repositories?.length
+            ? request.repositories.map(toRepositoryConfigPayload)
+            : null,
         }),
       });
 
@@ -458,66 +478,6 @@ export class ModalClient {
   }
 
   /**
-   * Pre-warm a sandbox for faster startup.
-   */
-  async warmSandbox(
-    request: WarmSandboxRequest,
-    correlation?: CorrelationContext
-  ): Promise<WarmSandboxResponse> {
-    const startTime = Date.now();
-    const endpoint = "warmSandbox";
-    let httpStatus: number | undefined;
-    let outcome: "success" | "error" = "error";
-
-    try {
-      const headers = await this.getPostHeaders(correlation);
-      const response = await fetch(this.warmSandboxUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          repo_owner: request.repoOwner,
-          repo_name: request.repoName,
-          control_plane_url: request.controlPlaneUrl || "",
-        }),
-      });
-
-      httpStatus = response.status;
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new ModalApiError(`Modal API error: ${response.status} ${text}`, response.status);
-      }
-
-      const result = (await response.json()) as ModalApiResponse<{
-        sandbox_id: string;
-        status: string;
-      }>;
-
-      if (!result.success || !result.data) {
-        throw new Error(`Modal API error: ${result.error || "Unknown error"}`);
-      }
-
-      outcome = "success";
-      return {
-        sandboxId: result.data.sandbox_id,
-        status: result.data.status,
-      };
-    } finally {
-      log.info("modal.request", {
-        event: "modal.request",
-        endpoint,
-        repo_owner: request.repoOwner,
-        repo_name: request.repoName,
-        trace_id: correlation?.trace_id,
-        request_id: correlation?.request_id,
-        http_status: httpStatus,
-        duration_ms: Date.now() - startTime,
-        outcome,
-      });
-    }
-  }
-
-  /**
    * Check Modal API health.
    * Note: Health endpoint does not require authentication.
    */
@@ -596,6 +556,69 @@ export class ModalClient {
         build_id: request.buildId,
         repo_owner: request.repoOwner,
         repo_name: request.repoName,
+        trace_id: correlation?.trace_id,
+        request_id: correlation?.request_id,
+        http_status: httpStatus,
+        duration_ms: Date.now() - startTime,
+        outcome,
+      });
+    }
+  }
+
+  /**
+   * Trigger an async environment image build on Modal (design §7.3).
+   */
+  async buildEnvironmentImage(
+    request: BuildEnvironmentImageRequest,
+    correlation?: CorrelationContext
+  ): Promise<BuildEnvironmentImageResponse> {
+    const startTime = Date.now();
+    const endpoint = "buildEnvironmentImage";
+    let httpStatus: number | undefined;
+    let outcome: "success" | "error" = "error";
+
+    try {
+      const headers = await this.getPostHeaders(correlation);
+      const response = await fetch(this.buildEnvironmentImageUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          environment_id: request.environmentId,
+          build_id: request.buildId,
+          callback_url: request.callbackUrl,
+          repositories: request.repositories.map(toRepositoryConfigPayload),
+          user_env_vars: request.userEnvVars,
+          build_timeout_seconds: request.buildTimeoutSeconds ?? null,
+        }),
+      });
+
+      httpStatus = response.status;
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new ModalApiError(`Modal API error: ${response.status} ${text}`, response.status);
+      }
+
+      const result = (await response.json()) as ModalApiResponse<{
+        build_id: string;
+        status: string;
+      }>;
+
+      if (!result.success || !result.data) {
+        throw new Error(`Modal API error: ${result.error || "Unknown error"}`);
+      }
+
+      outcome = "success";
+      return {
+        buildId: result.data.build_id,
+        status: result.data.status,
+      };
+    } finally {
+      log.info("modal.request", {
+        event: "modal.request",
+        endpoint,
+        build_id: request.buildId,
+        environment_id: request.environmentId,
         trace_id: correlation?.trace_id,
         request_id: correlation?.request_id,
         http_status: httpStatus,

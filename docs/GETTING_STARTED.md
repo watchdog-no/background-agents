@@ -1029,8 +1029,9 @@ missing. Add the required credential as a global secret:
 
 1. Go to **Settings > Secrets** in the web app
 2. Select **All Repositories (Global)** from the scope dropdown
-3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path (or
-   `DEEPSEEK_API_KEY` for DeepSeek models)
+3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path (or provider API
+   keys only when intentionally using metered/opt-in providers, e.g. `ANTHROPIC_API_KEY`,
+   `DEEPSEEK_API_KEY`, or `ZHIPU_API_KEY`)
 4. Click **Save**
 
 See [Secrets Management](SECRETS.md) for more on global and repository secrets.

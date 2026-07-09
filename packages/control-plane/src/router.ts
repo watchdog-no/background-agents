@@ -14,13 +14,23 @@ import { createSessionRuntimeClient } from "./session/runtime-client";
 
 import { createRequestMetrics, instrumentD1 } from "./db/instrumented-d1";
 import { createLogger } from "./logger";
-import { type Route, type RequestContext, parsePattern, json, error } from "./routes/shared";
+import {
+  type Route,
+  type RequestContext,
+  parsePattern,
+  json,
+  error,
+  HttpError,
+} from "./routes/shared";
 import { integrationSettingsRoutes } from "./routes/integration-settings";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
 import { reposRoutes } from "./routes/repos";
 import { classifyRoutes } from "./routes/classify";
 import { repoImageRoutes } from "./routes/repo-images";
 import { secretsRoutes } from "./routes/secrets";
+import { environmentRoutes } from "./routes/environments";
+import { environmentSecretsRoutes } from "./routes/environment-secrets";
+import { environmentImageRoutes } from "./routes/environment-images";
 import { automationRoutes } from "./routes/automations";
 import { mcpServerRoutes } from "./routes/mcp-servers";
 import { analyticsRoutes } from "./routes/analytics";
@@ -52,6 +62,10 @@ const PUBLIC_ROUTES: RegExp[] = [
   /^\/webhooks\/automation\/[^/]+$/,
   /^\/repo-images\/build-complete$/,
   /^\/repo-images\/build-failed$/,
+  // Environment-image callbacks authenticate inside the workflow (internal
+  // HMAC for provider_image mode), same as the repo-image callbacks above.
+  /^\/environment-images\/build-complete$/,
+  /^\/environment-images\/build-failed$/,
 ];
 
 /**
@@ -310,6 +324,11 @@ const routes: Route[] = [
   // Secrets
   ...secretsRoutes,
 
+  // Environments (Phase-2 launch unit; internal-HMAC only, web BFF proxied)
+  ...environmentRoutes,
+  ...environmentSecretsRoutes,
+  ...environmentImageRoutes,
+
   // Model preferences
   ...modelPreferencesRoutes,
 
@@ -418,20 +437,25 @@ export async function handleRequest(
         response = await route.handler(request, instrumentedEnv, match, ctx);
         outcome = response.status >= 500 ? "error" : "success";
       } catch (e) {
-        const durationMs = Date.now() - startTime;
-        logger.error("http.request", {
-          event: "http.request",
-          request_id: ctx.request_id,
-          trace_id: ctx.trace_id,
-          http_method: method,
-          http_path: path,
-          http_status: 500,
-          duration_ms: durationMs,
-          outcome: "error",
-          error: e instanceof Error ? e : String(e),
-          ...ctx.metrics.summarize(),
-        });
-        return error("Internal server error", 500);
+        if (e instanceof HttpError) {
+          response = error(e.message, e.status);
+          outcome = e.status >= 500 ? "error" : "success";
+        } else {
+          const durationMs = Date.now() - startTime;
+          logger.error("http.request", {
+            event: "http.request",
+            request_id: ctx.request_id,
+            trace_id: ctx.trace_id,
+            http_method: method,
+            http_path: path,
+            http_status: 500,
+            duration_ms: durationMs,
+            outcome: "error",
+            error: e instanceof Error ? e : String(e),
+            ...ctx.metrics.summarize(),
+          });
+          return withCorsAndTraceHeaders(error("Internal server error", 500), ctx);
+        }
       }
 
       const durationMs = Date.now() - startTime;

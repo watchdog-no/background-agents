@@ -35,10 +35,12 @@ import {
   type AlarmScheduler,
   type IdGenerator,
   type RepoImageLookup,
+  type EnvironmentImageLookup,
   type McpServerLookup,
   type SlackAgentNotifyLookup,
 } from "../sandbox/lifecycle/manager";
 import { RepoImageStore } from "../db/repo-images";
+import { EnvironmentImageStore } from "../db/environment-images";
 import { McpServerStore } from "../db/mcp-servers";
 import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integration-settings";
 import { SessionIndexStore } from "../db/session-index";
@@ -54,6 +56,7 @@ import type {
   ClientInfo,
   ServerMessage,
   SandboxEvent,
+  SessionRepositoryState,
   SessionState,
   SessionStatus,
   SandboxStatus,
@@ -62,10 +65,19 @@ import type { SessionRow, ArtifactRow, SandboxRow } from "./types";
 import { SessionRepository } from "./repository";
 import { parseTunnelUrls } from "./tunnel-urls";
 import { SessionWebSocketManagerImpl, type SessionWebSocketManager } from "./websocket-manager";
-import { SessionPullRequestService } from "./pull-request-service";
+import { PullRequestCreationClaims, SessionPullRequestService } from "./pull-request-service";
+import { findPrArtifactForRepo } from "./pr-artifacts";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import { GlobalSecretsStore } from "../db/global-secrets";
-import { mergeSecrets } from "../db/secrets-validation";
+import { EnvironmentSecretsStore } from "../db/environment-secrets";
+import { EnvironmentStore } from "../db/environments";
+import {
+  auditSecretsMerge,
+  mergeSecretSources,
+  parseSecretsCapMode,
+} from "../db/secrets-validation";
+import { buildLaunchUnitSecretSources } from "./launch-unit-secrets";
+import type { SessionRepositoryEntry } from "./repository-target";
 import { OpenAITokenRefreshService } from "./openai-token-refresh-service";
 import { AnthropicTokenRefreshService } from "./anthropic-token-refresh-service";
 import { ScmCredentialsService } from "./scm-credentials-service";
@@ -163,6 +175,7 @@ export class SessionDO extends DurableObject<Env> {
   private _sessionLifecycleHandler: SessionLifecycleHandler | null = null;
   // Pull request handler (lazily initialized)
   private _pullRequestHandler: PullRequestHandler | null = null;
+  private readonly prCreationClaims = new PullRequestCreationClaims();
   // Participants handler (lazily initialized)
   private _participantsHandler: ParticipantsHandler | null = null;
   // Alarm handler (lazily initialized)
@@ -494,6 +507,7 @@ export class SessionDO extends DurableObject<Env> {
     if (!this._pullRequestHandler) {
       this._pullRequestHandler = createPullRequestHandler({
         getSession: () => this.getSession(),
+        getSessionRepositories: () => this.repository.getSessionRepositories(),
         getPromptingParticipantForPR: () => this.participantService.getPromptingParticipantForPR(),
         resolveAuthForPR: (participant) => this.participantService.resolveAuthForPR(participant),
         getSessionUrl: (session) => {
@@ -504,15 +518,17 @@ export class SessionDO extends DurableObject<Env> {
         createPullRequest: async (input) => {
           const pullRequestService = new SessionPullRequestService({
             repository: this.repository,
+            claims: this.prCreationClaims,
             sourceControlProvider: this.sourceControlProvider,
             log: this.log,
             generateId: () => generateId(),
-            pushBranchToRemote: (headBranch, pushSpec) =>
-              this.pushBranchToRemote(headBranch, pushSpec),
-            broadcastSessionBranch: (branchName) => {
+            pushBranchToRemote: (pushSpec) => this.pushBranchToRemote(pushSpec),
+            broadcastSessionBranch: (branchName, repo) => {
               this.broadcast({
                 type: "session_branch",
                 branchName,
+                repoOwner: repo.repoOwner,
+                repoName: repo.repoName,
               });
             },
             broadcastArtifactCreated: (artifact) => {
@@ -601,6 +617,12 @@ export class SessionDO extends DurableObject<Env> {
       getSandbox: () => this.repository.getSandbox(),
       getSandboxWithCircuitBreaker: () => this.repository.getSandboxWithCircuitBreaker(),
       getSession: () => this.repository.getSession(),
+      getSessionRepositories: () =>
+        this.repository.getSessionRepositories().map((entry) => ({
+          repoOwner: entry.repoOwner,
+          repoName: entry.repoName,
+          baseBranch: entry.baseBranch ?? "main",
+        })),
       getUserEnvVars: () => this.getUserEnvVars(),
       updateSandboxStatus: (status) => this.updateSandboxStatus(status),
       updateSandboxForSpawn: (data) => this.repository.updateSandboxForSpawn(data),
@@ -682,13 +704,14 @@ export class SessionDO extends DurableObject<Env> {
     if (this.env.DB) {
       const mcpStore = new McpServerStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
       mcpServerLookup = {
-        getDecryptedForSession: (repoOwner, repoName) =>
-          mcpStore.getDecryptedForSession(repoOwner, repoName),
+        getDecryptedForSession: (repositories) => mcpStore.getDecryptedForSession(repositories),
       };
     }
 
-    // Token absence short-circuits to false so a misconfigured deployment
-    // never installs a tool that would 503 on every call.
+    // Session-scoped gate: resolved from the primary member (the scalar mirror
+    // this lookup is called with) — see resolveSessionScopedSettings for the
+    // per-feature scope rules. Token absence short-circuits to false so a
+    // misconfigured deployment never installs a tool that would 503 on every call.
     let slackAgentNotifyLookup: SlackAgentNotifyLookup | undefined;
     if (this.env.DB) {
       const tokenPresent = !!this.env.SLACK_BOT_TOKEN;
@@ -725,14 +748,24 @@ export class SessionDO extends DurableObject<Env> {
       sandboxDashboardUrlBuilder,
     };
 
-    // Create repo image lookup if D1 is available and the provider supports repo images.
+    // Create image lookups if D1 is available and the provider supports
+    // prebuilt images. Environment images run on the same provider set as
+    // repo images (EnvironmentImageProvider aliases RepoImageProvider).
     let repoImageLookup: RepoImageLookup | undefined;
+    let environmentImageLookup: EnvironmentImageLookup | undefined;
     const repoImageProvider = resolveRepoImageProvider(sandboxBackend);
     if (this.env.DB && repoImageProvider) {
       const repoImageStore = new RepoImageStore(this.env.DB);
       repoImageLookup = {
         getLatestReady: (repoOwner, repoName, baseBranch) =>
           repoImageStore.getLatestReady(repoOwner, repoName, repoImageProvider, baseBranch),
+      };
+      const environmentImageStore = new EnvironmentImageStore(this.env.DB);
+      environmentImageLookup = {
+        getLatestReady: (environmentId) =>
+          environmentImageStore.getLatestReadyForSpawn(environmentId, repoImageProvider),
+        markRestoreFailed: (environmentImageId, error) =>
+          environmentImageStore.markRestoreFailed(environmentImageId, error),
       };
     }
 
@@ -747,7 +780,8 @@ export class SessionDO extends DurableObject<Env> {
       {
         onSandboxTerminating: () => this.messageQueue.failStuckProcessingMessage(),
       },
-      repoImageLookup
+      repoImageLookup,
+      environmentImageLookup
     );
   }
 
@@ -1402,10 +1436,9 @@ export class SessionDO extends DurableObject<Env> {
    * @returns Success result or error message
    */
   private async pushBranchToRemote(
-    branchName: string,
     pushSpec: GitPushSpec
   ): Promise<{ success: true } | { success: false; error: string }> {
-    return await this.sandboxEventProcessor.pushBranchToRemote(branchName, pushSpec);
+    return await this.sandboxEventProcessor.pushBranchToRemote(pushSpec);
   }
 
   /**
@@ -1691,6 +1724,12 @@ export class SessionDO extends DurableObject<Env> {
       }
     }
 
+    // Environment provenance: the id is stored on the session; the name is
+    // resolved live (resolveEnvironmentName) so a deleted environment surfaces
+    // as null — the UI renders "environment deleted" (§7.6).
+    const environmentId = session?.environment_id ?? null;
+    const environmentName = await this.resolveEnvironmentName(environmentId);
+
     return {
       id: this.getPublicSessionId(session),
       title: session?.title ?? null,
@@ -1715,14 +1754,74 @@ export class SessionDO extends DurableObject<Env> {
       ttydUrl: sandbox?.ttyd_url ?? null,
       ttydToken,
       sandboxDashboardUrl: this.getSandboxDashboardUrl(sandbox?.modal_object_id),
+      repositories: this.getSessionRepositoryStates(session),
+      environmentId,
+      environmentName,
     };
+  }
+
+  /**
+   * The launch environment's current display name, or null when the session has
+   * no environment or the environment was deleted after launch (§7.6). Resolved
+   * live rather than snapshotted so deletion is reflected; best-effort, so a
+   * lookup failure resolves null rather than failing the whole state read.
+   */
+  private async resolveEnvironmentName(environmentId: string | null): Promise<string | null> {
+    if (!environmentId || !this.env.DB) {
+      return null;
+    }
+    try {
+      const environment = await new EnvironmentStore(this.env.DB).getById(environmentId);
+      return environment?.name ?? null;
+    } catch (e) {
+      this.log.warn("Failed to resolve environment name for session state", {
+        environment_id: environmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Member repositories for SessionState, in position order (see
+   * buildSessionRepositories for the scalar-mirror fallback). Members synthesized
+   * from the scalars — and member rows written before per-repo git state
+   * existed, whose git columns are null while the scalars are set — have the
+   * primary entry overlaid with the session scalars.
+   */
+  private getSessionRepositoryStates(session: SessionRow | null): SessionRepositoryState[] {
+    const prUrlForRepo = this.getPrUrlLookup();
+    return this.repository.getSessionRepositories().map((member) => ({
+      position: member.position,
+      repoOwner: member.repoOwner,
+      repoName: member.repoName,
+      repoId: member.row ? member.row.repo_id : (session?.repo_id ?? null),
+      baseBranch: member.baseBranch ?? "main",
+      branchName:
+        member.row?.branch_name ?? (member.isPrimary ? (session?.branch_name ?? null) : null),
+      baseSha: member.row?.base_sha ?? (member.isPrimary ? (session?.base_sha ?? null) : null),
+      currentSha:
+        member.row?.current_sha ?? (member.isPrimary ? (session?.current_sha ?? null) : null),
+      prUrl: prUrlForRepo(member.repoOwner, member.repoName, member.isPrimary),
+    }));
+  }
+
+  /** Per-repo PR URL lookup over the session's PR artifacts. */
+  private getPrUrlLookup(): (
+    repoOwner: string,
+    repoName: string,
+    isPrimary: boolean
+  ) => string | null {
+    const artifacts = this.repository.listArtifacts().filter((artifact) => artifact.url !== null);
+    return (repoOwner, repoName, isPrimary) =>
+      findPrArtifactForRepo(artifacts, { repoOwner, repoName }, isPrimary)?.url ?? null;
   }
 
   private getSandboxDashboardUrl(providerObjectId: string | null | undefined): string | null {
     if (resolveSandboxBackendName(this.env.SANDBOX_PROVIDER) !== "modal") return null;
     return buildModalSandboxDashboardUrl({
       workspace: this.env.MODAL_WORKSPACE,
-      environment: this.env.MODAL_ENVIRONMENT,
+      modalEnvironment: this.env.MODAL_ENVIRONMENT,
       providerObjectId,
     });
   }
@@ -1807,32 +1906,61 @@ export class SessionDO extends DurableObject<Env> {
       return {};
     }
 
-    const globalStore = new GlobalSecretsStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
+    // Fail hard on secret loading — sandboxes must not silently lose secrets
+    const encryptionKey = this.env.REPO_SECRETS_ENCRYPTION_KEY;
+    const globalStore = new GlobalSecretsStore(this.env.DB, encryptionKey);
     const globalSecrets = await globalStore.getDecryptedSecrets();
 
-    let repoSecrets: Record<string, string> = {};
-    if (session.repo_owner && session.repo_name) {
-      const repoId = await this.ensureRepoId(session);
-      const repoStore = new RepoSecretsStore(this.env.DB, this.env.REPO_SECRETS_ENCRYPTION_KEY);
-      repoSecrets = await repoStore.getDecryptedSecrets(repoId);
-    }
+    const repoStore = new RepoSecretsStore(this.env.DB, encryptionKey);
+    const environmentSecretsStore = new EnvironmentSecretsStore(this.env.DB, encryptionKey);
+    const sources = await buildLaunchUnitSecretSources({
+      environmentId: session.environment_id,
+      globalSecrets,
+      members: this.repository.getSessionRepositories(),
+      loadMemberSecrets: (member) => this.loadMemberRepoSecrets(session, member, repoStore),
+      loadEnvironmentSecrets: (environmentId) =>
+        environmentSecretsStore.getDecryptedSecrets(environmentId),
+    });
 
-    // Merge: repo overrides global
-    const { merged, totalBytes, exceedsLimit } = mergeSecrets(globalSecrets, repoSecrets);
-    const mergedCount = Object.keys(merged).length;
+    const merge = mergeSecretSources(sources);
+    auditSecretsMerge({
+      merge,
+      mode: parseSecretsCapMode(this.env.SECRETS_CAP_ENFORCEMENT),
+      log: this.log,
+      context: { session_id: session.id },
+    });
 
+    const mergedCount = Object.keys(merge.merged).length;
     if (mergedCount > 0) {
-      const logLevel = exceedsLimit ? "warn" : "info";
-      this.log[logLevel]("Secrets merged for sandbox", {
-        global_count: Object.keys(globalSecrets).length,
-        repo_count: Object.keys(repoSecrets).length,
+      this.log.info("Secrets merged for sandbox", {
+        source_count: sources.length,
         merged_count: mergedCount,
-        payload_bytes: totalBytes,
-        exceeds_limit: exceedsLimit,
+        payload_bytes: merge.totalBytes,
+        exceeds_limit: merge.exceedsLimit,
       });
     }
 
-    return merged;
+    return merge.merged;
+  }
+
+  /**
+   * Decrypt one member repo's secrets — the injected leaf loader for
+   * buildLaunchUnitSecretSources. The member row carries the repo id; a
+   * synthesized primary (legacy scalar row) resolves it lazily via ensureRepoId.
+   * A member without a resolvable id (a secondary with a null row id) can't be
+   * keyed, so it contributes nothing.
+   */
+  private async loadMemberRepoSecrets(
+    session: SessionRow,
+    member: SessionRepositoryEntry,
+    repoStore: RepoSecretsStore
+  ): Promise<Record<string, string>> {
+    const repoId =
+      member.row?.repo_id ?? (member.isPrimary ? await this.ensureRepoId(session) : null);
+    if (repoId === null) {
+      return {};
+    }
+    return repoStore.getDecryptedSecrets(repoId);
   }
 
   /**

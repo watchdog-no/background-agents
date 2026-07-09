@@ -11,7 +11,9 @@ The control plane provides:
 - **Multi-client Sync**: Web, Slack, extension clients all see the same state
 - **GitHub Integration**: GitHub App for repository access
 - **Token Encryption**: AES-256-GCM encryption for GitHub tokens at rest
-- **Repo Secrets**: Encrypted repo-scoped secrets stored in D1, injected into sandboxes as env vars
+- **Secrets**: Encrypted global, repo-scoped, and environment-scoped secrets stored in D1, injected
+  into sandboxes as env vars
+- **Environments**: Named repository sets with their own secrets and prebuilt images, stored in D1
 
 ## Architecture
 
@@ -37,7 +39,8 @@ The control plane provides:
 │  │  └────────────────┘                                       │   │
 │  └───────────────────────────────────────────────────────────┘   │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │              D1 Database (repo-scoped secrets)              │   │
+│  │   D1 Database (sessions index, environments, automations,   │   │
+│  │              image builds, encrypted secrets)               │   │
 │  └───────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -113,6 +116,55 @@ for that provider.
 | `/repos/:owner/:name/secrets`      | GET    | List secrets         |
 | `/repos/:owner/:name/secrets`      | PUT    | Upsert secrets       |
 | `/repos/:owner/:name/secrets/:key` | DELETE | Delete a secret      |
+
+### Environments
+
+An environment is a named, ordered repository set (1–10 repositories, first = primary) that sessions
+can be launched from. `POST /sessions` accepts exactly one of the scalar repo fields
+(`repoOwner`/`repoName`), a `repositories` list (ad-hoc multi-repository session), or an
+`environmentId`.
+
+| Endpoint                           | Method | Description                                                                     |
+| ---------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| `/environments`                    | GET    | List environments                                                               |
+| `/environments`                    | POST   | Create environment                                                              |
+| `/environments/:id`                | GET    | Get environment with repositories                                               |
+| `/environments/:id`                | PUT    | Update name, description, repositories, prebuild, or Slack channel associations |
+| `/environments/:id`                | DELETE | Delete environment (sessions keep their snapshot)                               |
+| `/environments/:id/secrets`        | GET    | List environment secret keys                                                    |
+| `/environments/:id/secrets`        | PUT    | Upsert environment secrets                                                      |
+| `/environments/:id/secrets/:key`   | DELETE | Delete an environment secret                                                    |
+| `/environments/:id/secrets/import` | POST   | Copy selected keys from a repository of the env                                 |
+
+Environment image builds (prebuilds of the whole environment) are managed via
+`/environment-images/status`, `/environment-images/trigger/:id`, and the build callback routes,
+mirroring the repo-image endpoints.
+
+### Automations
+
+| Endpoint                          | Method | Description                                                             |
+| --------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `/automations`                    | GET    | List automations                                                        |
+| `/automations`                    | POST   | Create automation                                                       |
+| `/automations/:id`                | GET    | Get automation                                                          |
+| `/automations/:id`                | PUT    | Update automation                                                       |
+| `/automations/:id`                | DELETE | Soft-delete automation                                                  |
+| `/automations/:id/pause`          | POST   | Pause (stop firing)                                                     |
+| `/automations/:id/resume`         | POST   | Resume; resets the failure counter                                      |
+| `/automations/:id/trigger`        | POST   | Fire now → `201 {invocationId, runs}`, `409` if an invocation is active |
+| `/automations/:id/invocations`    | GET    | Run history: one entry per firing, with child runs                      |
+| `/automations/:id/runs/:runId`    | GET    | Get one run                                                             |
+| `/automations/:id/regenerate-key` | POST   | Rotate a webhook automation's API key                                   |
+
+An automation selects 0–10 repositories (`repositories: [{repoOwner, repoName, baseBranch?}]`;
+multi-repo selections require a schedule trigger). Each firing records one **invocation**; a
+non-skipped invocation fans out into one **run** per repository, and each run links to one session.
+Runs snapshot their repository at firing time, so editing the selection never rewrites history. See
+[docs/MULTI_REPO_AUTOMATIONS.md](../../docs/MULTI_REPO_AUTOMATIONS.md) for the design decisions.
+
+An invocation's status is **derived from its child runs, never stored**: no children → `skipped`;
+any child starting/running → `starting`/`running`; all terminal → `completed` (none failed),
+`failed` (none completed), `partial_failed` (a mix), or `skipped` (all skipped).
 
 ## WebSocket Protocol
 
@@ -191,6 +243,37 @@ Each session gets its own SQLite database with:
 - `ws_client_mapping`: WebSocket ID to participant mapping (for hibernation recovery)
 
 See `src/session/schema.ts` for full schema.
+
+## D1 Schema (sessions, environments, automations)
+
+Shared state lives in the D1 database (migrations in `terraform/d1/migrations/`). Beyond the
+sessions index, repo metadata, and encrypted secrets:
+
+- `session_repositories`: a session's ordered repository list (position 0 = primary; single-repo
+  sessions also mirror the primary onto the session row's scalar columns).
+- `environments`: named repository sets (name, description, prebuild flag, Slack channel
+  associations).
+- `environment_repositories`: the environment's ordered repository list with per-repository base
+  branch.
+- `environment_secrets`: environment-scoped secrets, mirroring `repo_secrets` (same encryption key
+  and caps).
+- `environment_images`: prebuilt environment image builds — provider artifact id, per-repository
+  SHAs, a repositories fingerprint for spawn matching, and the runtime version floor check.
+
+Automations:
+
+- `automations`: trigger, schedule, model, instructions, failure counter. The repository selection
+  lives in `automation_repositories`, not on this row.
+- `automation_repositories`: the live repository selection (0–10 rows per automation), unique per
+  `(automation_id, repo_owner, repo_name)`.
+- `automation_invocations`: one thin row per firing — source, firing-scoped `trigger_key` (event
+  dedup, UNIQUE per automation) and `concurrency_key`, `skip_reason` for childless skips, and the
+  `failure_counted_at` compare-and-set stamp that makes auto-pause accounting exactly-once. Status
+  is **not** stored; it is derived from child runs (`DERIVED_INVOCATION_STATUS_SQL` in
+  `src/db/automation-store.ts` is the single definition).
+- `automation_runs`: one row per repository per invocation, linked by `invocation_id`, carrying the
+  firing-time repository snapshot (`repo_owner/repo_name/repo_id/base_branch`) and the session
+  linkage. Firing keys live on the invocation, not the run.
 
 ## Token Encryption
 

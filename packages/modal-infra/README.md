@@ -9,7 +9,7 @@ This package provides the data plane for Open-Inspect:
 - **Sandboxes**: Isolated development environments running OpenCode
 - **Images**: Pre-built container images with all development tools
 - **Snapshots**: Filesystem snapshots for fast startup and session persistence
-- **Scheduler**: Image rebuilding infrastructure (currently disabled)
+- **Scheduler**: Cron-based rebuilds of repository and environment images (every 30 minutes)
 
 ## Architecture
 
@@ -57,7 +57,9 @@ Base image definition with:
 
 ### Scheduler (`src/scheduler/`)
 
-- **image_builder.py**: Image rebuild infrastructure (scheduling currently disabled)
+- **image_builder.py**: Repository and environment image builds plus the 30-minute rebuild cron
+  (`rebuild_repo_images` runs a repository-image pass and an environment-image pass; an environment
+  build clones every repository of the environment and runs each setup script in position order)
 
 ## Usage
 
@@ -124,7 +126,6 @@ Endpoint URLs follow the pattern: `https://{workspace}--open-inspect-{endpoint}.
 |----------|--------|------|-------------|
 | `api-health` | GET | No | Health check |
 | `api-create-sandbox` | POST | Yes | Create a new sandbox |
-| `api-warm-sandbox` | POST | Yes | Pre-warm a sandbox |
 | `api-snapshot-sandbox` | POST | Yes | Take filesystem snapshot |
 | `api-restore-sandbox` | POST | Yes | Restore sandbox from snapshot |
 

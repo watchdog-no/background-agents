@@ -8,13 +8,15 @@ export { attachmentSchema, clientMessageSchema } from "./websocket";
 export type { Attachment, ClientMessage } from "./websocket";
 
 // Session states
-export type SessionStatus =
-  | "created"
-  | "active"
-  | "completed"
-  | "failed"
-  | "archived"
-  | "cancelled";
+export const sessionStatusSchema = z.enum([
+  "created",
+  "active",
+  "completed",
+  "failed",
+  "archived",
+  "cancelled",
+]);
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 export type SandboxStatus =
   | "pending"
   | "spawning"
@@ -33,6 +35,7 @@ export type MessageSource = "web" | "slack" | "linear" | "extension" | "github" 
 export type ArtifactType = "pr" | "screenshot" | "video" | "preview" | "branch";
 export type EventType =
   | "heartbeat"
+  | "ready"
   | "token"
   | "reasoning"
   | "tool_call"
@@ -46,6 +49,7 @@ export type EventType =
   | "artifact"
   | "push_complete"
   | "push_error"
+  | "warning"
   | "user_message";
 export type ParticipantRole = "owner" | "member";
 export type SpawnSource =
@@ -57,14 +61,6 @@ export type SpawnSource =
   | "slack-bot";
 export type ConfidenceLevel = "high" | "medium" | "low";
 
-const sessionStatusSchema = z.enum([
-  "created",
-  "active",
-  "completed",
-  "failed",
-  "archived",
-  "cancelled",
-]);
 const sandboxStatusSchema = z.enum([
   "pending",
   "spawning",
@@ -90,6 +86,32 @@ const spawnSourceSchema = z.enum([
 ]);
 
 const recordSchema = z.record(z.string(), z.unknown());
+const tokenUsageDetailsSchema = z
+  .object({
+    total: z.number().optional(),
+    input: z.number().optional(),
+    output: z.number().optional(),
+    reasoning: z.number().optional(),
+    cache: z
+      .object({
+        read: z.number().optional(),
+        write: z.number().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough()
+  .refine(
+    (usage) =>
+      typeof usage.total === "number" ||
+      typeof usage.input === "number" ||
+      typeof usage.output === "number" ||
+      typeof usage.reasoning === "number" ||
+      typeof usage.cache?.read === "number" ||
+      typeof usage.cache?.write === "number",
+    { message: "Expected at least one token usage count" }
+  );
+const tokenUsageSchema = z.union([z.number(), tokenUsageDetailsSchema]);
 
 // Participant in a session
 export interface SessionParticipant {
@@ -118,6 +140,18 @@ export interface Session {
   spawnDepth: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Ordered member list; [0] = primary. Absent on scalar-era sessions —
+   * consumers fall back to the scalar repoOwner/repoName. Populated by the
+   * session list index (SessionEntry.repositories).
+   */
+  repositories?: SessionListRepository[];
+  /**
+   * The environment this session was launched from (provenance), or null.
+   * Populated by the session list index (SessionEntry.environmentId); PR-12
+   * renders it.
+   */
+  environmentId?: string | null;
 }
 
 // Message in a session
@@ -237,21 +271,6 @@ export interface PullRequest {
   updatedAt: string;
 }
 
-/**
- * Token usage reported by the agent runtime for a single step. Providers can
- * split prompt cache and generated tokens across fields; use
- * {@link contextTokensFromUsage} for the best available context-pressure value.
- * The runtime forwards provider usage verbatim and omits fields the provider
- * doesn't report, so only `input` is guaranteed.
- */
-const tokenUsageSchema = z.object({
-  input: z.number(),
-  output: z.number().optional(),
-  reasoning: z.number().optional(),
-  total: z.number().optional(),
-  cache: z.object({ read: z.number().optional(), write: z.number().optional() }).optional(),
-});
-
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 
 /**
@@ -261,11 +280,14 @@ export type TokenUsage = z.infer<typeof tokenUsageSchema>;
  * headroom near compaction.
  */
 export function contextTokensFromUsage(tokens: TokenUsage): number {
+  if (typeof tokens === "number") {
+    return tokens;
+  }
   if (typeof tokens.total === "number" && Number.isFinite(tokens.total)) {
     return tokens.total;
   }
   return (
-    tokens.input +
+    (tokens.input ?? 0) +
     (tokens.cache?.read ?? 0) +
     (tokens.cache?.write ?? 0) +
     (tokens.output ?? 0) +
@@ -288,6 +310,12 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
   sandboxEventBaseSchema.extend({
     type: z.literal("heartbeat"),
     status: z.string(),
+  }),
+  sandboxEventBaseSchema.extend({
+    // Emitted once when the sandbox bridge connects and OpenCode is ready.
+    // Present in essentially every session's replay history.
+    type: z.literal("ready"),
+    opencodeSessionId: z.string().nullable().optional(),
   }),
   messageSandboxEventBaseSchema.extend({
     type: z.literal("token"),
@@ -361,17 +389,39 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
     metadata: recordSchema.optional(),
     messageId: z.string().optional(),
   }),
+  // Push events: repoOwner/repoName identify the member of a multi-repo
+  // session (absent → the session's sole repo). branchName is optional
+  // because legacy runtimes emit a key-less push_error on the
+  // "no repository found" path — requiring it would drop that event at the
+  // parse layer and leak the pending push resolver.
   z.object({
     type: z.literal("push_complete"),
-    branchName: z.string(),
+    branchName: z.string().optional(),
+    repoOwner: z.string().optional(),
+    repoName: z.string().optional(),
     sandboxId: z.string().optional(),
     timestamp: z.number(),
     ackId: z.string().optional(),
   }),
   z.object({
     type: z.literal("push_error"),
-    branchName: z.string(),
+    branchName: z.string().optional(),
+    repoOwner: z.string().optional(),
+    repoName: z.string().optional(),
     error: z.string(),
+    sandboxId: z.string().optional(),
+    timestamp: z.number(),
+    ackId: z.string().optional(),
+  }),
+  // Non-fatal boot/runtime warnings (secondary setup/start failures,
+  // .opencode assembly collisions, secrets collisions). Live ingest drops
+  // unknown union members, so this member must exist before runtimes emit it.
+  z.object({
+    type: z.literal("warning"),
+    scope: z.enum(["sync", "setup", "start", "assembly", "secrets"]),
+    message: z.string(),
+    repoOwner: z.string().optional(),
+    repoName: z.string().optional(),
     sandboxId: z.string().optional(),
     timestamp: z.number(),
     ackId: z.string().optional(),
@@ -397,6 +447,22 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export type SandboxEvent = z.infer<typeof sandboxEventSchema>;
+
+/**
+ * Sandbox event arrays for session hydration — both the initial `subscribed`
+ * replay and paginated `history_page` items, which read from the same event
+ * store. Resilient to unknown/legacy event shapes: each event is validated
+ * individually and dropped if it doesn't match, instead of failing the whole
+ * message. A single unrecognized event (e.g. a legacy type no longer in the
+ * schema) must never wedge session hydration and strand the client on
+ * "loading session" forever.
+ */
+const tolerantSandboxEventsSchema = z.array(z.unknown()).transform((events) =>
+  events.flatMap((event) => {
+    const result = sandboxEventSchema.safeParse(event);
+    return result.success ? [result.data] : [];
+  })
+);
 
 // WebSocket message types
 // Session state sent to clients
@@ -434,6 +500,19 @@ export interface SessionState {
   ttydUrl?: string | null;
   ttydToken?: string | null;
   sandboxDashboardUrl?: string | null;
+  /**
+   * Ordered member list; [0] = primary. Absent on scalar-era producers —
+   * consumers default to [] / synthesize from repoOwner/repoName.
+   */
+  repositories?: SessionRepositoryState[];
+  /**
+   * The environment this session was launched from (provenance), or null for
+   * repo-launched/ad-hoc sessions. `environmentName` is resolved live and is
+   * null when the environment has since been deleted (design §7.6) — the UI
+   * renders "environment deleted" in that case.
+   */
+  environmentId?: string | null;
+  environmentName?: string | null;
 }
 
 // Participant presence info
@@ -445,6 +524,149 @@ export interface ParticipantPresence {
   status: "active" | "idle" | "away";
   lastSeen: number;
 }
+
+// ==================== Repository lists (multi-repo sessions) ====================
+
+/** Maximum repositories a session or automation can target. */
+export const MAX_TARGET_REPOSITORIES = 10;
+
+/**
+ * Fully-resolved repository reference (all fields non-null). NOT an alias of
+ * AutomationRepository, whose repoId/baseBranch are nullable — the relation is
+ * "RepositoryRef = the resolved flavor of it": share the input schema, keep
+ * both types, convert at resolution time (toRepositoryRef).
+ */
+export interface RepositoryRef {
+  repoOwner: string;
+  repoName: string;
+  repoId: number;
+  baseBranch: string;
+}
+
+/**
+ * Per-repo session git state; position 0 = primary. Standalone rather than
+ * extending RepositoryRef: repoId is nullable because legacy synthesized
+ * entries (pre-feature sessions) may lack it.
+ */
+export const sessionRepositoryStateSchema = z.object({
+  position: z.number(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  repoId: z.number().nullable(),
+  baseBranch: z.string(),
+  /** Set after the first successful push to this repo. */
+  branchName: z.string().nullable(),
+  baseSha: z.string().nullable(),
+  currentSha: z.string().nullable(),
+  /** Latest PR artifact for this repo (convenience mirror). */
+  prUrl: z.string().nullable(),
+});
+
+export type SessionRepositoryState = z.infer<typeof sessionRepositoryStateSchema>;
+
+/**
+ * A session's repository-set member as carried on the session list contract
+ * (Session.repositories / control-plane SessionEntry.repositories). The
+ * identity subset of SessionRepositoryState — no git state, since the list
+ * index doesn't store it. Ordered; [0] = primary (mirrored into the scalar
+ * repoOwner/repoName columns). Control-plane's SessionIndexRepository aliases
+ * this so the wire shape has a single home.
+ */
+export interface SessionListRepository {
+  repoOwner: string;
+  repoName: string;
+  repoId: number | null;
+  baseBranch: string;
+}
+
+/**
+ * Whether a PR artifact belongs to a given session member. Artifacts written
+ * before multi-repo support carry no repo identity (`artifactRepo === null`)
+ * and by construction belong to the session's primary. Identity is compared
+ * case-insensitively, matching repo-identity comparison elsewhere. This is the
+ * single home of that convention — the control-plane per-repo prUrl projection
+ * (findPrArtifactForRepo) and the web per-repo PR chips both go through here.
+ */
+export function prArtifactBelongsToRepo(
+  artifactRepo: { repoOwner: string; repoName: string } | null,
+  targetRepo: { repoOwner: string; repoName: string },
+  targetIsPrimary: boolean
+): boolean {
+  if (!artifactRepo) return targetIsPrimary;
+  return (
+    artifactRepo.repoOwner.toLowerCase() === targetRepo.repoOwner.toLowerCase() &&
+    artifactRepo.repoName.toLowerCase() === targetRepo.repoName.toLowerCase()
+  );
+}
+
+/**
+ * One repository entry on a create/update request. Identifiers are normalized
+ * (trim + lowercase) by the schema, matching normalizeOptionalRepositoryPair —
+ * the list-entry twin of that scalar helper.
+ */
+export const repositoryInputSchema = z
+  .object({
+    repoOwner: z.string().trim().min(1),
+    repoName: z.string().trim().min(1),
+    baseBranch: z.string().trim().min(1).nullish(),
+  })
+  .transform((entry) => ({
+    repoOwner: entry.repoOwner.toLowerCase(),
+    repoName: entry.repoName.toLowerCase(),
+    baseBranch: entry.baseBranch ?? null,
+  }));
+
+export type RepositoryInput = z.input<typeof repositoryInputSchema>;
+
+/** Repository list for create/update requests: bounded and duplicate-free. */
+export const repositoriesInputSchema = z
+  .array(repositoryInputSchema)
+  .max(MAX_TARGET_REPOSITORIES, {
+    message: `repositories must contain at most ${MAX_TARGET_REPOSITORIES} entries`,
+  })
+  .superRefine((repositories, ctx) => {
+    const seen = new Set<string>();
+    repositories.forEach((repository, index) => {
+      const key = `${repository.repoOwner}/${repository.repoName}`;
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate repository: ${key}`,
+          path: [index],
+        });
+      }
+      seen.add(key);
+    });
+  });
+
+/**
+ * Session flavor of the list: additionally rejects empty lists (the field is
+ * either absent — scalar-era request — or names at least one member, so an
+ * empty array never masquerades as a third mode) and duplicate repoName
+ * across different owners — clone paths are /workspace/{repoName}, and a
+ * clear 400 beats path disambiguation.
+ */
+export const sessionRepositoriesInputSchema = repositoriesInputSchema.superRefine(
+  (repositories, ctx) => {
+    if (repositories.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "repositories must contain at least one entry (omit the field instead)",
+      });
+    }
+    const seenNames = new Set<string>();
+    repositories.forEach((repository, index) => {
+      if (seenNames.has(repository.repoName)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate repository name: ${repository.repoName} (checkout paths are /workspace/{repoName})`,
+          path: [index],
+        });
+      }
+      seenNames.add(repository.repoName);
+    });
+  }
+);
 
 const sessionStateSchema = z.object({
   id: z.string(),
@@ -470,6 +692,16 @@ const sessionStateSchema = z.object({
   ttydUrl: z.string().nullable().optional(),
   ttydToken: z.string().nullable().optional(),
   sandboxDashboardUrl: z.string().nullable().optional(),
+  /**
+   * Ordered member list; [0] = primary. Optional so pre-feature servers and
+   * producers stay valid — consumers default to [] (absent ≙ scalar-era
+   * session; synthesize from repoOwner/repoName when rendering).
+   */
+  repositories: z.array(sessionRepositoryStateSchema).optional(),
+  // Environment provenance (design §7.6). environmentName resolves live —
+  // null when the environment was deleted after launch.
+  environmentId: z.string().nullable().optional(),
+  environmentName: z.string().nullable().optional(),
 });
 
 const participantPresenceSchema = z.object({
@@ -500,7 +732,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
     participant: participantSummarySchema.optional(),
     replay: z
       .object({
-        events: z.array(sandboxEventSchema),
+        events: tolerantSandboxEventsSchema,
         hasMore: z.boolean(),
         cursor: historyCursorSchema.nullable(),
       })
@@ -521,14 +753,21 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("sandbox_ready") }),
   z.object({ type: z.literal("sandbox_error"), error: z.string() }),
   z.object({ type: z.literal("artifact_created"), artifact: sessionArtifactSchema }),
-  z.object({ type: z.literal("session_branch"), branchName: z.string() }),
+  // repoOwner/repoName identify the member of a multi-repo session whose
+  // branch updated (absent → the session's sole repo).
+  z.object({
+    type: z.literal("session_branch"),
+    branchName: z.string(),
+    repoOwner: z.string().optional(),
+    repoName: z.string().optional(),
+  }),
   z.object({ type: z.literal("snapshot_saved"), imageId: z.string(), reason: z.string() }),
   z.object({ type: z.literal("sandbox_restored"), message: z.string() }),
   z.object({ type: z.literal("sandbox_warning"), message: z.string() }),
   z.object({ type: z.literal("processing_status"), isProcessing: z.boolean() }),
   z.object({
     type: z.literal("history_page"),
-    items: z.array(sandboxEventSchema),
+    items: tolerantSandboxEventsSchema,
     hasMore: z.boolean(),
     cursor: historyCursorSchema.nullable(),
   }),
@@ -778,6 +1017,34 @@ function hasRepositoryForBranch(data: CreateSessionRepositoryFields): boolean {
   return hasRepositoryIdentifier(data.repoOwner) || !data.branch?.trim();
 }
 
+function hasScalarRepositoryTarget(data: CreateSessionRepositoryFields): boolean {
+  return (
+    hasRepositoryIdentifier(data.repoOwner) ||
+    hasRepositoryIdentifier(data.repoName) ||
+    Boolean(data.branch?.trim())
+  );
+}
+
+function hasExclusiveSessionTarget(
+  data: CreateSessionRepositoryFields & {
+    repositories?: unknown[] | null;
+    environmentId?: string | null;
+  }
+): boolean {
+  // At most one target mode may be selected: a named environment
+  // (environmentId), an ad-hoc repository list (repositories), or the scalar
+  // repoOwner/repoName/branch form. Presence-based, not length-based: any
+  // provided array selects the list mode (sessionRepositoriesInputSchema
+  // separately rejects empty lists, so [] can never smuggle another mode
+  // through).
+  const activeModes = [
+    Boolean(data.repositories),
+    hasRepositoryIdentifier(data.environmentId),
+    hasScalarRepositoryTarget(data),
+  ].filter(Boolean).length;
+  return activeModes <= 1;
+}
+
 // API response types
 const createSessionRequestBaseSchema = z.object({
   repoOwner: z.string().trim().min(1).nullish(),
@@ -786,6 +1053,17 @@ const createSessionRequestBaseSchema = z.object({
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
   branch: z.string().optional(),
+  /**
+   * Ordered member list for multi-repo sessions ([0] = primary). Mutually
+   * exclusive with the scalar repoOwner/repoName/branch fields and environmentId.
+   */
+  repositories: sessionRepositoriesInputSchema.optional(),
+  /**
+   * Launch from a named environment: its snapshotted repositories become the
+   * session's members and sessions.environment_id records provenance (design
+   * §5.5/§7.6). Mutually exclusive with repositories and the scalar fields.
+   */
+  environmentId: z.string().trim().min(1).nullish(),
 });
 
 export const createSessionRequestSchema = createSessionRequestBaseSchema
@@ -796,6 +1074,10 @@ export const createSessionRequestSchema = createSessionRequestBaseSchema
   .refine(hasRepositoryForBranch, {
     message: "branch requires repoOwner and repoName",
     path: ["branch"],
+  })
+  .refine(hasExclusiveSessionTarget, {
+    message: "environmentId, repositories, and repoOwner/repoName/branch are mutually exclusive",
+    path: ["repositories"],
   });
 
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
@@ -829,6 +1111,10 @@ export const createSessionInputSchema = createSessionRequestBaseSchema
   .refine(hasRepositoryForBranch, {
     message: "branch requires repoOwner and repoName",
     path: ["branch"],
+  })
+  .refine(hasExclusiveSessionTarget, {
+    message: "environmentId, repositories, and repoOwner/repoName/branch are mutually exclusive",
+    path: ["repositories"],
   });
 
 export type CreateSessionInput = z.infer<typeof createSessionInputSchema>;
@@ -842,10 +1128,19 @@ export const createMediaArtifactRequestSchema = z.object({
 
 export type CreateMediaArtifactRequest = z.infer<typeof createMediaArtifactRequestSchema>;
 
-export interface CreateSessionResponse {
-  sessionId: string;
-  status: SessionStatus;
-}
+export const createSessionResponseSchema = z.object({
+  sessionId: z.string().min(1),
+  status: sessionStatusSchema,
+});
+
+export type CreateSessionResponse = z.infer<typeof createSessionResponseSchema>;
+
+export const sendPromptResponseSchema = z.object({
+  messageId: z.string().min(1),
+  status: z.literal("queued").optional(),
+});
+
+export type SendPromptResponse = z.infer<typeof sendPromptResponseSchema>;
 
 export interface ListSessionsResponse {
   sessions: Session[];
@@ -867,7 +1162,15 @@ export const spawnChildSessionRequestSchema = z.object({
 
 export type SpawnChildSessionRequest = z.infer<typeof spawnChildSessionRequestSchema>;
 
-/** Returned by parent DO's GET /internal/spawn-context */
+/**
+ * Returned by parent DO's GET /internal/spawn-context.
+ *
+ * Deliberately scalar in v1: child sessions inherit — and are restricted
+ * to — the parent's PRIMARY repository, even for multi-repo parents (the
+ * spawn route validates against the scalar mirror). Letting children target
+ * other members requires spawnContext.repositories, a named fast-follow
+ * (design §13.13), not a v1 promise.
+ */
 export const spawnContextSchema = z.object({
   repoOwner: z.string().nullable(),
   repoName: z.string().nullable(),
@@ -991,6 +1294,169 @@ export type AutomationRunStatus = "starting" | "running" | "completed" | "failed
 // Re-export TriggerConfig for use in automation interfaces below
 import type { TriggerConfig } from "../triggers/conditions";
 
+/** Maximum repositories an automation can fan out across per invocation. */
+export const MAX_AUTOMATION_REPOSITORIES = MAX_TARGET_REPOSITORIES;
+/** Maximum repositories a session can target (alias of MAX_TARGET_REPOSITORIES). */
+export const MAX_SESSION_REPOSITORIES = MAX_TARGET_REPOSITORIES;
+
+export interface RepositoryPair {
+  repoOwner: string;
+  repoName: string;
+}
+
+export class RepositoryPairValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RepositoryPairValidationError";
+  }
+}
+
+/**
+ * Normalize an optional repository pair: trim + lowercase identifiers, map a
+ * blank pair to null. The single write-side normalization for scalar repo
+ * pairs — routes, stores, and resolvers must not roll their own.
+ *
+ * @throws RepositoryPairValidationError when only one identifier is present.
+ */
+export function normalizeOptionalRepositoryPair(
+  input: { repoOwner?: string | null; repoName?: string | null },
+  partialMessage = "repoOwner and repoName must be provided together"
+): RepositoryPair | null {
+  const repoOwner = input.repoOwner?.trim().toLowerCase() || null;
+  const repoName = input.repoName?.trim().toLowerCase() || null;
+
+  if ((repoOwner === null) !== (repoName === null)) {
+    throw new RepositoryPairValidationError(partialMessage);
+  }
+
+  return repoOwner && repoName ? { repoOwner, repoName } : null;
+}
+
+/** A repository selected on an automation (response shape, resolved). */
+export interface AutomationRepository {
+  repoOwner: string;
+  repoName: string;
+  repoId: number | null;
+  baseBranch: string | null;
+}
+
+/**
+ * Convert a resolved automation-shaped repository into a RepositoryRef.
+ * Throws when repoId is missing — refs are the fully-resolved flavor.
+ */
+export function toRepositoryRef(
+  repo: AutomationRepository,
+  fallbackBaseBranch = "main"
+): RepositoryRef {
+  if (repo.repoId == null) {
+    throw new Error(`repository ${repo.repoOwner}/${repo.repoName} is not resolved (no repoId)`);
+  }
+  return {
+    repoOwner: repo.repoOwner,
+    repoName: repo.repoName,
+    repoId: repo.repoId,
+    baseBranch: repo.baseBranch ?? fallbackBaseBranch,
+  };
+}
+
+// Aliases: the input schemas are target-agnostic (defined with the repository
+// list contracts above); existing automation imports keep working.
+export const automationRepositoryInputSchema = repositoryInputSchema;
+export type AutomationRepositoryInput = RepositoryInput;
+export const automationRepositoriesInputSchema = repositoriesInputSchema;
+
+// ==================== Environments ====================
+
+/** Maximum characters in an environment's display name. */
+export const MAX_ENVIRONMENT_NAME_LENGTH = 200;
+/** Maximum characters in an environment's description. */
+export const MAX_ENVIRONMENT_DESCRIPTION_LENGTH = 2000;
+/** Maximum Slack channel associations per environment. */
+export const MAX_ENVIRONMENT_CHANNEL_ASSOCIATIONS = 50;
+
+/**
+ * Shape check for stable environment ids (`env_` + generated suffix). Loose on
+ * the suffix alphabet — ids are opaque and the generator may change — while
+ * rejecting obviously-wrong values like display names or "owner/name" pairs.
+ * The single stance on id shape: everything that gates on "is this an
+ * environment id" (e.g. routing-rule validation) goes through this.
+ */
+export function isEnvironmentId(value: string): boolean {
+  return /^env_[A-Za-z0-9_-]+$/.test(value);
+}
+
+/**
+ * An environment's repositories share the session list contract: non-empty,
+ * deduplicated by owner/name AND by repoName (checkout paths are
+ * /workspace/{repoName}, so a name collision is rejected), and capped at
+ * MAX_TARGET_REPOSITORIES. An environment is a prebuildable repository set, so
+ * it inherits exactly the session's list rules.
+ */
+export const environmentRepositoriesInputSchema = sessionRepositoriesInputSchema;
+
+/**
+ * Slack channel ids associated with an environment (mirrors
+ * RepoMetadata.channelAssociations). Ids are opaque Slack identifiers, so the
+ * schema checks only basic hygiene; `undefined` on update leaves the set
+ * untouched, an array replaces it wholesale (empty clears).
+ */
+const environmentChannelAssociationsSchema = z
+  .array(z.string().trim().min(1).max(64))
+  .max(MAX_ENVIRONMENT_CHANNEL_ASSOCIATIONS);
+
+export const createEnvironmentInputSchema = z.object({
+  name: z.string().trim().min(1).max(MAX_ENVIRONMENT_NAME_LENGTH),
+  description: z.string().trim().max(MAX_ENVIRONMENT_DESCRIPTION_LENGTH).nullish(),
+  prebuildEnabled: z.boolean().optional(),
+  channelAssociations: environmentChannelAssociationsSchema.optional(),
+  repositories: environmentRepositoriesInputSchema,
+});
+
+export const updateEnvironmentInputSchema = z.object({
+  name: z.string().trim().min(1).max(MAX_ENVIRONMENT_NAME_LENGTH).optional(),
+  description: z.string().trim().max(MAX_ENVIRONMENT_DESCRIPTION_LENGTH).nullish(),
+  prebuildEnabled: z.boolean().optional(),
+  channelAssociations: environmentChannelAssociationsSchema.optional(),
+  repositories: environmentRepositoriesInputSchema.optional(),
+});
+
+export type CreateEnvironmentInput = z.input<typeof createEnvironmentInputSchema>;
+export type UpdateEnvironmentInput = z.input<typeof updateEnvironmentInputSchema>;
+
+/**
+ * A resolved environment repository. baseBranch is non-null (the DDL column is
+ * NOT NULL — resolution fills the repo's default branch when the request omits
+ * it); repoId is nullable to tolerate rows written before a repo resolved.
+ */
+export interface EnvironmentRepository {
+  repoOwner: string;
+  repoName: string;
+  repoId: number | null;
+  baseBranch: string;
+}
+
+/** An environment: a named, prebuildable repository set (design §7.1). */
+export interface Environment {
+  id: string;
+  name: string;
+  description: string | null;
+  prebuildEnabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  /**
+   * Slack channel ids associated with this environment (classifier
+   * channel-association stage). Absent when the environment has none.
+   */
+  channelAssociations?: string[];
+  /** Ordered repositories; [0] is the primary (sandbox/code-server settings source). */
+  repositories: EnvironmentRepository[];
+}
+
+export interface ListEnvironmentsResponse {
+  environments: Environment[];
+  total: number;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -1009,10 +1475,8 @@ export interface Automation {
   deletedAt: number | null;
   eventType: string | null;
   triggerConfig: TriggerConfig | null;
-  repoOwner: string | null;
-  repoName: string | null;
-  baseBranch: string | null;
-  repoId: number | null;
+  /** Selected repositories (0..MAX_AUTOMATION_REPOSITORIES); the canonical repo representation. */
+  repositories: AutomationRepository[];
 }
 
 export interface CreateAutomationRequest {
@@ -1026,28 +1490,28 @@ export interface CreateAutomationRequest {
   eventType?: string;
   triggerConfig?: TriggerConfig;
   sentryClientSecret?: string;
-  repoOwner?: string | null;
-  repoName?: string | null;
-  baseBranch?: string | null;
+  /** Repositories to run against (0..MAX_AUTOMATION_REPOSITORIES). */
+  repositories?: AutomationRepositoryInput[];
 }
 
 export interface UpdateAutomationRequest {
   name?: string;
   instructions?: string;
-  repoOwner?: string | null;
-  repoName?: string | null;
   scheduleCron?: string;
   scheduleTz?: string;
   model?: string;
   reasoningEffort?: string | null;
-  baseBranch?: string | null;
   eventType?: string;
   triggerConfig?: TriggerConfig;
+  /** Replaces the full repository selection when present. */
+  repositories?: AutomationRepositoryInput[];
 }
 
 export interface AutomationRun {
   id: string;
   automationId: string;
+  /** The firing this run belongs to. Never null after the 0030 backfill. */
+  invocationId: string | null;
   sessionId: string | null;
   status: AutomationRunStatus;
   skipReason: string | null;
@@ -1058,8 +1522,14 @@ export interface AutomationRun {
   createdAt: number;
   sessionTitle: string | null;
   artifactSummary: string | null;
-  triggerKey: string | null;
-  concurrencyKey: string | null;
+  /**
+   * Repository snapshot taken at firing time — history never depends on the
+   * live selection. Null for repo-less runs and legacy session-less rows.
+   */
+  repoOwner: string | null;
+  repoName: string | null;
+  repoId: number | null;
+  baseBranch: string | null;
 }
 
 export interface ListAutomationsResponse {
@@ -1067,8 +1537,40 @@ export interface ListAutomationsResponse {
   total: number;
 }
 
-export interface ListAutomationRunsResponse {
+export type AutomationInvocationSource = "schedule" | "manual" | "event";
+
+/**
+ * Derived from an invocation's child runs — never stored. Zero children ⇔
+ * skipped; `partial_failed` means the runs finished terminal with a mix of
+ * completed and failed.
+ */
+export type AutomationInvocationStatus =
+  | "starting"
+  | "running"
+  | "completed"
+  | "failed"
+  | "partial_failed"
+  | "skipped";
+
+/** One firing of an automation: 0 runs when skipped, else one run per repository. */
+export interface AutomationInvocation {
+  id: string;
+  automationId: string;
+  status: AutomationInvocationStatus;
+  source: AutomationInvocationSource;
+  /** The cron slot this firing served; null for manual/event firings. */
+  scheduledAt: number | null;
+  /** Non-null ⇔ this firing was skipped (runs is then empty). */
+  skipReason: string | null;
+  createdAt: number;
+  /** Latest child completion; null until all runs are terminal. */
+  completedAt: number | null;
   runs: AutomationRun[];
+}
+
+export interface ListAutomationInvocationsResponse {
+  invocations: AutomationInvocation[];
+  /** Counts invocations (each firing is one row regardless of fan-out width). */
   total: number;
 }
 

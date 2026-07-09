@@ -6,13 +6,7 @@
  */
 
 import { Hono } from "hono";
-import type {
-  Env,
-  RepoConfig,
-  CallbackContext,
-  ThreadSession,
-  SlackInteractionPayload,
-} from "./types";
+import type { Env, CallbackContext, ThreadSession, SlackInteractionPayload } from "./types";
 import { stripMentions, isDmDispatchable } from "./dm-utils";
 import {
   verifySlackSignature,
@@ -22,10 +16,21 @@ import {
   getChannelInfo,
   getThreadMessages,
   getUserInfo,
+  createSessionResponseSchema,
+  sendPromptResponseSchema,
+  type CreateSessionResponse,
+  type SendPromptResponse,
 } from "@open-inspect/shared";
-import { resolveUserNames } from "@open-inspect/shared";
+import { escapeMrkdwnText, resolveUserNames } from "@open-inspect/shared";
 import { createClassifier } from "./classifier";
 import { getAvailableRepos } from "./classifier/repos";
+import {
+  branchPreferenceRepo,
+  buildSessionTargetRequestFields,
+  targetId,
+  targetLabel,
+  type SlackSessionTarget,
+} from "./targets";
 import { handleChannelTrigger } from "./channel-trigger";
 import { getAuthHeaders } from "./internal-auth";
 import { callbacksRouter } from "./callbacks";
@@ -40,6 +45,7 @@ import {
   baseActionId,
   getRepoClarificationOptions,
   buildRepoClarificationBlocks,
+  resolveTargetValue,
 } from "./repo-clarification";
 import { getResolvedUserPreferences } from "./user-preferences";
 import { getAvailableModels, getSlackDefaultModel } from "./app-home/models";
@@ -51,11 +57,14 @@ const THREAD_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 type BackgroundTaskScheduler = (promise: Promise<void>) => void;
 
 /**
- * Create a session via the control plane.
+ * Create a session via the control plane. Repository targets send the scalar
+ * repoOwner/repoName (+ optional branch); environment targets send only
+ * environmentId — the create schema makes the two mutually exclusive, and the
+ * environment defines its own branches.
  */
 async function createSession(
   env: Env,
-  repo: RepoConfig,
+  target: SlackSessionTarget,
   model: string,
   reasoningEffort: string | undefined,
   branch: string | undefined,
@@ -63,12 +72,11 @@ async function createSession(
   slackUserId?: string,
   actorDisplayName?: string,
   actorEmail?: string
-): Promise<{ sessionId: string; status: string } | null> {
+): Promise<CreateSessionResponse | null> {
   const startTime = Date.now();
   const base = {
     trace_id: traceId,
-    repo_owner: repo.owner,
-    repo_name: repo.name,
+    target_id: targetId(target),
     model,
     reasoning_effort: reasoningEffort,
     branch,
@@ -80,11 +88,9 @@ async function createSession(
       method: "POST",
       headers,
       body: JSON.stringify({
-        repoOwner: repo.owner,
-        repoName: repo.name,
+        ...buildSessionTargetRequestFields(target, branch),
         model,
         reasoningEffort,
-        branch,
         spawnSource: "slack-bot",
         actorUserId: slackUserId,
         actorDisplayName,
@@ -102,15 +108,24 @@ async function createSession(
       return null;
     }
 
-    const result = (await response.json()) as { sessionId: string; status: string };
+    const result = createSessionResponseSchema.safeParse(await response.json());
+    if (!result.success) {
+      log.error("control_plane.create_session", {
+        ...base,
+        outcome: "error",
+        error: new Error("Invalid control plane create session response"),
+        duration_ms: Date.now() - startTime,
+      });
+      return null;
+    }
     log.info("control_plane.create_session", {
       ...base,
       outcome: "success",
-      session_id: result.sessionId,
+      session_id: result.data.sessionId,
       http_status: 200,
       duration_ms: Date.now() - startTime,
     });
-    return result;
+    return result.data;
   } catch (e) {
     log.error("control_plane.create_session", {
       ...base,
@@ -132,7 +147,7 @@ async function sendPrompt(
   authorId: string,
   callbackContext?: CallbackContext,
   traceId?: string
-): Promise<{ messageId: string } | null> {
+): Promise<SendPromptResponse | null> {
   const startTime = Date.now();
   const base = { trace_id: traceId, session_id: sessionId, source: "slack" };
   try {
@@ -161,15 +176,24 @@ async function sendPrompt(
       return null;
     }
 
-    const result = (await response.json()) as { messageId: string };
+    const result = sendPromptResponseSchema.safeParse(await response.json());
+    if (!result.success) {
+      log.error("control_plane.send_prompt", {
+        ...base,
+        outcome: "error",
+        error: new Error("Invalid control plane send prompt response"),
+        duration_ms: Date.now() - startTime,
+      });
+      return null;
+    }
     log.info("control_plane.send_prompt", {
       ...base,
       outcome: "success",
-      message_id: result.messageId,
+      message_id: result.data.messageId,
       http_status: 200,
       duration_ms: Date.now() - startTime,
     });
-    return result;
+    return result.data;
   } catch (e) {
     log.error("control_plane.send_prompt", {
       ...base,
@@ -262,14 +286,14 @@ async function clearThreadSession(env: Env, channel: string, threadTs: string): 
  */
 function buildThreadSession(
   sessionId: string,
-  repo: RepoConfig,
+  target: SlackSessionTarget,
   model: string,
   reasoningEffort?: string
 ): ThreadSession {
   return {
     sessionId,
-    repoId: repo.id,
-    repoFullName: repo.fullName,
+    repoId: targetId(target),
+    repoFullName: targetLabel(target),
     model,
     reasoningEffort,
     createdAt: Date.now(),
@@ -361,7 +385,7 @@ function buildWorkingMessageBlocks(
  */
 async function startSessionAndSendPrompt(
   env: Env,
-  repo: RepoConfig,
+  target: SlackSessionTarget,
   channel: string,
   threadTs: string,
   messageText: string,
@@ -381,9 +405,13 @@ async function startSessionAndSendPrompt(
   });
   const model = userPrefs.model;
   const reasoningEffort = userPrefs.reasoningEffort;
-  const globalBranch = userPrefs.branch;
-  const repoBranch = await getUserRepoBranchPreference(env, userId, repo.id);
-  const branch = repoBranch ?? globalBranch;
+  // Branch preferences are per-repo; an environment defines its own branches.
+  const preferenceRepo = branchPreferenceRepo(target);
+  let branch: string | undefined;
+  if (preferenceRepo) {
+    const repoBranch = await getUserRepoBranchPreference(env, userId, preferenceRepo.id);
+    branch = repoBranch ?? userPrefs.branch;
+  }
 
   // Best-effort user info resolution for identity linking
   let displayName: string | undefined;
@@ -405,7 +433,7 @@ async function startSessionAndSendPrompt(
   // Create session via control plane with user's preferred model, reasoning effort, and branch
   const session = await createSession(
     env,
-    repo,
+    target,
     model,
     reasoningEffort,
     branch,
@@ -429,7 +457,7 @@ async function startSessionAndSendPrompt(
     env,
     channel,
     threadTs,
-    buildThreadSession(session.sessionId, repo, model, reasoningEffort)
+    buildThreadSession(session.sessionId, target, model, reasoningEffort)
   );
 
   // Build callback context for follow-up notification
@@ -437,7 +465,7 @@ async function startSessionAndSendPrompt(
     source: "slack",
     channel,
     threadTs,
-    repoFullName: repo.fullName,
+    repoFullName: targetLabel(target),
     model,
     reasoningEffort,
   };
@@ -898,7 +926,7 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
   );
 
   // Post initial response
-  if (result.needsClarification || !result.repo) {
+  if (result.needsClarification || !result.target) {
     // Need to clarify which repo
     const repos = await getAvailableRepos(env, traceId);
 
@@ -939,20 +967,16 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
     return;
   }
 
-  // We have a confident repo match - acknowledge and start session
-  const { repo } = result;
+  // We have a confident target match - acknowledge and start session
+  const { target } = result;
+  const label = escapeMrkdwnText(targetLabel(target));
   const threadKey = threadTs || ts;
 
   // Post initial acknowledgment
-  const ackResult = await postMessage(
-    env.SLACK_BOT_TOKEN,
-    channel,
-    `Working on *${repo.fullName}*...`,
-    {
-      thread_ts: threadKey,
-      blocks: buildWorkingMessageBlocks(repo.fullName, { reasoning: result.reasoning }),
-    }
-  );
+  const ackResult = await postMessage(env.SLACK_BOT_TOKEN, channel, `Working on *${label}*...`, {
+    thread_ts: threadKey,
+    blocks: buildWorkingMessageBlocks(label, { reasoning: result.reasoning }),
+  });
 
   const ackTs = ackResult.ok ? ackResult.ts : undefined;
   scheduleStartingStatus(scheduleBackground, env, channel, threadKey, traceId);
@@ -960,7 +984,7 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
   // Create session and send prompt using shared logic
   const sessionResult = await startSessionAndSendPrompt(
     env,
-    repo,
+    target,
     channel,
     threadKey,
     messageText,
@@ -977,8 +1001,8 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
 
   // Update the acknowledgment message with session link button
   if (ackTs) {
-    await updateMessage(env.SLACK_BOT_TOKEN, channel, ackTs, `Working on *${repo.fullName}*...`, {
-      blocks: buildWorkingMessageBlocks(repo.fullName, {
+    await updateMessage(env.SLACK_BOT_TOKEN, channel, ackTs, `Working on *${label}*...`, {
+      blocks: buildWorkingMessageBlocks(label, {
         reasoning: result.reasoning,
         sessionId: sessionResult.sessionId,
         webAppUrl: env.WEB_APP_URL,
@@ -1083,10 +1107,11 @@ async function handleDirectMessage(
 }
 
 /**
- * Handle repo selection from clarification dropdown.
+ * Handle target selection (repository or environment) from the clarification
+ * dropdown or quick-pick buttons.
  */
-async function handleRepoSelection(
-  repoId: string,
+async function handleTargetSelection(
+  selectedValue: string,
   channel: string,
   messageTs: string,
   threadTs: string | undefined,
@@ -1124,39 +1149,34 @@ async function handleRepoSelection(
 
   const threadKey = threadTs || messageTs;
 
-  // Find the repo config
-  const repos = await getAvailableRepos(env, traceId);
-  const repo = repos.find((r) => r.id === repoId);
+  // Resolve the selected value against the live lists
+  const target = await resolveTargetValue(env, selectedValue, traceId);
 
-  if (!repo) {
+  if (!target) {
     await postMessage(
       env.SLACK_BOT_TOKEN,
       channel,
-      "Sorry, that repository is no longer available. Please try again.",
+      "Sorry, that repository or environment is no longer available. Please try again.",
       { thread_ts: threadTs || messageTs }
     );
     return;
   }
 
+  const label = escapeMrkdwnText(targetLabel(target));
   scheduleStartingStatus(scheduleBackground, env, channel, threadKey, traceId);
 
   // Post acknowledgment
-  const ackResult = await postMessage(
-    env.SLACK_BOT_TOKEN,
-    channel,
-    `Working on *${repo.fullName}*...`,
-    {
-      thread_ts: threadKey,
-      blocks: buildWorkingMessageBlocks(repo.fullName),
-    }
-  );
+  const ackResult = await postMessage(env.SLACK_BOT_TOKEN, channel, `Working on *${label}*...`, {
+    thread_ts: threadKey,
+    blocks: buildWorkingMessageBlocks(label),
+  });
   const ackTs = ackResult.ok ? ackResult.ts : undefined;
   scheduleStartingStatus(scheduleBackground, env, channel, threadKey, traceId);
 
   // Create session and send prompt using shared logic
   const sessionResult = await startSessionAndSendPrompt(
     env,
-    repo,
+    target,
     channel,
     threadKey,
     messageText,
@@ -1175,8 +1195,8 @@ async function handleRepoSelection(
   await createKvCacheStore(env.SLACK_KV).delete(pendingKey);
 
   if (ackTs) {
-    await updateMessage(env.SLACK_BOT_TOKEN, channel, ackTs, `Working on *${repo.fullName}*...`, {
-      blocks: buildWorkingMessageBlocks(repo.fullName, {
+    await updateMessage(env.SLACK_BOT_TOKEN, channel, ackTs, `Working on *${label}*...`, {
+      blocks: buildWorkingMessageBlocks(label, {
         sessionId: sessionResult.sessionId,
         webAppUrl: env.WEB_APP_URL,
       }),
@@ -1209,10 +1229,10 @@ async function handleSlackInteraction(
     case SELECT_REPO_QUICK_PICK_ACTION_ID: {
       if (!channel || !messageTs) return;
       // external_select selection carries selected_option; quick-pick buttons carry value.
-      const repoId = action.selected_option?.value ?? action.value;
-      if (repoId) {
-        await handleRepoSelection(
-          repoId,
+      const selectedValue = action.selected_option?.value ?? action.value;
+      if (selectedValue) {
+        await handleTargetSelection(
+          selectedValue,
           channel,
           messageTs,
           threadTs,
