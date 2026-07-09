@@ -317,6 +317,22 @@ describe("RepoClassifier", () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
+    it("routes an environment rule even when no repositories are available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([]);
+      mockGetRoutingRules.mockResolvedValue([
+        { keyword: "fullstack", target: "env_abc123", targetType: "environment" },
+      ]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("fullstack login flow");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(result.needsClarification).toBe(false);
+      expect(result.reasoning).not.toContain("No repositories");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it("asks for clarification when rules resolve to a repo and an environment", async () => {
       mockGetRoutingRules.mockResolvedValue([
         { keyword: "frontend", target: "acme/web" },
@@ -408,6 +424,20 @@ describe("RepoClassifier", () => {
       const result = await classifier.classify("anything", { channelId: "C123" });
 
       expect(result.target).toEqual({ kind: "environment", environment });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes an environment association even when no repositories are available", async () => {
+      mockGetAvailableRepos.mockResolvedValue([]);
+      const environment = { ...TEST_ENVIRONMENT, channelAssociations: ["C123"] };
+      mockGetAvailableEnvironments.mockResolvedValue([environment]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything", { channelId: "C123" });
+
+      expect(result.target).toEqual({ kind: "environment", environment });
+      expect(result.needsClarification).toBe(false);
+      expect(result.reasoning).not.toContain("No repositories");
       expect(mockFetch).not.toHaveBeenCalled();
     });
 

@@ -47,10 +47,23 @@ def is_safe_repo_segment(value: str) -> bool:
     return bool(_SAFE_SEGMENT_RE.match(value)) and value not in (".", "..")
 
 
+def is_safe_repo_owner(value: str) -> bool:
+    """True when ``value`` is a safe owner/namespace.
+
+    GitLab nested groups arrive as slash-separated namespaces (for example
+    ``group/subgroup``). Owners are not used as checkout paths, but each
+    namespace segment must still be safe before it is placed in clone URLs and
+    manifests.
+    """
+    parts = value.split("/")
+    return all(parts) and all(is_safe_repo_segment(part) for part in parts)
+
+
 def _require_safe(*, owner: str, name: str) -> None:
-    for label, value in (("repo_owner", owner), ("repo_name", name)):
-        if not is_safe_repo_segment(value):
-            raise RepoConfigError(f"unsafe {label} {value!r}: not a single path segment")
+    if not is_safe_repo_owner(owner):
+        raise RepoConfigError(f"unsafe repo_owner {owner!r}: not a slash-separated safe namespace")
+    if not is_safe_repo_segment(name):
+        raise RepoConfigError(f"unsafe repo_name {name!r}: not a single path segment")
 
 
 def _str_field(item: Mapping[str, Any], key: str) -> str:

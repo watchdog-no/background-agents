@@ -160,6 +160,29 @@ describe("EnvironmentForm", () => {
     expect(screen.getByRole("checkbox", { name: /acme\/web/i })).toBeEnabled();
   });
 
+  it("preserves nested owners when serializing selected repositories", async () => {
+    mocks.reposValue = [repo("group/subgroup", "api", 1)];
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <EnvironmentForm
+        mode="edit"
+        initialValues={environment([{ repoOwner: "group/subgroup", repoName: "api" }])}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        submitting={false}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /save environment/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositories: [{ repoOwner: "group/subgroup", repoName: "api", baseBranch: "main" }],
+      })
+    );
+  });
+
   it("requires a name and at least one repository to submit", () => {
     mocks.reposValue = [repo("acme", "backend", 1)];
     render(

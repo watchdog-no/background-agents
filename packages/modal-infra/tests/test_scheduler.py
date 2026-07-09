@@ -16,6 +16,10 @@ from src.scheduler.image_builder import (
 class TestGitLsRemoteSha:
     """Test the _git_ls_remote_sha function."""
 
+    @pytest.fixture(autouse=True)
+    def default_scm_provider(self, monkeypatch):
+        monkeypatch.delenv("SCM_PROVIDER", raising=False)
+
     def test_returns_sha_on_success(self):
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -74,6 +78,20 @@ class TestGitLsRemoteSha:
 
         args = mock_run.call_args[0][0]
         assert args[2] == "https://github.com/acme/repo.git"
+
+    def test_uses_configured_gitlab_clone_url(self, monkeypatch):
+        monkeypatch.setenv("SCM_PROVIDER", "gitlab")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "abc123\trefs/heads/main\n"
+
+        with patch(
+            "src.scheduler.image_builder.subprocess.run", return_value=mock_result
+        ) as mock_run:
+            _git_ls_remote_sha("group/subgroup", "repo", "refs/heads/main", "gl-token")
+
+        args = mock_run.call_args[0][0]
+        assert args[2] == "https://oauth2:gl-token@gitlab.com/group/subgroup/repo.git"
 
     def test_passes_head_ref_verbatim(self):
         """The ref is forwarded to git ls-remote verbatim (e.g. "HEAD")."""

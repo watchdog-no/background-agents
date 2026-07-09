@@ -296,7 +296,27 @@ export class RepoClassifier {
     // Fetch available repos dynamically
     const repos = await getAvailableRepos(this.env, traceId);
 
-    // If no repos available, return immediately
+    // Deterministic routing rules (explicit keyword → repo or environment) take
+    // precedence over everything below — including the empty-repo fallback and
+    // the single-repo shortcut, which would otherwise make environment-targeted
+    // rules unreachable in no-repo/one-repo workspaces — but never override an
+    // active thread (handled before classify is called).
+    const routed = await this.classifyByRoutingRules(message, repos, traceId);
+    if (routed) {
+      return routed;
+    }
+
+    // Channel associations are the second deterministic stage. Like routing
+    // rules, they run before fallback shortcuts so a channel associated with an
+    // environment stays reachable when the repo list is empty or has one entry.
+    const channelRouted = context?.channelId
+      ? await this.classifyByChannelAssociations(context.channelId, repos, traceId)
+      : null;
+    if (channelRouted) {
+      return channelRouted;
+    }
+
+    // If no repos are available and no environment route matched, ask the user.
     if (repos.length === 0) {
       return {
         target: null,
@@ -304,26 +324,6 @@ export class RepoClassifier {
         reasoning: "No repositories are currently available.",
         needsClarification: true,
       };
-    }
-
-    // Deterministic routing rules (explicit keyword → repo or environment) take
-    // precedence over everything below — including the single-repo shortcut,
-    // which would otherwise make environment-targeted rules unreachable in
-    // one-repo workspaces — but never override an active thread (handled before
-    // classify is called).
-    const routed = await this.classifyByRoutingRules(message, repos, traceId);
-    if (routed) {
-      return routed;
-    }
-
-    // Channel associations are the second deterministic stage. Like routing
-    // rules, they run before the single-repo shortcut so a channel associated
-    // with an environment stays reachable in one-repo workspaces.
-    const channelRouted = context?.channelId
-      ? await this.classifyByChannelAssociations(context.channelId, repos, traceId)
-      : null;
-    if (channelRouted) {
-      return channelRouted;
     }
 
     // If only one repo, skip classification

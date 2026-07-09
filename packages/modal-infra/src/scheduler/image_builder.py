@@ -68,6 +68,16 @@ class BuildError(Exception):
     pass
 
 
+def _vcs_host_and_username() -> tuple[str, str]:
+    """Return the SCM clone host/username used by build sandboxes."""
+    scm_provider = os.environ.get("SCM_PROVIDER", "github")
+    if scm_provider == "bitbucket":
+        return "bitbucket.org", "x-token-auth"
+    if scm_provider == "gitlab":
+        return "gitlab.com", "oauth2"
+    return "github.com", "x-access-token"
+
+
 def _format_build_failure_event(entry: dict, redact_values: Iterable[str] = ()) -> str | None:
     """Return a concise build failure message from a structured log entry."""
     event = entry.get("event")
@@ -602,10 +612,11 @@ def _git_ls_remote_sha(
 
     Returns the SHA string, or None on failure.
     """
+    vcs_host, clone_username = _vcs_host_and_username()
     if clone_token:
-        url = f"https://x-access-token:{clone_token}@github.com/{repo_owner}/{repo_name}.git"
+        url = f"https://{clone_username}:{clone_token}@{vcs_host}/{repo_owner}/{repo_name}.git"
     else:
-        url = f"https://github.com/{repo_owner}/{repo_name}.git"
+        url = f"https://{vcs_host}/{repo_owner}/{repo_name}.git"
 
     try:
         result = subprocess.run(

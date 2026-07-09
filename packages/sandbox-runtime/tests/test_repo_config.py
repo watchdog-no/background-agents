@@ -10,6 +10,7 @@ from sandbox_runtime.repo_config import (
     RepoEntry,
     dump_repo_manifest,
     find_repo_entry,
+    is_safe_repo_owner,
     is_safe_repo_segment,
     load_repo_manifest,
     parse_repositories,
@@ -35,6 +36,16 @@ class TestIsSafeRepoSegment:
         assert is_safe_repo_segment(value) is False
 
 
+class TestIsSafeRepoOwner:
+    @pytest.mark.parametrize("value", ["acme", "group/subgroup", ".github/platform-team"])
+    def test_accepts_slash_separated_namespaces(self, value):
+        assert is_safe_repo_owner(value) is True
+
+    @pytest.mark.parametrize("value", ["", ".", "..", "group//subgroup", "group/../app", "/group"])
+    def test_rejects_empty_or_traversal_segments(self, value):
+        assert is_safe_repo_owner(value) is False
+
+
 class TestParseRepositories:
     def test_rejects_traversal_repo_name(self):
         config = _config({"repo_owner": "acme", "repo_name": "../../etc"})
@@ -48,8 +59,17 @@ class TestParseRepositories:
         with pytest.raises(RepoConfigError, match="repo_name"):
             parse_repositories(config, workspace_path=WORKSPACE)
 
+    def test_accepts_nested_gitlab_owner(self):
+        config = _config({"repo_owner": "group/subgroup", "repo_name": "app"})
+
+        entries = parse_repositories(config, workspace_path=WORKSPACE)
+
+        assert entries == [
+            RepoEntry(owner="group/subgroup", name="app", branch="main", path=WORKSPACE / "app")
+        ]
+
     def test_rejects_unsafe_owner(self):
-        config = _config({"repo_owner": "a/b", "repo_name": "app"})
+        config = _config({"repo_owner": "group/../subgroup", "repo_name": "app"})
 
         with pytest.raises(RepoConfigError, match="repo_owner"):
             parse_repositories(config, workspace_path=WORKSPACE)

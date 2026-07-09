@@ -17,6 +17,7 @@ import { useBranches } from "@/hooks/use-branches";
 import { useRepos, type Repo } from "@/hooks/use-repos";
 import {
   RepositoryMultiSelect,
+  parseRepositorySelectionKey,
   repositorySelectionKey,
 } from "@/components/repository-multi-select";
 import { supportsRepoImages } from "@/lib/sandbox-provider";
@@ -116,7 +117,7 @@ export function EnvironmentForm({
       description: description.trim() ? description.trim() : null,
       prebuildEnabled,
       repositories: selectedKeys.map((key) => {
-        const [repoOwner = "", repoName = ""] = key.split("/");
+        const { repoOwner, repoName } = parseRepositorySelectionKey(key);
         const entry: RepositoryInput = { repoOwner, repoName };
         const branch = branchByKey[key]?.trim();
         if (branch) entry.baseBranch = branch;

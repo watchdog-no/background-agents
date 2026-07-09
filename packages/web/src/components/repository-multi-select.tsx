@@ -14,6 +14,17 @@ export function repositorySelectionKey(repoOwner: string, repoName: string): str
   return `${repoOwner}/${repoName}`.toLowerCase();
 }
 
+export function parseRepositorySelectionKey(key: string): { repoOwner: string; repoName: string } {
+  const separator = key.lastIndexOf("/");
+  if (separator <= 0 || separator === key.length - 1) {
+    return { repoOwner: "", repoName: "" };
+  }
+  return {
+    repoOwner: key.slice(0, separator),
+    repoName: key.slice(separator + 1),
+  };
+}
+
 /**
  * Ordered multi-select of repositories behind a searchable popover (the
  * automation form's selector pattern) — selection order is list order, so
@@ -58,8 +69,8 @@ export function RepositoryMultiSelect({
   const selectedNamesByKey = useMemo(() => {
     const names = new Map<string, string>();
     for (const key of selected) {
-      const name = key.split("/")[1];
-      if (name) names.set(name, key);
+      const { repoName } = parseRepositorySelectionKey(key);
+      if (repoName) names.set(repoName, key);
     }
     return names;
   }, [selected]);
