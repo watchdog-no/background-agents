@@ -101,6 +101,31 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+
+  return {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key: string) {
+      return values.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(values.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      values.delete(key);
+    },
+    setItem(key: string, value: string) {
+      values.set(key, value);
+    },
+  };
+}
+
 beforeEach(() => {
   mocks.reposValue = [repo];
   mocks.loadingReposValue = false;
@@ -108,6 +133,7 @@ beforeEach(() => {
   mocks.environmentsValue = [];
   mocks.routerPush.mockReset();
   mocks.mutateMock.mockReset();
+  vi.stubGlobal("localStorage", createMemoryStorage());
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {

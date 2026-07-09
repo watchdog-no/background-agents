@@ -497,7 +497,7 @@ describe("SlackIntegrationSettings", () => {
       const section = routingSection();
       await user.click(within(section).getByRole("button", { name: /add rule/i }));
       await user.type(within(section).getByRole("textbox", { name: /keyword/i }), "Frontend");
-      await user.click(within(section).getByRole("combobox", { name: /target repository/i }));
+      await user.click(within(section).getByRole("combobox", { name: /routing target/i }));
       await user.click(await screen.findByRole("option", { name: "acme/web" }));
       await user.click(within(section).getByRole("button", { name: /save routing rules/i }));
 
