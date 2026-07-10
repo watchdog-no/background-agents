@@ -46,7 +46,7 @@ module "linear_bot_worker" {
     { name = "WEB_APP_URL", value = local.web_app_url },
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
-    { name = "DEFAULT_MODEL", value = "openai/gpt-5.5" },
+    { name = "DEFAULT_MODEL", value = "openai/gpt-5.6-sol" },
     # Repo classification runs in-Worker via the control-plane /classify
     # endpoint. Must be an Anthropic model: OpenAI subscription OAuth routes to
     # the chatgpt.com Codex backend, which Cloudflare edge-blocks (403) from

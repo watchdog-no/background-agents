@@ -5,6 +5,8 @@
  * This ensures high performance even with hundreds of concurrent sessions.
  */
 
+import { DEFAULT_MODEL } from "@open-inspect/shared";
+
 // Shared between SCHEMA_SQL (fresh DOs) and migration 31 (existing DOs) so
 // the two paths can never diverge.
 const SESSION_REPOSITORIES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_repositories (
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS session (
   base_sha TEXT,                                    -- SHA of base branch at session start
   current_sha TEXT,                                 -- Current HEAD SHA
   opencode_session_id TEXT,                         -- OpenCode session ID (for 1:1 mapping)
-  model TEXT DEFAULT 'openai/gpt-5.5',              -- LLM model to use
+  model TEXT DEFAULT '${DEFAULT_MODEL}',            -- LLM model to use
   reasoning_effort TEXT,                            -- Session-level reasoning effort default
   status TEXT DEFAULT 'created',                    -- 'created', 'active', 'completed', 'failed', 'archived', 'cancelled'
   parent_session_id TEXT,                           -- Parent session ID (NULL for top-level)

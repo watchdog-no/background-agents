@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_MODEL } from "@open-inspect/shared";
 import {
   buildModalSandboxDashboardUrl,
   buildModalWorkspaceSlug,
@@ -177,6 +178,7 @@ describe("ModalClient", () => {
     });
 
     const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.model).toBe(DEFAULT_MODEL);
     expect(body.repositories).toBeNull();
   });
 

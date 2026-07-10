@@ -43,7 +43,7 @@ vi.mock("@/hooks/use-enabled-models", () => ({
     enabledModelOptions: [
       {
         category: "Anthropic",
-        models: [{ id: DEFAULT_MODEL, name: "Claude Sonnet 4.6", description: "" }],
+        models: [{ id: DEFAULT_MODEL, name: "GPT 5.6 Sol", description: "" }],
       },
     ],
     loading: false,
@@ -92,14 +92,12 @@ describe("NewAutomationPage template pre-fill", () => {
     expect(nameInput.value).toBe("");
   });
 
-  it("coerces an unenabled suggested model to an enabled one", () => {
-    // scan-vulnerabilities suggests anthropic/claude-opus-4-8; exclude it.
+  it("uses the enabled GPT 5.6 Sol model suggested by the vulnerability template", () => {
     enabledModelsValue = [DEFAULT_MODEL];
     search = "template=scan-vulnerabilities";
     render(<NewAutomationPage />);
 
     expect(screen.getByDisplayValue("Scan codebase for vulnerabilities")).toBeInTheDocument();
-    // Falls back to the enabled default model rather than the unenabled suggestion.
     expect(screen.getByText(formatModelNameLower(DEFAULT_MODEL))).toBeInTheDocument();
     expect(screen.queryByText("claude opus 4.8")).not.toBeInTheDocument();
   });

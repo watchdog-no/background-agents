@@ -48,8 +48,10 @@ const DEEPSEEK_MODELS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro
 const ZAI_CODING_PLAN_MODELS = ["zai-coding-plan/glm-5.2"] as const;
 
 describe("model utilities", () => {
-  it("keeps DEFAULT_MODEL valid", () => {
+  it("uses GPT 5.6 Sol with xhigh reasoning as the valid default", () => {
+    expect(DEFAULT_MODEL).toBe("openai/gpt-5.6-sol");
     expect(isValidModel(DEFAULT_MODEL)).toBe(true);
+    expect(getDefaultReasoningEffort(DEFAULT_MODEL)).toBe("xhigh");
   });
 
   it("validates all supported provider-prefixed models", () => {
@@ -142,6 +144,7 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("anthropic/claude-fable-5")).toBe("xhigh");
     expect(getDefaultReasoningEffort("openai/gpt-5.3-codex")).toBe("high");
     expect(getDefaultReasoningEffort("openai/gpt-5.5")).toBe("xhigh");
+    expect(getDefaultReasoningEffort("openai/gpt-5.6-sol")).toBe("xhigh");
     expect(getDefaultReasoningEffort("openai/gpt-5.6-luna")).toBeUndefined();
     expect(getDefaultReasoningEffort("deepseek/deepseek-v4-pro")).toBeUndefined();
   });
@@ -165,7 +168,7 @@ describe("model utilities", () => {
     });
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
-      default: undefined,
+      default: "xhigh",
     });
     expect(getReasoningConfig("openai/gpt-5.3-codex")).toEqual({
       efforts: ["low", "medium", "high", "xhigh"],

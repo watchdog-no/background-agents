@@ -39,7 +39,7 @@ from sandbox_runtime.entrypoint import AGENT_TOOLS_GATED_ON_ENV
 DEFAULT_REPO_OWNER = "watchdog-no"
 DEFAULT_REPO_NAME = "watchdog-monorepo"
 DEFAULT_PROMPT = "Please use the /code-review skill to review PR 658 in watchdog-monorepo."
-DEFAULT_MODEL = "openai/gpt-5.5"
+DEFAULT_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_OPENCODE_VERSION = "1.15.13"
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "openinspect-local-smoke"

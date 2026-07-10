@@ -231,16 +231,16 @@ describe("resolveSessionModelSettings", () => {
     expect(result.reasoningEffort).toBe("max");
   });
 
-  it("uses xhigh for the GPT 5.5 environment default", () => {
+  it("uses xhigh for the GPT 5.6 Sol environment default", () => {
     const result = resolveSessionModelSettings({
-      envDefaultModel: "openai/gpt-5.5",
+      envDefaultModel: "openai/gpt-5.6-sol",
       configModel: null,
       configReasoningEffort: null,
       allowUserPreferenceOverride: true,
       allowLabelModelOverride: true,
     });
 
-    expect(result.model).toBe("openai/gpt-5.5");
+    expect(result.model).toBe("openai/gpt-5.6-sol");
     expect(result.reasoningEffort).toBe("xhigh");
   });
 });

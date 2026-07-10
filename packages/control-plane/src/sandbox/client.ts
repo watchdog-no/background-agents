@@ -5,7 +5,7 @@
  * All requests are authenticated using HMAC-signed tokens.
  */
 
-import { generateInternalToken, type SandboxSettings } from "@open-inspect/shared";
+import { DEFAULT_MODEL, generateInternalToken, type SandboxSettings } from "@open-inspect/shared";
 import type { ImageBuildScopeKind, McpServerConfig } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import type { CorrelationContext } from "../logger";
@@ -258,7 +258,7 @@ export class ModalClient {
           snapshot_id: request.snapshotId || null,
           opencode_session_id: request.opencodeSessionId || null,
           provider: request.provider || "openai",
-          model: request.model || "openai/gpt-5.5",
+          model: request.model || DEFAULT_MODEL,
           user_env_vars: request.userEnvVars || null,
           anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
           repo_image_id: request.prebuiltImageId || null,
