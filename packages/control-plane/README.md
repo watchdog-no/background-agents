@@ -136,9 +136,39 @@ can be launched from. `POST /sessions` accepts exactly one of the scalar repo fi
 | `/environments/:id/secrets/:key`   | DELETE | Delete an environment secret                                                    |
 | `/environments/:id/secrets/import` | POST   | Copy selected keys from a repository of the env                                 |
 
-Environment image builds (prebuilds of the whole environment) are managed via
-`/environment-images/status`, `/environment-images/trigger/:id`, and the build callback routes,
-mirroring the repo-image endpoints.
+Environments can also carry integration-setting overrides — the top layer of the resolution chain
+(global defaults → primary-repo overrides → environment overrides), applied to sessions launched
+from the environment and to its image builds. Only the session-scoped integrations (`sandbox`,
+`code-server`) accept this level:
+
+| Endpoint                                        | Method         | Description                         |
+| ----------------------------------------------- | -------------- | ----------------------------------- |
+| `/integration-settings/:id/environments/:envId` | GET/PUT/DELETE | Environment-level setting overrides |
+
+### Image Builds
+
+One scope-generic route family manages prebuilt images for both scope kinds — `repo` (a
+one-repository set on the default branch, `scope_id = "owner/name"` lowercase) and `environment`
+(the environment's ordered repository set, `scope_id` = environment id). Build ids are `imgb-…`;
+statuses are `building | ready | failed | superseded`.
+
+| Endpoint                                     | Method | Description                                                                                                                                                          |
+| -------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/image-builds/build-complete`               | POST   | Success callback from image builders (public route, callback-authenticated)                                                                                          |
+| `/image-builds/build-failed`                 | POST   | Failure callback from image builders (public route, callback-authenticated)                                                                                          |
+| `/image-builds/trigger/repo/:owner/:name`    | POST   | Trigger a repo-scope build (cron, save-hooks, manual rebuild)                                                                                                        |
+| `/image-builds/trigger/environment/:id`      | POST   | Trigger an environment-scope build                                                                                                                                   |
+| `/image-builds/toggle/repo/:owner/:name`     | PUT    | Toggle repo prebuilds (`repo_metadata.image_build_enabled`); toggling on triggers a build. The environment toggle stays on the environments CRUD (`prebuildEnabled`) |
+| `/image-builds/status`                       | GET    | Cross-scope aggregate over every prebuild-enabled scope — excludes superseded, includes failed                                                                       |
+| `/image-builds/status?scope_kind=&scope_id=` | GET    | One scope's recent non-superseded builds (settings/debug view)                                                                                                       |
+| `/image-builds/enabled`                      | GET    | Cron feed: enabled scope units with repositories + fingerprint, plus the runtime floor                                                                               |
+| `/image-builds/mark-stale`                   | POST   | Mark old `building` rows failed (called by the scheduler)                                                                                                            |
+| `/image-builds/cleanup`                      | POST   | Delete old failed rows and reap superseded rows' provider artifacts                                                                                                  |
+
+Build callbacks authenticate in one of two modes, decided per provider: Modal builders call back
+with the deployment-wide internal HMAC token, while Vercel/OpenComputer build sandboxes use a
+single-use bearer token minted at trigger time — only its HMAC hash is stored on the build row,
+bound to the provider session, and consumed on the first success or failure callback.
 
 ### Automations
 
@@ -156,11 +186,15 @@ mirroring the repo-image endpoints.
 | `/automations/:id/runs/:runId`    | GET    | Get one run                                                             |
 | `/automations/:id/regenerate-key` | POST   | Rotate a webhook automation's API key                                   |
 
-An automation selects 0–10 repositories (`repositories: [{repoOwner, repoName, baseBranch?}]`;
-multi-repo selections require a schedule trigger). Each firing records one **invocation**; a
-non-skipped invocation fans out into one **run** per repository, and each run links to one session.
-Runs snapshot their repository at firing time, so editing the selection never rewrites history. See
-[docs/MULTI_REPO_AUTOMATIONS.md](../../docs/MULTI_REPO_AUTOMATIONS.md) for the design decisions.
+An automation targets repositories (`repositories: [{repoOwner, repoName, baseBranch?}]`) and/or
+environments (`environmentIds: ["env_…"]`) — up to 10 combined; multi-target selections require a
+schedule trigger, and the repo-scoped `github_event`/`linear_event` triggers take exactly one
+repository and no environments. Each firing records one **invocation**; a non-skipped invocation
+fans out into one **run** per target, and each run links to one session. A repository run works that
+repository in its own session; an environment run opens the environment's full workspace, resolved
+at launch time. Runs snapshot their target at firing time, so editing the selection never rewrites
+history. See [docs/MULTI_REPO_AUTOMATIONS.md](../../docs/MULTI_REPO_AUTOMATIONS.md) for the design
+decisions.
 
 An invocation's status is **derived from its child runs, never stored**: no children → `skipped`;
 any child starting/running → `starting`/`running`; all terminal → `completed` (none failed),
@@ -257,13 +291,22 @@ sessions index, repo metadata, and encrypted secrets:
   branch.
 - `environment_secrets`: environment-scoped secrets, mirroring `repo_secrets` (same encryption key
   and caps).
-- `environment_images`: prebuilt environment image builds — provider artifact id, per-repository
-  SHAs, a repositories fingerprint for spawn matching, and the runtime version floor check.
+- `image_builds`: the unified prebuilt-image registry for both scope kinds (`scope_kind` +
+  `scope_id` columns) — provider artifact id, per-repository SHAs (`repository_shas`), a
+  repositories fingerprint for spawn matching, the runtime version for the compatibility-floor
+  check, and callback-token state. Replaces the former `repo_images` and `environment_images` tables
+  (dropped in migrations 0039/0040; environment rows were copied over, repo rows are rebuilt by the
+  cron).
+- `integration_environment_settings`: environment-level integration-setting overrides (sandbox,
+  code-server), the top layer above `integration_settings` (global) and `integration_repo_settings`
+  (per-repo).
 
 Automations:
 
-- `automations`: trigger, schedule, model, instructions, failure counter. The repository selection
-  lives in `automation_repositories`, not on this row.
+- `automations`: trigger, schedule, model, instructions, failure counter. The target selection lives
+  in `automation_repositories` and `automation_environments`, not on this row.
+- `automation_environments`: the live environment selection (one row per targeted environment,
+  unique per `(automation_id, environment_id)`).
 - `automation_repositories`: the live repository selection (0–10 rows per automation), unique per
   `(automation_id, repo_owner, repo_name)`.
 - `automation_invocations`: one thin row per firing — source, firing-scoped `trigger_key` (event
@@ -303,14 +346,15 @@ The system uses two types of GitHub tokens:
 | GitHub App Token | Clone, fetch, push | Brokered to credential helper | All repos where App is installed |
 | User OAuth Token | Create PRs         | Server-only                   | User's accessible repos          |
 
-Fresh and repo-image sandboxes do not receive a long-lived `GITHUB_TOKEN`, `GITHUB_APP_TOKEN`, or
-`VCS_CLONE_TOKEN` for normal git operations. Git invokes the sandbox credential helper, which calls
-`/sessions/:id/scm-credentials` with the sandbox auth token and receives short-lived credentials on
-demand. Legacy snapshots and one-shot image builds may still receive env-token fallbacks for
-compatibility. The helper preserves the existing installation-wide model by serving credentials for
-HTTPS git requests to the configured SCM host, including setup/start hooks that clone auxiliary
-private repos. This avoids stale embedded credentials in long-running sessions and Daytona
-persistent resumes; Modal snapshot restores still mint a fresh fallback token during restore.
+Fresh and prebuilt-image sandboxes do not receive a long-lived `GITHUB_TOKEN`, `GITHUB_APP_TOKEN`,
+or `VCS_CLONE_TOKEN` for normal git operations. Git invokes the sandbox credential helper, which
+calls `/sessions/:id/scm-credentials` with the sandbox auth token and receives short-lived
+credentials on demand. Legacy snapshots and one-shot image builds may still receive env-token
+fallbacks for compatibility. The helper preserves the existing installation-wide model by serving
+credentials for HTTPS git requests to the configured SCM host, including setup/start hooks that
+clone auxiliary private repos. This avoids stale embedded credentials in long-running sessions and
+Daytona persistent resumes; Modal snapshot restores still mint a fresh fallback token during
+restore.
 
 If a `create-pr` request is triggered by a participant without a user OAuth token (for example,
 Slack-created or Google-login sessions), the sandbox can still push the branch with brokered GitHub

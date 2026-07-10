@@ -3,34 +3,26 @@
 import { useState } from "react";
 import useSWR, { mutate } from "swr";
 import { toast } from "sonner";
-import type { Environment } from "@open-inspect/shared";
+import type { Environment, ImageBuildRecordView } from "@open-inspect/shared";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { RefreshIcon } from "@/components/ui/icons";
+import { parsePrimaryBuildSha } from "@/lib/image-builds";
 import { formatSessionRepositoriesLabel } from "@/lib/repo-label";
 import { supportsRepoImages } from "@/lib/sandbox-provider";
 import { useEnvironments, ENVIRONMENTS_KEY } from "@/hooks/use-environments";
 import { EnvironmentForm, type EnvironmentFormValues } from "./environment-form";
+import { EnvironmentIntegrationSettings } from "./environment-integration-settings";
 import { EnvironmentSecretsImport } from "./environment-secrets-import";
 import { ImageBuildStatus, formatReadyDetails } from "./image-build-status";
 import { SecretsEditor } from "@/components/secrets-editor";
 
-/** Latest environment image row as returned by /api/environments/[id]/images. */
-interface EnvironmentImageRow {
-  id: string;
-  status: "building" | "ready" | "failed";
-  repository_shas: string;
-  build_duration_seconds: number | null;
-  error_message: string | null;
-  created_at: number;
-}
-
 type View =
   | { mode: "list" }
   | { mode: "create" }
-  | { mode: "edit"; environmentId: string; tab: "configuration" | "secrets" };
+  | { mode: "edit"; environmentId: string; tab: "configuration" | "secrets" | "overrides" };
 
 export function EnvironmentsSettings() {
   const { environments, loading } = useEnvironments();
@@ -208,7 +200,7 @@ export function EnvironmentsSettings() {
         </p>
 
         <div className="flex items-center gap-1 border-b border-border-muted mb-4">
-          {(["configuration", "secrets"] as const).map((tab) => (
+          {(["configuration", "secrets", "overrides"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setView({ ...view, tab })}
@@ -233,7 +225,7 @@ export function EnvironmentsSettings() {
             onCancel={() => setView({ mode: "list" })}
             submitting={submitting}
           />
-        ) : (
+        ) : view.tab === "secrets" ? (
           <div>
             <p className="text-xs text-muted-foreground">
               Sessions launched from this environment get global secrets plus these — repository
@@ -242,6 +234,18 @@ export function EnvironmentsSettings() {
             </p>
             <SecretsEditor scope="environment" environmentId={environment.id} />
             <EnvironmentSecretsImport
+              environmentId={environment.id}
+              repositories={environment.repositories}
+            />
+            <div className="mt-4">
+              <Button variant="outline" size="xs" onClick={() => setView({ mode: "list" })}>
+                Back to environments
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <EnvironmentIntegrationSettings
               environmentId={environment.id}
               repositories={environment.repositories}
             />
@@ -390,29 +394,13 @@ function environmentImagesKey(environmentId: string): string {
   return `/api/environments/${environmentId}/images`;
 }
 
-/** The primary repository's baseSha out of the build's provenance document. */
-function parsePrimaryBuildSha(repositoryShas: string): string | null {
-  try {
-    const parsed: unknown = JSON.parse(repositoryShas);
-    if (!Array.isArray(parsed)) return null;
-    const primary: unknown = parsed[0];
-    if (primary && typeof primary === "object" && "baseSha" in primary) {
-      const sha = (primary as { baseSha?: unknown }).baseSha;
-      return typeof sha === "string" ? sha : null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Latest build status for an environment. Fetches only while prebuilds are
  * enabled — disabled environments show the static label. Presentation is the
  * shared ImageBuildStatus.
  */
 function EnvironmentImageStatus({ environment }: { environment: Environment }) {
-  const { data } = useSWR<{ images: EnvironmentImageRow[] }>(
+  const { data } = useSWR<{ images: ImageBuildRecordView[] }>(
     environment.prebuildEnabled ? environmentImagesKey(environment.id) : null
   );
 
