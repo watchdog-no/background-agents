@@ -21,7 +21,9 @@ vi.mock("./repos", () => ({
   getRoutingRules: mockGetRoutingRules,
 }));
 
-vi.mock("./environments", () => ({
+vi.mock("./environments", async (importOriginal) => ({
+  // Keep the pure exports (buildEnvironmentDescriptions) real; mock the fetchers.
+  ...((await importOriginal()) as object),
   getAvailableEnvironments: mockGetAvailableEnvironments,
   // Imported by targets.ts (via ../targets); unused in these tests.
   getEnvironmentById: vi.fn(),
@@ -82,6 +84,20 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function mockClassifyResult(input: {
+  targetId: string | null;
+  confidence: string;
+  reasoning: string;
+  alternatives: string[];
+}): void {
+  mockFetch.mockResolvedValue(jsonResponse({ ...input, repoId: input.targetId }));
+}
+
+function sentPrompt(): string {
+  const init = mockFetch.mock.calls[0][1] as RequestInit;
+  return JSON.parse(init.body as string).prompt as string;
+}
+
 function classifiedRepoFullName(result: {
   target: { kind: string; repo?: { fullName: string } } | null;
 }): string | undefined {
@@ -94,18 +110,16 @@ describe("RepoClassifier", () => {
     mockGetAvailableRepos.mockResolvedValue(TEST_REPOS);
     mockGetRoutingRules.mockResolvedValue([]);
     mockGetAvailableEnvironments.mockResolvedValue([]);
-    mockBuildRepoDescriptions.mockResolvedValue("- acme/prod\n- acme/web");
+    mockBuildRepoDescriptions.mockReturnValue("- acme/prod\n- acme/web");
   });
 
   it("uses the /classify endpoint output for a confident match", async () => {
-    mockFetch.mockResolvedValue(
-      jsonResponse({
-        repoId: "acme/prod",
-        confidence: "high",
-        reasoning: "The message explicitly mentions prod.",
-        alternatives: [],
-      })
-    );
+    mockClassifyResult({
+      targetId: "acme/prod",
+      confidence: "high",
+      reasoning: "The message explicitly mentions prod.",
+      alternatives: [],
+    });
 
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("please fix prod slack alerts", undefined, "trace-1");
@@ -114,8 +128,7 @@ describe("RepoClassifier", () => {
     expect(result.confidence).toBe("high");
     expect(result.needsClarification).toBe(false);
     expect(result.failureReason).toBeUndefined();
-
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe("https://internal/classify");
     const sentBody = JSON.parse((init as RequestInit).body as string);
@@ -215,14 +228,12 @@ describe("RepoClassifier", () => {
 
     it("skips a rule whose target is not accessible and falls through to the endpoint", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/ghost" }]);
-      mockFetch.mockResolvedValue(
-        jsonResponse({
-          repoId: "acme/web",
-          confidence: "high",
-          reasoning: "Mentions frontend.",
-          alternatives: [],
-        })
-      );
+      mockClassifyResult({
+        targetId: "acme/web",
+        confidence: "high",
+        reasoning: "Mentions frontend.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("frontend issue");
@@ -233,14 +244,12 @@ describe("RepoClassifier", () => {
 
     it("falls through to the endpoint when no rule keyword is present", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
-      mockFetch.mockResolvedValue(
-        jsonResponse({
-          repoId: "acme/prod",
-          confidence: "high",
-          reasoning: "Mentions prod.",
-          alternatives: [],
-        })
-      );
+      mockClassifyResult({
+        targetId: "acme/prod",
+        confidence: "high",
+        reasoning: "Mentions prod.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("update the deployment config");
@@ -294,13 +303,14 @@ describe("RepoClassifier", () => {
       expect(result.reasoning).not.toContain("<!channel>");
     });
 
-    it("does not fetch environments when no matched rule targets one", async () => {
+    it("loads the target catalog exactly once per classification", async () => {
       mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
 
       const classifier = new RepoClassifier(TEST_ENV);
       await classifier.classify("frontend tweak");
 
-      expect(mockGetAvailableEnvironments).not.toHaveBeenCalled();
+      expect(mockGetAvailableRepos).toHaveBeenCalledOnce();
+      expect(mockGetAvailableEnvironments).toHaveBeenCalledOnce();
     });
 
     it("routes an environment rule even when only one repository is available", async () => {
@@ -357,14 +367,12 @@ describe("RepoClassifier", () => {
         { keyword: "fullstack", target: "env_deleted", targetType: "environment" },
       ]);
       mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
-      mockFetch.mockResolvedValue(
-        jsonResponse({
-          repoId: "acme/web",
-          confidence: "high",
-          reasoning: "Mentions the web app.",
-          alternatives: [],
-        })
-      );
+      mockClassifyResult({
+        targetId: "acme/web",
+        confidence: "high",
+        reasoning: "Mentions the web app.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("fullstack web app issue");
@@ -463,14 +471,12 @@ describe("RepoClassifier", () => {
       mockGetAvailableRepos.mockResolvedValue(
         TEST_REPOS.map((repo) => ({ ...repo, channelAssociations: ["C123"] }))
       );
-      mockFetch.mockResolvedValue(
-        jsonResponse({
-          repoId: "acme/web",
-          confidence: "high",
-          reasoning: "Mentions the web app.",
-          alternatives: [],
-        })
-      );
+      mockClassifyResult({
+        targetId: "acme/web",
+        confidence: "high",
+        reasoning: "Mentions the web app.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("web app issue", { channelId: "C123" });
@@ -478,21 +484,145 @@ describe("RepoClassifier", () => {
       expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).toHaveBeenCalledOnce();
     });
+  });
 
-    it("does not consult environments for messages outside a channel context", async () => {
-      mockFetch.mockResolvedValue(
-        jsonResponse({
-          repoId: "acme/web",
-          confidence: "high",
-          reasoning: "Mentions the web app.",
-          alternatives: [],
-        })
-      );
+  describe("LLM environment candidates", () => {
+    it("offers environments to the LLM and resolves a returned environment id", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockClassifyResult({
+        targetId: "env_abc123",
+        confidence: "high",
+        reasoning: "Spans both repositories of the full-stack environment.",
+        alternatives: [],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("update login across web and prod");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(result.needsClarification).toBe(false);
+      expect(sentPrompt()).toContain("## Available Environments");
+      expect(sentPrompt()).toContain("env_abc123");
+      expect(sentPrompt()).toContain("full-stack");
+    });
+
+    it("omits the environments prompt section when none exist", async () => {
+      mockClassifyResult({
+        targetId: "acme/web",
+        confidence: "high",
+        reasoning: "Mentions the web app.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       await classifier.classify("web app issue");
 
-      expect(mockGetAvailableEnvironments).not.toHaveBeenCalled();
+      expect(sentPrompt()).not.toContain("## Available Environments");
+    });
+
+    it("resolves an environment echoed by name instead of id", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockClassifyResult({
+        targetId: "Full-Stack",
+        confidence: "high",
+        reasoning: "Names the environment.",
+        alternatives: [],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("work on full-stack");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+    });
+
+    it("suppresses the single-repo shortcut when environments exist", async () => {
+      mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockClassifyResult({
+        targetId: "env_abc123",
+        confidence: "high",
+        reasoning: "Spans several repositories.",
+        alternatives: [],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("touch everything");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    it("keeps the single-repo shortcut when no environments exist", async () => {
+      mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything at all");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
+      expect(result.reasoning).toBe("Only one repository is available.");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("resolves mixed alternatives, deduplicated and excluding the match", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockClassifyResult({
+        targetId: "acme/prod",
+        confidence: "medium",
+        reasoning: "Probably prod, could be broader.",
+        alternatives: ["env_abc123", "acme/web", "ACME/WEB", "acme/prod", "env_gone"],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("deploy the service");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
+      expect(result.alternatives).toEqual([
+        { kind: "environment", environment: TEST_ENVIRONMENT },
+        { kind: "repository", repo: TEST_REPOS[1] },
+      ]);
+      expect(result.needsClarification).toBe(true);
+    });
+
+    it("still classifies into environments when the repo list is empty", async () => {
+      // A degraded repo fetch (fail-open []) must not strand intact environments.
+      mockGetAvailableRepos.mockResolvedValue([]);
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+      mockClassifyResult({
+        targetId: "env_abc123",
+        confidence: "high",
+        reasoning: "Names the environment.",
+        alternatives: [],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("work on full-stack");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+    });
+
+    it("asks for clarification when neither repos nor environments exist", async () => {
+      mockGetAvailableRepos.mockResolvedValue([]);
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("anything");
+
+      expect(result.target).toBeNull();
+      expect(result.reasoning).toBe("No repositories or environments are currently available.");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("escapes the LLM reasoning for mrkdwn rendering", async () => {
+      mockClassifyResult({
+        targetId: "acme/web",
+        confidence: "high",
+        reasoning: "Mentions <!channel> & the web app.",
+        alternatives: [],
+      });
+
+      const classifier = new RepoClassifier(TEST_ENV);
+      const result = await classifier.classify("web app issue");
+
+      expect(result.reasoning).toBe("Mentions &lt;!channel&gt; &amp; the web app.");
     });
   });
 });

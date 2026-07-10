@@ -1,4 +1,4 @@
-"""Tests for the async image builder (v2)."""
+"""Tests for the async image build worker."""
 
 import json
 import time
@@ -11,13 +11,12 @@ import pytest
 from sandbox_runtime.auth.internal import generate_internal_token, verify_internal_token
 from src.sandbox.manager import SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS
 from src.scheduler.image_builder import (
-    CACHE_BUSTER,
     CALLBACK_BACKOFF_BASE,
     CALLBACK_MAX_RETRIES,
     BuildError,
     _callback_with_retry,
     _stream_build_logs,
-    build_repo_image,
+    build_image,
 )
 
 
@@ -344,8 +343,13 @@ class TestBuildError:
         assert str(err) == "sandbox exited with code 1"
 
 
-class TestBuildRepoImage:
-    """Test the async repo image build worker."""
+REPOSITORIES = [{"repo_owner": "acme", "repo_name": "repo", "branch": "main"}]
+REPOSITORY_SHAS = [{"repoOwner": "acme", "repoName": "repo", "baseSha": "abc123"}]
+RUNTIME_VERSION = "v53-list-native-runtime"
+
+
+class TestBuildImage:
+    """Test the async scope image build worker."""
 
     @staticmethod
     def _async_stdout(lines):
@@ -366,8 +370,20 @@ class TestBuildRepoImage:
         terminate = SimpleNamespace(aio=terminate_aio)
         if stdout_lines is None:
             stdout_lines = [
-                json.dumps({"event": "git.sync_complete", "head_sha": "abc123"}),
-                json.dumps({"event": "image_build.complete", "duration_ms": 5000}),
+                json.dumps(
+                    {
+                        "event": "git.sync_complete",
+                        "head_sha": "abc123",
+                        "repository_shas": REPOSITORY_SHAS,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "image_build.complete",
+                        "duration_ms": 5000,
+                        "runtime_version": RUNTIME_VERSION,
+                    }
+                ),
             ]
         sandbox = SimpleNamespace(
             stdout=self._async_stdout(stdout_lines),
@@ -392,11 +408,12 @@ class TestBuildRepoImage:
                 return_value=True,
             ) as callback,
         ):
-            await build_repo_image.local(
-                repo_owner="acme",
-                repo_name="repo",
-                default_branch="main",
-                callback_url="https://cp.test/repo-images/build-complete",
+            await build_image.local(
+                scope_kind="repo",
+                scope_id="acme/repo",
+                repositories=REPOSITORIES,
+                callback_url="https://cp.test/image-builds/build-complete",
+                failure_callback_url="https://cp.test/image-builds/build-failed",
                 build_id="img-1",
             )
 
@@ -406,8 +423,8 @@ class TestBuildRepoImage:
         callback_payload = callback.await_args.args[1]
         assert callback_payload["build_id"] == "img-1"
         assert callback_payload["provider_image_id"] == "im-test"
-        assert callback_payload["base_sha"] == "abc123"
-        assert callback_payload["sandbox_version"] == CACHE_BUSTER
+        assert callback_payload["repository_shas"] == REPOSITORY_SHAS
+        assert callback_payload["runtime_version"] == RUNTIME_VERSION
 
     @pytest.mark.asyncio
     async def test_forwards_build_timeout_to_create_build_sandbox(self):
@@ -425,11 +442,12 @@ class TestBuildRepoImage:
                 return_value=True,
             ),
         ):
-            await build_repo_image.local(
-                repo_owner="acme",
-                repo_name="repo",
-                default_branch="main",
-                callback_url="https://cp.test/repo-images/build-complete",
+            await build_image.local(
+                scope_kind="repo",
+                scope_id="acme/repo",
+                repositories=REPOSITORIES,
+                callback_url="https://cp.test/image-builds/build-complete",
+                failure_callback_url="https://cp.test/image-builds/build-failed",
                 build_id="img-1",
                 build_timeout_seconds=2400,
             )
@@ -454,11 +472,12 @@ class TestBuildRepoImage:
                 return_value=True,
             ),
         ):
-            await build_repo_image.local(
-                repo_owner="acme",
-                repo_name="repo",
-                default_branch="main",
-                callback_url="https://cp.test/repo-images/build-complete",
+            await build_image.local(
+                scope_kind="repo",
+                scope_id="acme/repo",
+                repositories=REPOSITORIES,
+                callback_url="https://cp.test/image-builds/build-complete",
+                failure_callback_url="https://cp.test/image-builds/build-failed",
                 build_id="img-1",
             )
 
@@ -484,11 +503,12 @@ class TestBuildRepoImage:
                 return_value=True,
             ) as callback,
         ):
-            await build_repo_image.local(
-                repo_owner="acme",
-                repo_name="repo",
-                default_branch="main",
-                callback_url="https://cp.test/repo-images/build-complete",
+            await build_image.local(
+                scope_kind="repo",
+                scope_id="acme/repo",
+                repositories=REPOSITORIES,
+                callback_url="https://cp.test/image-builds/build-complete",
+                failure_callback_url="https://cp.test/image-builds/build-failed",
                 build_id="img-1",
             )
 
@@ -496,7 +516,7 @@ class TestBuildRepoImage:
         terminate_aio.assert_awaited_once()
         callback.assert_awaited_once()
         failure_url, failure_payload = callback.await_args.args
-        assert failure_url == "https://cp.test/repo-images/build-failed"
+        assert failure_url == "https://cp.test/image-builds/build-failed"
         assert failure_payload == {
             "build_id": "img-1",
             "error": "Timed out waiting for image to be created",
@@ -534,11 +554,12 @@ class TestBuildRepoImage:
                 return_value=True,
             ) as callback,
         ):
-            await build_repo_image.local(
-                repo_owner="acme",
-                repo_name="repo",
-                default_branch="main",
-                callback_url="https://cp.test/repo-images/build-complete",
+            await build_image.local(
+                scope_kind="repo",
+                scope_id="acme/repo",
+                repositories=REPOSITORIES,
+                callback_url="https://cp.test/image-builds/build-complete",
+                failure_callback_url="https://cp.test/image-builds/build-failed",
                 build_id="img-1",
                 user_env_vars={"PIN": "123", "API_TOKEN": "abcd1234"},
             )
@@ -547,7 +568,7 @@ class TestBuildRepoImage:
         terminate_aio.assert_awaited_once()
         callback.assert_awaited_once()
         failure_url, failure_payload = callback.await_args.args
-        assert failure_url == "https://cp.test/repo-images/build-failed"
+        assert failure_url == "https://cp.test/image-builds/build-failed"
         assert failure_payload == {
             "build_id": "img-1",
             "error": "Build sandbox exited without completing: setup.failed: npm install failed: PIN=*** TOKEN=***",

@@ -160,7 +160,7 @@ One session can work across several repositories in a single sandbox:
 - **Environments** — Save a repository set as a named environment with its own secrets scope and
   optional prebuilt images, then launch it from the picker like any repository
 - See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#environments) for the model and
-  [docs/IMAGE_PREBUILD.md](docs/IMAGE_PREBUILD.md#environment-images) for environment prebuilds
+  [docs/IMAGE_PREBUILD.md](docs/IMAGE_PREBUILD.md) for environment prebuilds
 
 ### Multiplayer Sessions
 
@@ -186,12 +186,12 @@ await configureGitIdentity({
 
 Choose the AI model that fits your task, with per-session reasoning effort controls:
 
-| Provider         | Models                                                               |
-| ---------------- | -------------------------------------------------------------------- |
-| Anthropic        | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5      |
-| OpenAI           | GPT 5.2, GPT 5.4, GPT 5.5, GPT 5.2 Codex, 5.3 Codex, 5.3 Codex Spark |
-| OpenCode Zen     | Kimi K2.5/K2.6, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1 (opt-in)        |
-| Z.AI Coding Plan | GLM 5.2 (opt-in)                                                     |
+| Provider         | Models                                                          |
+| ---------------- | --------------------------------------------------------------- |
+| Anthropic        | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5 |
+| OpenAI           | GPT 5.4, GPT 5.5, 5.3 Codex, 5.3 Codex Spark                    |
+| OpenCode Zen     | Kimi K2.5/K2.6, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1 (opt-in)   |
+| Z.AI Coding Plan | GLM 5.2 (opt-in)                                                |
 
 Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
 work with your existing ChatGPT subscription via OAuth. See
@@ -268,9 +268,9 @@ docker compose up -d postgres redis
 ```
 
 - `setup.sh` runs for image builds and fresh sessions
-- `setup.sh` is skipped for repo-image and snapshot-restore starts
+- `setup.sh` is skipped for prebuilt-image and snapshot-restore starts
 - `setup.sh` failures are non-fatal for fresh sessions, but fatal in image build mode
-- `start.sh` runs for every non-build session startup (fresh, repo-image, snapshot-restore)
+- `start.sh` runs for every non-build session startup (fresh, prebuilt-image, snapshot-restore)
 - `start.sh` failures are strict: if present and it fails, session startup fails
 - Default timeouts:
   - `SETUP_TIMEOUT_SECONDS` (default `300`)

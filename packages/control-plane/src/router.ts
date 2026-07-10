@@ -26,11 +26,10 @@ import { integrationSettingsRoutes } from "./routes/integration-settings";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
 import { reposRoutes } from "./routes/repos";
 import { classifyRoutes } from "./routes/classify";
-import { repoImageRoutes } from "./routes/repo-images";
 import { secretsRoutes } from "./routes/secrets";
 import { environmentRoutes } from "./routes/environments";
 import { environmentSecretsRoutes } from "./routes/environment-secrets";
-import { environmentImageRoutes } from "./routes/environment-images";
+import { imageBuildRoutes } from "./routes/image-builds";
 import { automationRoutes } from "./routes/automations";
 import { mcpServerRoutes } from "./routes/mcp-servers";
 import { analyticsRoutes } from "./routes/analytics";
@@ -60,12 +59,10 @@ const PUBLIC_ROUTES: RegExp[] = [
   /^\/health$/,
   /^\/webhooks\/sentry\/[^/]+$/,
   /^\/webhooks\/automation\/[^/]+$/,
-  /^\/repo-images\/build-complete$/,
-  /^\/repo-images\/build-failed$/,
-  // Environment-image callbacks authenticate inside the workflow (internal
-  // HMAC for provider_image mode), same as the repo-image callbacks above.
-  /^\/environment-images\/build-complete$/,
-  /^\/environment-images\/build-failed$/,
+  // Image-build callbacks authenticate inside the workflow (internal HMAC
+  // for provider_image mode, per-build bearer token for provider_session).
+  /^\/image-builds\/build-complete$/,
+  /^\/image-builds\/build-failed$/,
 ];
 
 /**
@@ -324,19 +321,18 @@ const routes: Route[] = [
   // Secrets
   ...secretsRoutes,
 
-  // Environments (Phase-2 launch unit; internal-HMAC only, web BFF proxied)
+  // Environments (Phase-2 session target; internal-HMAC only, web BFF proxied)
   ...environmentRoutes,
   ...environmentSecretsRoutes,
-  ...environmentImageRoutes,
+
+  // Image builds (scope-generic)
+  ...imageBuildRoutes,
 
   // Model preferences
   ...modelPreferencesRoutes,
 
   // Integration settings
   ...integrationSettingsRoutes,
-
-  // Repo image builds
-  ...repoImageRoutes,
 
   // Automations
   ...automationRoutes,

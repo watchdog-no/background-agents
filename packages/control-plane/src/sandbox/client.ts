@@ -6,7 +6,7 @@
  */
 
 import { generateInternalToken, type SandboxSettings } from "@open-inspect/shared";
-import type { McpServerConfig } from "@open-inspect/shared";
+import type { ImageBuildScopeKind, McpServerConfig } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import type { CorrelationContext } from "../logger";
 import { buildSessionConfig, toRepositoryConfigPayload } from "./sandbox-env";
@@ -130,30 +130,15 @@ export interface SnapshotSandboxResponse {
   error?: string;
 }
 
-export interface BuildRepoImageRequest {
-  repoOwner: string;
-  repoName: string;
-  defaultBranch: string;
+export interface BuildImageRequest {
+  /** Scope kind ("repo" | "environment") — accepted by Modal for logging only. */
+  scopeKind: ImageBuildScopeKind;
+  /** Scope id (lowercase owner/name or environment id) — logging only. */
+  scopeId: string;
   buildId: string;
   callbackUrl: string;
-  userEnvVars?: Record<string, string>;
-  /**
-   * Build sandbox lifetime, in seconds. Already capped at
-   * MAX_BUILD_TIMEOUT_SECONDS by the trigger.
-   * Omitted → Modal applies DEFAULT_BUILD_TIMEOUT_SECONDS.
-   */
-  buildTimeoutSeconds?: number;
-}
-
-export interface BuildRepoImageResponse {
-  buildId: string;
-  status: string;
-}
-
-export interface BuildEnvironmentImageRequest {
-  environmentId: string;
-  buildId: string;
-  callbackUrl: string;
+  /** Failure callback URL, sent explicitly so the worker never derives it from callbackUrl. */
+  failureCallbackUrl: string;
   /** Repositories in position order ([0] = primary), cloned at their base branches. */
   repositories: Array<{ repoOwner: string; repoName: string; baseBranch: string }>;
   userEnvVars?: Record<string, string>;
@@ -165,7 +150,7 @@ export interface BuildEnvironmentImageRequest {
   buildTimeoutSeconds?: number;
 }
 
-export interface BuildEnvironmentImageResponse {
+export interface BuildImageResponse {
   buildId: string;
   status: string;
 }
@@ -209,8 +194,7 @@ export class ModalClient {
   private healthUrl: string;
   private snapshotSandboxUrl: string;
   private restoreSandboxUrl: string;
-  private buildRepoImageUrl: string;
-  private buildEnvironmentImageUrl: string;
+  private buildImageUrl: string;
   private deleteProviderImageUrl: string;
   private secret: string;
 
@@ -227,8 +211,7 @@ export class ModalClient {
     this.healthUrl = `${baseUrl}-api-health.modal.run`;
     this.snapshotSandboxUrl = `${baseUrl}-api-snapshot-sandbox.modal.run`;
     this.restoreSandboxUrl = `${baseUrl}-api-restore-sandbox.modal.run`;
-    this.buildRepoImageUrl = `${baseUrl}-api-build-repo-image.modal.run`;
-    this.buildEnvironmentImageUrl = `${baseUrl}-api-build-environment-image.modal.run`;
+    this.buildImageUrl = `${baseUrl}-api-build-image.modal.run`;
     this.deleteProviderImageUrl = `${baseUrl}-api-delete-provider-image.modal.run`;
   }
 
@@ -501,91 +484,28 @@ export class ModalClient {
   }
 
   /**
-   * Trigger an async image build on Modal.
+   * Trigger an async scope image build on Modal (design §4).
    */
-  async buildRepoImage(
-    request: BuildRepoImageRequest,
+  async buildImage(
+    request: BuildImageRequest,
     correlation?: CorrelationContext
-  ): Promise<BuildRepoImageResponse> {
+  ): Promise<BuildImageResponse> {
     const startTime = Date.now();
-    const endpoint = "buildRepoImage";
+    const endpoint = "buildImage";
     let httpStatus: number | undefined;
     let outcome: "success" | "error" = "error";
 
     try {
       const headers = await this.getPostHeaders(correlation);
-      const response = await fetch(this.buildRepoImageUrl, {
+      const response = await fetch(this.buildImageUrl, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          repo_owner: request.repoOwner,
-          repo_name: request.repoName,
-          default_branch: request.defaultBranch,
+          scope_kind: request.scopeKind,
+          scope_id: request.scopeId,
           build_id: request.buildId,
           callback_url: request.callbackUrl,
-          user_env_vars: request.userEnvVars,
-          build_timeout_seconds: request.buildTimeoutSeconds ?? null,
-        }),
-      });
-
-      httpStatus = response.status;
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new ModalApiError(`Modal API error: ${response.status} ${text}`, response.status);
-      }
-
-      const result = (await response.json()) as ModalApiResponse<{
-        build_id: string;
-        status: string;
-      }>;
-
-      if (!result.success || !result.data) {
-        throw new Error(`Modal API error: ${result.error || "Unknown error"}`);
-      }
-
-      outcome = "success";
-      return {
-        buildId: result.data.build_id,
-        status: result.data.status,
-      };
-    } finally {
-      log.info("modal.request", {
-        event: "modal.request",
-        endpoint,
-        build_id: request.buildId,
-        repo_owner: request.repoOwner,
-        repo_name: request.repoName,
-        trace_id: correlation?.trace_id,
-        request_id: correlation?.request_id,
-        http_status: httpStatus,
-        duration_ms: Date.now() - startTime,
-        outcome,
-      });
-    }
-  }
-
-  /**
-   * Trigger an async environment image build on Modal (design §7.3).
-   */
-  async buildEnvironmentImage(
-    request: BuildEnvironmentImageRequest,
-    correlation?: CorrelationContext
-  ): Promise<BuildEnvironmentImageResponse> {
-    const startTime = Date.now();
-    const endpoint = "buildEnvironmentImage";
-    let httpStatus: number | undefined;
-    let outcome: "success" | "error" = "error";
-
-    try {
-      const headers = await this.getPostHeaders(correlation);
-      const response = await fetch(this.buildEnvironmentImageUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          environment_id: request.environmentId,
-          build_id: request.buildId,
-          callback_url: request.callbackUrl,
+          failure_callback_url: request.failureCallbackUrl,
           repositories: request.repositories.map(toRepositoryConfigPayload),
           user_env_vars: request.userEnvVars,
           build_timeout_seconds: request.buildTimeoutSeconds ?? null,
@@ -618,7 +538,8 @@ export class ModalClient {
         event: "modal.request",
         endpoint,
         build_id: request.buildId,
-        environment_id: request.environmentId,
+        scope_kind: request.scopeKind,
+        scope_id: request.scopeId,
         trace_id: correlation?.trace_id,
         request_id: correlation?.request_id,
         http_status: httpStatus,

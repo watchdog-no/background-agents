@@ -18,11 +18,12 @@ export const VALID_MODELS = [
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
   "anthropic/claude-fable-5",
-  "openai/gpt-5.2",
   "openai/gpt-5.4",
   "openai/gpt-5.5",
   "openai/gpt-5.5-pro",
-  "openai/gpt-5.2-codex",
+  "openai/gpt-5.6-sol",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-codex-spark",
   "opencode/kimi-k2.5",
@@ -79,11 +80,21 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
     efforts: ["low", "medium", "high", "xhigh", "max"],
     default: "xhigh",
   },
-  "openai/gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: undefined },
   "openai/gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: undefined },
   "openai/gpt-5.5": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "xhigh" },
   "openai/gpt-5.5-pro": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "xhigh" },
-  "openai/gpt-5.2-codex": { efforts: ["low", "medium", "high", "xhigh"], default: "high" },
+  "openai/gpt-5.6-sol": {
+    efforts: ["none", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "openai/gpt-5.6-terra": {
+    efforts: ["none", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
+  "openai/gpt-5.6-luna": {
+    efforts: ["none", "low", "medium", "high", "xhigh"],
+    default: undefined,
+  },
   "openai/gpt-5.3-codex": { efforts: ["low", "medium", "high", "xhigh"], default: "high" },
   "openai/gpt-5.3-codex-spark": { efforts: ["low", "medium", "high", "xhigh"], default: "high" },
 };
@@ -151,11 +162,24 @@ export const MODEL_OPTIONS: ModelCategory[] = [
   {
     category: "OpenAI",
     models: [
-      { id: "openai/gpt-5.2", name: "GPT 5.2", description: "400K context, fast" },
       { id: "openai/gpt-5.4", name: "GPT 5.4", description: "Flagship model" },
       { id: "openai/gpt-5.5", name: "GPT 5.5", description: "Latest flagship model" },
       { id: "openai/gpt-5.5-pro", name: "GPT 5.5 Pro", description: "Highest-capability GPT 5.5" },
-      { id: "openai/gpt-5.2-codex", name: "GPT 5.2 Codex", description: "Optimized for code" },
+      {
+        id: "openai/gpt-5.6-sol",
+        name: "GPT 5.6 Sol",
+        description: "Frontier model for complex professional work",
+      },
+      {
+        id: "openai/gpt-5.6-terra",
+        name: "GPT 5.6 Terra",
+        description: "Balanced, cost-efficient everyday work",
+      },
+      {
+        id: "openai/gpt-5.6-luna",
+        name: "GPT 5.6 Luna",
+        description: "Fast, cost-efficient high-volume workloads",
+      },
       { id: "openai/gpt-5.3-codex", name: "GPT 5.3 Codex", description: "Latest codex" },
       {
         id: "openai/gpt-5.3-codex-spark",
@@ -201,11 +225,12 @@ export const DEFAULT_ENABLED_MODELS: ValidModel[] = [
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
   "anthropic/claude-fable-5",
-  "openai/gpt-5.2",
   "openai/gpt-5.4",
   "openai/gpt-5.5",
   "openai/gpt-5.5-pro",
-  "openai/gpt-5.2-codex",
+  "openai/gpt-5.6-sol",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-codex-spark",
 ];
@@ -275,7 +300,7 @@ export function isValidReasoningEffort(model: string, effort: string): boolean {
  * @example
  * extractProviderAndModel("anthropic/claude-haiku-4-5") // { provider: "anthropic", model: "claude-haiku-4-5" }
  * extractProviderAndModel("claude-haiku-4-5") // { provider: "anthropic", model: "claude-haiku-4-5" }
- * extractProviderAndModel("openai/gpt-5.2-codex") // { provider: "openai", model: "gpt-5.2-codex" }
+ * extractProviderAndModel("openai/gpt-5.3-codex") // { provider: "openai", model: "gpt-5.3-codex" }
  */
 export function extractProviderAndModel(modelId: string): { provider: string; model: string } {
   const normalized = normalizeModelId(modelId);

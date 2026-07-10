@@ -14,11 +14,12 @@ For the full model list, including Claude Fable 5 and other Anthropic models, se
 
 | Model               | Description                                                               |
 | ------------------- | ------------------------------------------------------------------------- |
-| GPT 5.2             | Fast baseline model (400K ctx)                                            |
 | GPT 5.4             | Flagship model                                                            |
 | GPT 5.5             | Latest flagship model                                                     |
 | GPT 5.5 Pro         | Highest-capability GPT 5.5; $30/M input, $180/M output, no cache discount |
-| GPT 5.2 Codex       | Optimized for code tasks                                                  |
+| GPT 5.6 Sol         | Frontier model for complex professional work                              |
+| GPT 5.6 Terra       | Balanced, cost-efficient everyday work                                    |
+| GPT 5.6 Luna        | Fast, cost-efficient high-volume workloads                                |
 | GPT 5.3 Codex       | Latest codex variant                                                      |
 | GPT 5.3 Codex Spark | Lightweight Codex variant                                                 |
 
