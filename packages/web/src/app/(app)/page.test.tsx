@@ -90,7 +90,7 @@ vi.mock("@/hooks/use-enabled-models", () => ({
     enabledModelOptions: [
       {
         category: "Anthropic",
-        models: [{ id: DEFAULT_MODEL, name: "Claude Sonnet 4.6", description: "" }],
+        models: [{ id: DEFAULT_MODEL, name: "GPT 5.6 Sol", description: "" }],
       },
     ],
     loading: false,

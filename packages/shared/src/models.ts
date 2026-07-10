@@ -42,7 +42,7 @@ export type ValidModel = (typeof VALID_MODELS)[number];
 /**
  * Default model to use when none specified or invalid.
  */
-export const DEFAULT_MODEL: ValidModel = "openai/gpt-5.5";
+export const DEFAULT_MODEL: ValidModel = "openai/gpt-5.6-sol";
 
 /**
  * Reasoning effort levels supported across providers.
@@ -85,7 +85,7 @@ export const MODEL_REASONING_CONFIG: Partial<Record<ValidModel, ModelReasoningCo
   "openai/gpt-5.5-pro": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "xhigh" },
   "openai/gpt-5.6-sol": {
     efforts: ["none", "low", "medium", "high", "xhigh"],
-    default: undefined,
+    default: "xhigh",
   },
   "openai/gpt-5.6-terra": {
     efforts: ["none", "low", "medium", "high", "xhigh"],

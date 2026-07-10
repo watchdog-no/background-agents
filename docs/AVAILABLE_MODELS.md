@@ -5,6 +5,8 @@ enabled set includes Anthropic and OpenAI models. OpenCode Zen, Z.AI Coding Plan
 models are available but must be enabled in **Settings > Models**. Z.AI Coding Plan requires
 `ZHIPU_API_KEY`; DeepSeek requires `DEEPSEEK_API_KEY`.
 
+The system default is GPT 5.6 Sol with extra-high (`xhigh`) reasoning.
+
 ## Anthropic
 
 | Model ID                      | Display name      | Description                        | Reasoning efforts             | Default effort |
@@ -26,8 +28,8 @@ setup instructions.
 | Model ID                     | Display name        | Description                                  | Reasoning efforts              | Default effort |
 | ---------------------------- | ------------------- | -------------------------------------------- | ------------------------------ | -------------- |
 | `openai/gpt-5.4`             | GPT 5.4             | Flagship model                               | none, low, medium, high, xhigh | Not set        |
-| `openai/gpt-5.5`             | GPT 5.5             | Latest flagship model                        | none, low, medium, high, xhigh | Not set        |
-| `openai/gpt-5.6-sol`         | GPT 5.6 Sol         | Frontier model for complex professional work | none, low, medium, high, xhigh | Not set        |
+| `openai/gpt-5.5`             | GPT 5.5             | Latest flagship model                        | none, low, medium, high, xhigh | xhigh          |
+| `openai/gpt-5.6-sol`         | GPT 5.6 Sol         | Frontier model for complex professional work | none, low, medium, high, xhigh | xhigh          |
 | `openai/gpt-5.6-terra`       | GPT 5.6 Terra       | Balanced, cost-efficient everyday work       | none, low, medium, high, xhigh | Not set        |
 | `openai/gpt-5.6-luna`        | GPT 5.6 Luna        | Fast, cost-efficient high-volume workloads   | none, low, medium, high, xhigh | Not set        |
 | `openai/gpt-5.3-codex`       | GPT 5.3 Codex       | Latest codex                                 | low, medium, high, xhigh       | high           |

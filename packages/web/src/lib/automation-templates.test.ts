@@ -46,6 +46,13 @@ describe("automation templates catalog", () => {
     expect(automationTemplates.some((t) => t.categories.includes("popular"))).toBe(true);
   });
 
+  it("uses GPT 5.6 Sol with xhigh reasoning for vulnerability scans", () => {
+    expect(getTemplateById("scan-vulnerabilities")?.prefill).toMatchObject({
+      model: "openai/gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+    });
+  });
+
   describe.each(automationTemplates.map((t) => [t.id, t] as const))("template %s", (_id, t) => {
     it("has non-empty title, description, and instructions", () => {
       expect(t.title.trim().length).toBeGreaterThan(0);

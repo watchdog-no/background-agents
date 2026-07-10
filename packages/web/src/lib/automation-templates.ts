@@ -100,9 +100,8 @@ export const automationTemplates: AutomationTemplate[] = [
       name: "Scan codebase for vulnerabilities",
       triggerType: "schedule",
       scheduleCron: WEEKLY_MON_9AM,
-      // Security review benefits from a stronger model; coerced if the user hasn't enabled it.
-      model: "anthropic/claude-opus-4-8",
-      reasoningEffort: "high",
+      model: "openai/gpt-5.6-sol",
+      reasoningEffort: "xhigh",
       instructions:
         "Perform an application-security review of this repository. Look for validated, exploitable " +
         "vulnerabilities with a realistic attack path — for example injection (SQL/command/template), " +

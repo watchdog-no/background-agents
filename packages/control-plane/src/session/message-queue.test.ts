@@ -213,9 +213,9 @@ describe("SessionMessageQueue", () => {
     expect(h.broadcast).toHaveBeenCalledWith({ type: "processing_status", isProcessing: true });
   });
 
-  it("dispatches xhigh for the default GPT 5.5 model when effort is unset", async () => {
+  it("dispatches xhigh for the default GPT 5.6 Sol model when effort is unset", async () => {
     const h = buildQueue({
-      session: createSession({ model: "openai/gpt-5.5", reasoning_effort: null }),
+      session: createSession({ model: "openai/gpt-5.6-sol", reasoning_effort: null }),
     });
     const sandboxWs = { readyState: WebSocket.OPEN } as WebSocket;
     h.repository.getNextPendingMessage.mockReturnValue(createMessage({ model: null }));
@@ -227,7 +227,7 @@ describe("SessionMessageQueue", () => {
       sandboxWs,
       expect.objectContaining({
         type: "prompt",
-        model: "openai/gpt-5.5",
+        model: "openai/gpt-5.6-sol",
         reasoningEffort: "xhigh",
       })
     );
