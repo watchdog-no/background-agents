@@ -38,6 +38,14 @@ const SUPPORTED_EVENTS: Record<string, Set<string>> = GITHUB_WEBHOOK_EVENT_CATAL
   {} as Record<string, Set<string>>
 );
 
+// These state changes feed PR lifecycle tracking but are intentionally absent
+// from the user-facing automation event catalog.
+const PULL_REQUEST_LIFECYCLE_ACTIONS = new Set([
+  "reopened",
+  "converted_to_draft",
+  "ready_for_review",
+]);
+
 // ─── Payload accessors ────────────────────────────────────────────────────────
 
 function getRepoOwner(payload: GitHubEventBase): string {
@@ -71,8 +79,10 @@ export function normalizeGitHubEvent(
   const action = payload.action;
 
   const supportedActions = SUPPORTED_EVENTS[githubEventHeader];
-  if (!supportedActions) return null;
-  if (typeof action !== "string" || !supportedActions.has(action)) return null;
+  if (typeof action !== "string") return null;
+  const isLifecycleAction =
+    githubEventHeader === "pull_request" && PULL_REQUEST_LIFECYCLE_ACTIONS.has(action);
+  if (!supportedActions?.has(action) && !isLifecycleAction) return null;
 
   const eventType = `${githubEventHeader}.${action}`;
 

@@ -106,12 +106,12 @@ export function getExternalUploadUrl(
   token: string,
   options: ExternalUploadUrlOptions
 ): Promise<SlackEnvelope<{ upload_url: string; file_id: string }>> {
-  return slackGet(
+  return slackPost(
     token,
     "files.getUploadURLExternal",
     {
       filename: options.filename,
-      length: String(options.length),
+      length: options.length,
       ...(options.altText ? { alt_txt: options.altText } : {}),
     },
     options.signal

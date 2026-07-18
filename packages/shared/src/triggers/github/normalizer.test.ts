@@ -471,6 +471,21 @@ describe("typed pullRequest facts on pull_request events", () => {
     base: { ref: "main", repo: sameRepo },
   };
 
+  it.each(["reopened", "converted_to_draft", "ready_for_review"])(
+    "normalizes lifecycle-only action %s",
+    (action) => {
+      const event = normalizeGitHubEvent("pull_request", {
+        action,
+        repository: repo,
+        sender,
+        pull_request: trackedPR,
+      });
+
+      expect(event?.eventType).toBe(`pull_request.${action}`);
+      expect(event?.pullRequest?.number).toBe(42);
+    }
+  );
+
   it("carries number, state, draft, and merged for an open ready PR", () => {
     const event = normalizeGitHubEvent("pull_request", {
       action: "opened",

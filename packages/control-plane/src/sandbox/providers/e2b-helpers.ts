@@ -7,6 +7,7 @@
 
 import { computeHmacHex } from "@open-inspect/shared";
 import type { SourceControlProviderName } from "../../source-control";
+import { ANTHROPIC_OAUTH_SANDBOX_FLAG } from "../oauth-env";
 import { buildSessionConfig } from "../sandbox-env";
 import type { CreateSandboxConfig } from "../provider";
 import { resolveServicePorts } from "./port-resolution";
@@ -65,6 +66,10 @@ export function buildSandboxEnvVars(
 
   if (config.agentSlackNotifyEnabled) {
     envVars.AGENT_SLACK_NOTIFY_ENABLED = "true";
+  }
+
+  if (config.anthropicOauthEnabled) {
+    envVars[ANTHROPIC_OAUTH_SANDBOX_FLAG] = "true";
   }
 
   if (opts.scmProvider === "gitlab") {
