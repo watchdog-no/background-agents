@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   addReaction,
+  completeExternalUpload,
+  getExternalUploadUrl,
   getChannelInfo,
   getPermalink,
   getThreadMessages,
@@ -12,6 +14,7 @@ import {
   publishView,
   removeReaction,
   updateMessage,
+  uploadToExternalUrl,
 } from "./client";
 
 function jsonResponse(
@@ -23,6 +26,123 @@ function jsonResponse(
     headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
 }
+
+describe("external file uploads", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("requests an upload URL with filename, length, and alt text", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        upload_url: "https://files.slack.com/upload/v1/ticket",
+        file_id: "F123",
+      })
+    );
+
+    const signal = AbortSignal.timeout(1_000);
+    const result = await getExternalUploadUrl("xoxb-token", {
+      filename: "chart.png",
+      length: 1234,
+      altText: "Revenue chart",
+      signal,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      upload_url: "https://files.slack.com/upload/v1/ticket",
+      file_id: "F123",
+    });
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe(
+      "https://slack.com/api/files.getUploadURLExternal?filename=chart.png&length=1234&alt_txt=Revenue+chart"
+    );
+    expect(init?.method).toBe("GET");
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer xoxb-token");
+    expect(init?.signal).toBe(signal);
+    expect(init?.body).toBeUndefined();
+  });
+
+  it("uploads raw bytes without forwarding Slack authorization", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("OK", { status: 200 }));
+    const body = new Blob(["chart-bytes"], { type: "image/png" });
+
+    const signal = AbortSignal.timeout(1_000);
+    const result = await uploadToExternalUrl(
+      "https://files.slack.com/upload/v1/ticket",
+      body,
+      "image/png",
+      signal
+    );
+
+    expect(result).toEqual({ ok: true });
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(body);
+    expect(init?.headers).toEqual({ "Content-Type": "image/png" });
+    expect(init?.signal).toBe(signal);
+  });
+
+  it("normalizes raw upload HTTP and network failures", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("failed", { status: 503 }))
+      .mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      uploadToExternalUrl("https://files.slack.com/upload/v1/one", new Blob(["one"]), "image/png")
+    ).resolves.toEqual({ ok: false, error: "http_503" });
+    await expect(
+      uploadToExternalUrl("https://files.slack.com/upload/v1/two", new Blob(["two"]), "image/png")
+    ).resolves.toEqual({ ok: false, error: "network_error" });
+  });
+
+  it("completes and shares uploads in the parent thread", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({ ok: true, files: [{ id: "F123", title: "Revenue chart" }] })
+      );
+
+    const signal = AbortSignal.timeout(1_000);
+    const result = await completeExternalUpload("xoxb-token", {
+      files: [
+        { id: "F123", title: "Revenue chart" },
+        { id: "F456", title: "Forecast video" },
+      ],
+      channelId: "C123",
+      threadTs: "111.222",
+      signal,
+    });
+
+    expect(result.ok).toBe(true);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe("https://slack.com/api/files.completeUploadExternal");
+    expect(init?.signal).toBe(signal);
+    expect(JSON.parse(String(init?.body))).toEqual({
+      files: [
+        { id: "F123", title: "Revenue chart" },
+        { id: "F456", title: "Forecast video" },
+      ],
+      channel_id: "C123",
+      thread_ts: "111.222",
+    });
+  });
+
+  it("normalizes finalization network failures instead of rejecting", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      completeExternalUpload("xoxb-token", {
+        files: [{ id: "F123", title: "Revenue chart" }],
+        channelId: "C123",
+        threadTs: "111.222",
+      })
+    ).resolves.toEqual({ ok: false, error: "network_error" });
+  });
+});
 
 describe("postMessage", () => {
   afterEach(() => {
@@ -328,7 +448,7 @@ describe("getThreadMessages", () => {
     vi.restoreAllMocks();
   });
 
-  it("fetches replies via GET with channel/ts/limit", async () => {
+  it("fetches replies via GET with channel/ts", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       jsonResponse({
         ok: true,
@@ -339,7 +459,7 @@ describe("getThreadMessages", () => {
       })
     );
 
-    const result = await getThreadMessages("xoxb-token", "C123", "1.0", 5);
+    const result = await getThreadMessages("xoxb-token", "C123", "1.0");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -347,18 +467,46 @@ describe("getThreadMessages", () => {
       expect(result.messages[0]!.text).toBe("first");
     }
     const [url] = fetchSpy.mock.calls[0]!;
-    expect(url).toBe("https://slack.com/api/conversations.replies?channel=C123&ts=1.0&limit=5");
+    expect(url).toBe("https://slack.com/api/conversations.replies?channel=C123&ts=1.0&limit=200");
   });
 
-  it("defaults limit to 10 when not provided", async () => {
+  it("passes oldest to fetch only newer replies", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ ok: true, messages: [] }));
 
-    await getThreadMessages("xoxb-token", "C123", "1.0");
+    await getThreadMessages("xoxb-token", "C123", "1.0", "1.5");
 
     const [url] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toContain("limit=10");
+    expect(url).toBe(
+      "https://slack.com/api/conversations.replies?channel=C123&ts=1.0&limit=200&oldest=1.5"
+    );
+  });
+
+  it("follows next_cursor pagination and concatenates pages", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          messages: [{ ts: "1.1", text: "first", user: "U1" }],
+          response_metadata: { next_cursor: "cursor-2" },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ ok: true, messages: [{ ts: "1.2", text: "second", user: "U2" }] })
+      );
+
+    const result = await getThreadMessages("xoxb-token", "C123", "1.0", "1.0");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.messages.map((m) => m.text)).toEqual(["first", "second"]);
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const [secondUrl] = fetchSpy.mock.calls[1]!;
+    expect(String(secondUrl)).toContain("cursor=cursor-2");
+    expect(String(secondUrl)).toContain("oldest=1.0");
   });
 
   it("returns Slack's error envelope on lookup failure", async () => {
@@ -370,6 +518,24 @@ describe("getThreadMessages", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBe("thread_not_found");
+    }
+  });
+
+  it("returns the failure arm when a later page errors", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          messages: [{ ts: "1.1", text: "first", user: "U1" }],
+          response_metadata: { next_cursor: "cursor-2" },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: false, error: "ratelimited" }));
+
+    const result = await getThreadMessages("xoxb-token", "C123", "1.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("ratelimited");
     }
   });
 });

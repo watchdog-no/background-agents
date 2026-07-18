@@ -5,8 +5,24 @@
  * through this barrel. Keep internal schemas out of this export surface.
  */
 
-export { attachmentSchema, clientMessageSchema } from "./websocket";
-export type { Attachment, ClientMessage } from "./websocket";
+export {
+  MAX_SESSION_ATTACHMENTS_PER_MESSAGE,
+  SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  sessionAttachmentMimeTypeSchema,
+  sessionAttachmentIdSchema,
+  sessionAttachmentReferenceSchema,
+  sessionAttachmentReferencesSchema,
+  resolvedSessionAttachmentSchema,
+  resolvedSessionAttachmentsSchema,
+} from "./session-attachments";
+export type {
+  SessionAttachmentMimeType,
+  SessionAttachmentReference,
+  ResolvedSessionAttachment,
+} from "./session-attachments";
+
+export { clientMessageSchema } from "./websocket";
+export type { ClientMessage } from "./websocket";
 
 export { sessionStatusSchema } from "./statuses";
 export type {
@@ -31,6 +47,10 @@ export {
   repositoriesInputSchema,
   sessionRepositoriesInputSchema,
   RepositoryPairValidationError,
+  decodeRepositoryPathSegments,
+  encodeRepositoryPathSegments,
+  formatRepositoryFullName,
+  parseRepositoryFullName,
   normalizeOptionalRepositoryPair,
 } from "./repositories";
 export type {
@@ -55,16 +75,22 @@ export type {
   ClassifyErrorResponse,
 } from "./repository-catalog";
 
+export { toDisplayStatus } from "./artifacts";
 export type {
   SessionArtifact,
   ManualPullRequestArtifactMetadata,
   ScreenshotArtifactMetadata,
   VideoArtifactMetadata,
   PullRequest,
+  PullRequestLifecycleState,
+  PullRequestStatus,
+  PullRequestDisplayStatus,
+  PullRequestArtifactMetadata,
   ArtifactResponse,
   ListArtifactsResponse,
   ToolCallSummary,
   ArtifactInfo,
+  MediaArtifactInfo,
   AgentResponse,
 } from "./artifacts";
 
@@ -83,6 +109,7 @@ export type {
   SessionMessage,
   SessionState,
   ParticipantPresence,
+  PullRequestSummary,
 } from "./sessions";
 
 export { serverMessageSchema } from "./server-messages";
@@ -90,6 +117,8 @@ export type { ServerMessage } from "./server-messages";
 
 export {
   userPreferencesRequestSchema,
+  linearCallbackContextSchema,
+  linearStartCallbackSchema,
   createSessionRequestSchema,
   createSessionInputSchema,
   createMediaArtifactRequestSchema,
@@ -103,6 +132,7 @@ export type {
   UserPreferencesRequest,
   SlackCallbackContext,
   LinearCallbackContext,
+  LinearStartCallback,
   AutomationCallbackContext,
   CallbackContext,
   CreateSessionRequest,
@@ -179,6 +209,11 @@ export type {
   AnalyticsTimeseriesResponse,
   AnalyticsBreakdownEntry,
   AnalyticsBreakdownResponse,
+  AnalyticsPullRequestFunnel,
+  AnalyticsPullRequestTimeseriesPoint,
+  AnalyticsPullRequestRepoEntry,
+  AnalyticsPullRequestSourceEntry,
+  AnalyticsPullRequestsResponse,
 } from "./analytics";
 
 export * from "./integrations";

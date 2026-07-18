@@ -1,6 +1,7 @@
 import type { Logger } from "../../../logger";
 import type { EnqueuePromptRequest, MessageService } from "../../services/message.service";
 import { parseEventListCursor } from "../../event-cursor";
+import { SessionAttachmentError } from "../../session-attachment-resolver";
 
 /**
  * Valid event types for filtering.
@@ -12,6 +13,7 @@ const VALID_EVENT_TYPES = [
   "token",
   "reasoning",
   "error",
+  "warning",
   "git_sync",
   "step_start",
   "step_finish",
@@ -49,6 +51,9 @@ export function createMessagesHandler(deps: MessagesHandlerDeps): MessagesHandle
         const body = (await request.json()) as EnqueuePromptRequest;
         return Response.json(await deps.messageService.enqueuePrompt(body));
       } catch (error) {
+        if (error instanceof SessionAttachmentError) {
+          return Response.json({ error: error.message }, { status: 400 });
+        }
         deps.getLog().error("handleEnqueuePrompt error", {
           error: error instanceof Error ? error : String(error),
         });
@@ -107,20 +112,7 @@ export function createMessagesHandler(deps: MessagesHandlerDeps): MessagesHandle
 
       const result = deps.messageService.listMessages({ cursor, limit, status });
 
-      return Response.json({
-        messages: result.messages.map((message) => ({
-          id: message.id,
-          authorId: message.author_id,
-          content: message.content,
-          source: message.source,
-          status: message.status,
-          createdAt: message.created_at,
-          startedAt: message.started_at,
-          completedAt: message.completed_at,
-        })),
-        cursor: result.cursor,
-        hasMore: result.hasMore,
-      });
+      return Response.json(result);
     },
   };
 }

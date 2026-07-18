@@ -1,16 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  CollapsibleSection,
-  ParticipantsSection,
-  MetadataSection,
-  TasksSection,
-  FilesChangedSection,
-  MediaSection,
-  CodeServerSection,
-  TunnelUrlsSection,
-} from "./sidebar";
+import { CollapsibleSection } from "./sidebar/collapsible-section";
+import { ParticipantsSection } from "./sidebar/participants-section";
+import { MetadataSection } from "./sidebar/metadata-section";
+import { TasksSection } from "./sidebar/tasks-section";
+import { FilesChangedSection } from "./sidebar/files-changed-section";
+import { MediaSection } from "./sidebar/media-section";
+import { CodeServerSection } from "./sidebar/code-server-section";
+import { TunnelUrlsSection } from "./sidebar/tunnel-urls-section";
 import { ChildSessionsSection } from "./sidebar/child-sessions-section";
 import { TerminalIcon, LinkIcon } from "@/components/ui/icons";
 import { buildAuthenticatedUrl } from "@/lib/urls";
@@ -83,6 +81,7 @@ export function SessionRightSidebarContent({
       {/* Metadata */}
       <div className="px-4 py-4 border-b border-border-muted">
         <MetadataSection
+          sessionId={sessionId}
           createdAt={sessionState.createdAt}
           model={sessionState.model}
           reasoningEffort={sessionState.reasoningEffort}
@@ -132,7 +131,11 @@ export function SessionRightSidebarContent({
                 <LinkIcon className="h-3.5 w-3.5" />
               </a>
               {onToggleTerminal && (
-                <button onClick={onToggleTerminal} className="text-xs text-accent hover:underline">
+                <button
+                  type="button"
+                  onClick={onToggleTerminal}
+                  className="text-xs text-accent hover:underline"
+                >
                   {terminalOpen ? "Hide" : "Show"}
                 </button>
               )}

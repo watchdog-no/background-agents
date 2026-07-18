@@ -31,6 +31,7 @@ import subprocess
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 import modal
@@ -320,14 +321,6 @@ async def build_image(
 
         clone_token = resolve_clone_token() or ""
 
-        log.info(
-            "image_build.start",
-            build_id=build_id,
-            scope_kind=scope_kind,
-            scope_id=scope_id,
-            repository_count=len(repositories),
-        )
-
         handle = await manager.create_build_sandbox(
             repo_owner=primary.get("repo_owner", ""),
             repo_name=primary.get("repo_name", ""),
@@ -374,13 +367,15 @@ async def build_image(
         build_duration = time.time() - start_time
 
         log.info(
-            "image_build.success",
+            "image_build.complete",
             build_id=build_id,
             scope_kind=scope_kind,
             scope_id=scope_id,
+            outcome="success",
+            duration_seconds=round(build_duration, 3),
+            repository_count=len(repositories),
             provider_image_id=provider_image_id,
             runtime_version=build_logs.runtime_version,
-            build_duration_s=round(build_duration, 1),
         )
 
         if callback_url:
@@ -401,12 +396,14 @@ async def build_image(
             sandbox_terminated = await _terminate_build_sandbox(handle, build_id, "build_failed")
 
         log.error(
-            "image_build.failed",
+            "image_build.complete",
             build_id=build_id,
             scope_kind=scope_kind,
             scope_id=scope_id,
+            outcome="error",
             error=str(e),
-            build_duration_s=round(build_duration, 1),
+            duration_seconds=round(build_duration, 3),
+            repository_count=len(repositories),
         )
 
         if failure_callback_url:
@@ -534,7 +531,7 @@ def _git_ls_remote_sha(
 
 
 def _parse_runtime_version_number(runtime_version: str) -> int | None:
-    """Numeric prefix of a SANDBOX_VERSION ("v53-list-native" → 53), or None."""
+    """Numeric prefix of a SANDBOX_VERSION ("v54-opencode" → 54), or None."""
     match = re.match(r"^v(\d+)", runtime_version)
     return int(match.group(1)) if match else None
 
@@ -649,10 +646,12 @@ def _unit_trigger_path(unit: dict) -> str | None:
     scope_kind = unit.get("scopeKind", "")
     scope_id = unit.get("scopeId", "")
     if scope_kind == "repo":
-        repo_owner, _, repo_name = scope_id.partition("/")
-        if not repo_owner or not repo_name:
+        repo_owner, separator, repo_name = scope_id.rpartition("/")
+        if not separator or not repo_owner or not repo_name:
             return None
-        return f"/image-builds/trigger/repo/{repo_owner}/{repo_name}"
+        return (
+            f"/image-builds/trigger/repo/{quote(repo_owner, safe='')}/{quote(repo_name, safe='')}"
+        )
     if scope_kind == "environment" and scope_id:
         return f"/image-builds/trigger/environment/{scope_id}"
     return None

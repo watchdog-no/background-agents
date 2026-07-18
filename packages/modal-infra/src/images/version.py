@@ -1,3 +1,3 @@
 """Sandbox image version constants."""
 
-CACHE_BUSTER = "v65-claude-fable-5"
+CACHE_BUSTER = "v66-opencode-1-17-18"

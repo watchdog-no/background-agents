@@ -8,11 +8,9 @@ from daytona import CreateSnapshotParams, Daytona, Image
 
 # OpenCode version to install.
 #
-# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 kept the OpenAI
-# WebSocket response timeouts active and retried failed OpenAI WebSocket streams
-# before falling back, fixing dropped/hung OpenAI responses seen on 1.15.10.
-# 1.15.13 is the current pinned release.
-OPENCODE_VERSION = "1.15.13"
+# OpenCode restored `/event` stream context in 1.14.50 and fixed the remaining
+# eager-subscription race in 1.15.5. Keep the CLI and plugin on the same pin.
+OPENCODE_VERSION = "1.17.18"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
 LINEAR_CLI_VERSION = "2.0.0"
@@ -23,7 +21,8 @@ CTX7_VERSION = "0.4.4"
 # daytona-v3: install schpet/linear-cli for agent-side Linear access.
 # daytona-v4: install ctx7 (Context7) for agent-side library documentation.
 # daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
-SANDBOX_VERSION = "daytona-v5-scm-broker"
+# daytona-v6: upgrade OpenCode after upstream SSE fixes.
+SANDBOX_VERSION = "daytona-v6-opencode-1-17-18"
 
 
 def build_base_image(repo_root: Path) -> Image:

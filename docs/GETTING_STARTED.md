@@ -15,11 +15,11 @@ This guide walks you through deploying your own instance of Open-Inspect using T
 
 Open-Inspect uses Terraform to automate deployment across multiple cloud providers:
 
-| Provider                                                            | Purpose                          | What Terraform Creates                                                                                     |
-| ------------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Cloudflare**                                                      | Control plane, session state     | Workers, KV namespaces, Durable Objects, D1 Database                                                       |
-| **Vercel** _or_ **Cloudflare Workers**                              | Web application                  | Project + env vars (Vercel) _or_ Worker via OpenNext (Cloudflare)                                          |
-| **Modal**, **Daytona**, **Vercel Sandboxes**, _or_ **OpenComputer** | Sandbox execution infrastructure | Modal app deployment, Daytona API config, Vercel Sandbox API config, _or_ OpenComputer template/API config |
+| Provider                                                                     | Purpose                          | What Terraform Creates                                                                                          |
+| ---------------------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Cloudflare**                                                               | Control plane, session state     | Workers, KV namespaces, Durable Objects, D1 Database                                                            |
+| **Vercel** _or_ **Cloudflare Workers**                                       | Web application                  | Project + env vars (Vercel) _or_ Worker via OpenNext (Cloudflare)                                               |
+| **Modal**, **Daytona**, **Vercel Sandboxes**, **OpenComputer**, _or_ **E2B** | Sandbox execution infrastructure | Modal app deployment, Daytona/Vercel API config, OpenComputer template/API config, _or_ E2B template/API config |
 
 > **Web platform choice**: Set `web_platform` in your `terraform.tfvars` to `"vercel"` (default) or
 > `"cloudflare"`. The Cloudflare option deploys the Next.js app as a Cloudflare Worker using
@@ -44,6 +44,7 @@ Create accounts on these services before continuing:
 | [Daytona](https://app.daytona.io) _(optional)_            | Sandbox infrastructure when `sandbox_provider = "daytona"`      |
 | [Vercel Sandboxes](https://vercel.com) _(optional)_       | Sandbox infrastructure when `sandbox_provider = "vercel"`       |
 | [OpenComputer](https://app.opencomputer.dev) _(optional)_ | Sandbox infrastructure when `sandbox_provider = "opencomputer"` |
+| [E2B](https://e2b.dev) _(optional)_                       | Sandbox infrastructure when `sandbox_provider = "e2b"`          |
 | [GitHub](https://github.com/settings/developers)          | OAuth + repository access                                       |
 | [Anthropic](https://console.anthropic.com)                | Claude API                                                      |
 | [Slack](https://api.slack.com/apps) _(optional)_          | Slack bot integration                                           |
@@ -107,6 +108,7 @@ cd packages/modal-infra && uv sync --frozen && cd -
      - Account | Workers KV Storage | Edit (should be included with template)
      - Account | Workers R2 Storage | Edit (should be included with template)
      - Account | D1 | Edit
+     - Account | Queues | Edit (required when `enable_slack_bot = true`)
    - Set "Account Resources" to include your account
    - Set "Zone Resources" to include all zones from your account
    - Click "Continue to summary" and "Update token"
@@ -227,6 +229,38 @@ for the full runtime, snapshot, and resource configuration model.
 For the full template build and runtime details, see
 [OpenComputer Sandbox Provider](OPENCOMPUTER_PROVIDER.md).
 
+### E2B
+
+> Only required when `sandbox_provider = "e2b"`.
+
+E2B needs a single credential — the **API key** (`e2b_api_key`). The control plane uses it at
+runtime for the E2B REST API, and the `e2b-infra` module uses it to build the sandbox template (via
+the E2B Template SDK). Create it at the [E2B dashboard](https://e2b.dev) → API Keys.
+
+1. Set `sandbox_provider = "e2b"` in `terraform.tfvars`.
+2. Set `e2b_api_key` and `e2b_template_id` (e.g. `open-inspect-sandbox`).
+3. Terraform's `e2b-infra` module builds the template automatically on `terraform apply`, and
+   rebuilds it when `packages/e2b-infra` or `packages/sandbox-runtime` change. To build manually:
+   ```bash
+   cd packages/e2b-infra
+   uv sync --frozen
+   E2B_API_KEY=e2b_… E2B_TEMPLATE_ID=open-inspect-sandbox uv run python build-template.py
+   ```
+
+The control plane calls the E2B REST API directly from Cloudflare Workers. Each session runs in a
+single long-lived sandbox: when its TTL (`e2b_sandbox_timeout_seconds`, default 7200) expires the
+sandbox is **paused** rather than killed (`e2b_auto_pause`, default true), so sessions survive idle
+gaps; the next prompt resumes it through the control plane. On the **Hobby** tier (~1h runtime cap)
+lower `e2b_sandbox_timeout_seconds` to 3300. Set `e2b_auto_pause = false` to kill on timeout
+instead.
+
+For the full runtime, lifecycle, and configuration model, see
+[E2B Sandbox Provider](E2B_SANDBOX_PROVIDER.md).
+
+> **Important**: The E2B provider does not automatically inject LLM API keys into sandboxes. If you
+> plan to use Claude models, add `ANTHROPIC_API_KEY` as a **global secret** in Settings > Secrets
+> after deploying. See [Secrets Management](SECRETS.md) for details.
+
 ### Anthropic
 
 Claude subscription OAuth is the default Anthropic model path. Use
@@ -334,12 +368,29 @@ Skip this step if you don't need Slack integration.
    - `groups:read`
    - `im:history`
    - `im:read`
+   - `files:write`
    - `reactions:write`
 3. Click **"Install to Workspace"**
 4. Note the **Bot Token** (`xoxb-...`)
 
 > **Important**: If you update bot token scopes later, you must **reinstall the app** to your
 > workspace for the new permissions to take effect.
+
+### Upgrade an Existing Slack Deployment
+
+Queued delivery applies to every Slack completion, including text-only replies. Before the first
+`terraform apply` after upgrading:
+
+1. Add **Account | Queues | Edit** to the Cloudflare API token used by Terraform. Terraform needs
+   this permission to create the completion queue, dead-letter queue, Worker binding, and consumer.
+2. Add the Slack bot scope `files:write`, reinstall the app once for the workspace, and update
+   `slack_bot_token` if Slack issued a replacement.
+3. Run `terraform apply`, then verify a text completion and a generated-media attachment. If the
+   token lacks Queue access, the apply fails while provisioning the new resources; grant the
+   permission and rerun the apply.
+
+No individual Slack user needs to reauthorize the app. Teams with `enable_slack_bot = false` do not
+create the Queue resources.
 
 ### Get Signing Secret
 
@@ -350,6 +401,26 @@ Skip this step if you don't need Slack integration.
 
 Event Subscriptions require the Slack bot worker to be deployed first for URL verification. You'll
 configure this in **Step 7b** after running Terraform.
+
+---
+
+## Step 4b: Create a Linear OAuth App (Optional)
+
+Skip this step if you don't need the Linear Agent integration.
+
+1. Create an application in **Linear Settings → API → Applications**.
+2. Enable webhooks and subscribe to **Agent session events**. **Permission changes** and **Inbox
+   notifications** are also useful operational signals.
+3. Enable **Client credentials tokens**. This Linear-side setting is not managed by Terraform.
+4. Configure these URLs, replacing the deployment name and Workers subdomain:
+   - Callback URL:
+     `https://open-inspect-linear-bot-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/oauth/callback`
+   - Webhook URL:
+     `https://open-inspect-linear-bot-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/webhook`
+5. Record the client ID, client secret, and webhook signing secret for `terraform.tfvars`.
+
+The app is installed after deployment in **Step 7d**. Runtime access uses replaceable
+client-credentials tokens; authorization-code refresh tokens are not stored as runtime credentials.
 
 ---
 
@@ -446,6 +517,10 @@ modal_environment_web_suffix = "your-modal-web-suffix" # Lowercase letters, digi
 # vercel_sandbox_runtime    = "node24"
 # vercel_snapshot_expiration_ms = 0
 
+# E2B (only required when sandbox_provider = "e2b")
+# e2b_api_key               = "your-e2b-api-key"        # runtime REST API key (also auths the build)
+# e2b_template_id           = "open-inspect-sandbox"
+
 # GitHub App (used for both OAuth and repository access)
 github_client_id     = "Iv1.abc123..."           # From GitHub App settings
 github_client_secret = "your-client-secret"      # Generated in GitHub App settings
@@ -474,6 +549,12 @@ slack_signing_secret = ""
 enable_github_bot      = false
 github_webhook_secret  = ""          # From Step 5 (required if enabled)
 github_bot_username    = ""          # e.g., "my-app[bot]" (your GitHub App's bot login)
+
+# Linear Agent (set enable_linear_bot = true to deploy the webhook worker)
+enable_linear_bot      = false
+linear_client_id       = ""          # From Step 4b (required if enabled)
+linear_client_secret   = ""          # From Step 4b (required if enabled)
+linear_webhook_secret  = ""          # From Step 4b (required if enabled)
 
 # Modal metered Claude fallback (optional)
 anthropic_api_key = "sk-ant-..."
@@ -703,6 +784,26 @@ For day-to-day workflows, see [GitHub Integration](./integrations/GITHUB.md).
 
 ---
 
+## Step 7d: Install the Linear Agent (If Using Linear)
+
+After the Linear bot Worker is deployed, visit:
+
+```text
+https://open-inspect-linear-bot-{deployment_name}.YOUR-SUBDOMAIN.workers.dev/oauth/authorize
+```
+
+A Linear workspace admin must approve the installation. After installation, the agent appears in
+mention and assignment menus. Test it by mentioning the agent on an issue, then use **View Session**
+to follow the corresponding Open-Inspect session.
+
+For upgrades, enable **Client credentials tokens** before deploying. No reinstall is expected for an
+eligible existing installation, but allow already-running sessions to finish before upgrading
+because older callback contexts may not contain the installed app-user identity.
+
+For configuration and troubleshooting, see [Linear Integration](./integrations/LINEAR.md).
+
+---
+
 ## Step 8: Deploy the Web App
 
 ### If using Cloudflare (`web_platform = "cloudflare"`)
@@ -872,6 +973,11 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `APP_SHORT_NAME`                 | Optional short label for sidebar header (default: `Inspect`)                                |
 | `APP_ICON_URL`                   | Optional URL to a custom logo/favicon (default: built-in icon)                              |
 
+When enabling or upgrading the Linear bot, also enable **Client credentials tokens** on the OAuth
+application in **Linear Settings → API → Applications**. This provider-side setting is not managed
+by Terraform. Existing eligible single-workspace installations transition on their next request
+without uninstalling or reinstalling the app.
+
 **Bulk upload secrets with `gh` CLI:**
 
 Instead of adding secrets one by one, create a `.secrets` file (don't commit this!):
@@ -982,12 +1088,13 @@ Terraform references the built worker bundles. Build them before running `terraf
 npm run build -w @open-inspect/shared
 
 # Build workers (required before Terraform)
-npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot
+npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot -w @open-inspect/linear-bot
 
 # Verify bundles exist
 ls packages/control-plane/dist/index.js
 ls packages/slack-bot/dist/index.js
 ls packages/github-bot/dist/index.js  # Only if enable_github_bot = true
+ls packages/linear-bot/dist/index.js  # Only if enable_linear_bot = true
 ```
 
 ### Slack bot not responding
@@ -1010,6 +1117,15 @@ If the bot doesn't see the original message when tagged in a thread reply:
    check these scopes and that the bot is invited to the target channel.
 3. If you added missing scopes, **reinstall the app** to your workspace for the new permissions to
    take effect.
+
+### Slack completion does not attach generated media
+
+1. Verify the bot has the `files:write` scope and reinstall the app after adding it.
+2. Confirm the agent registered the image or video as a session artifact; repository files are not
+   uploaded automatically.
+3. Check that the file is PNG, JPEG, WebP, or MP4 and no larger than 10 MiB. A completion attaches
+   at most five files and 25 MiB total; other media remains available through **View Session**.
+4. Check Slack workspace policies for disabled uploads, prohibited file types, or exhausted storage.
 
 ### GitHub bot not responding to webhooks
 

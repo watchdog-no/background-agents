@@ -239,7 +239,7 @@ describe("Client WebSocket (via SELF.fetch)", () => {
 
     await queryDO(
       stub,
-      "INSERT INTO artifacts (id, type, url, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO artifacts (id, type, url, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       "artifact-pr-1",
       "pr",
       "https://github.com/acme/web-app/pull/42",
@@ -249,6 +249,7 @@ describe("Client WebSocket (via SELF.fetch)", () => {
         head: "feature/test",
         base: "main",
       }),
+      createdAt,
       createdAt
     );
 
@@ -268,6 +269,7 @@ describe("Client WebSocket (via SELF.fetch)", () => {
           base: "main",
         },
         createdAt,
+        updatedAt: createdAt,
       },
     ]);
 

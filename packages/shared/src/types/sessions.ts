@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Attachment } from "./websocket";
+import type { ResolvedSessionAttachment } from "./session-attachments";
 import {
   sandboxStatusSchema,
   sessionStatusSchema,
@@ -23,6 +23,19 @@ export interface SessionParticipant {
   scmName: string | null;
   scmEmail: string | null;
   role: ParticipantRole;
+}
+
+/**
+ * Aggregate PR counts for a session, grouped by display status. Computed from
+ * the D1 session_pull_requests table for the session list; total = open +
+ * draft + merged + closed.
+ */
+export interface PullRequestSummary {
+  total: number;
+  open: number;
+  draft: number;
+  merged: number;
+  closed: number;
 }
 
 export interface Session {
@@ -53,6 +66,12 @@ export interface Session {
    * renders it.
    */
   environmentId?: string | null;
+  /**
+   * Aggregate PR status counts for the global sidebar. Populated by the
+   * session list index from session_pull_requests; absent while versions
+   * overlap or when the session has no tracked PRs.
+   */
+  pullRequestSummary?: PullRequestSummary;
 }
 
 export interface SessionMessage {
@@ -60,7 +79,7 @@ export interface SessionMessage {
   authorId: string;
   content: string;
   source: MessageSource;
-  attachments: Attachment[] | null;
+  attachments: ResolvedSessionAttachment[] | null;
   status: MessageStatus;
   createdAt: number;
   startedAt: number | null;

@@ -133,7 +133,7 @@ def _image(**overrides):
                 {"repoOwner": "acme", "repoName": "api", "baseSha": "sha-api"},
             ]
         ),
-        "runtime_version": "v53-list-native-runtime",
+        "runtime_version": "v54-opencode-1-17-18",
     }
     image.update(overrides)
     return image
@@ -277,6 +277,12 @@ class TestUnitTriggerPath:
 
     def test_repo_unit_path(self):
         assert _unit_trigger_path(_repo_unit()) == "/image-builds/trigger/repo/acme/web"
+
+    def test_repo_unit_path_encodes_nested_owner_namespace(self):
+        unit = _repo_unit()
+        unit["scopeId"] = "group/subgroup/web"
+
+        assert _unit_trigger_path(unit) == "/image-builds/trigger/repo/group%2Fsubgroup/web"
 
     def test_environment_unit_path(self):
         assert _unit_trigger_path(_environment_unit()) == "/image-builds/trigger/environment/env_1"
@@ -443,7 +449,7 @@ REPOSITORY_SHAS = [
     {"repoOwner": "acme", "repoName": "web", "baseSha": "sha-web"},
     {"repoOwner": "acme", "repoName": "api", "baseSha": "sha-api"},
 ]
-RUNTIME_VERSION = "v53-list-native-runtime"
+RUNTIME_VERSION = "v54-opencode-1-17-18"
 
 
 class TestBuildImageCallbackPayloads:

@@ -7,7 +7,7 @@
 
 import { DEFAULT_MODEL } from "@open-inspect/shared";
 
-// Shared between SCHEMA_SQL (fresh DOs) and migration 31 (existing DOs) so
+// Shared between SCHEMA_SQL (fresh DOs) and migration 33 (existing DOs) so
 // the two paths can never diverge.
 const SESSION_REPOSITORIES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_repositories (
   position INTEGER NOT NULL,
@@ -19,6 +19,16 @@ const SESSION_REPOSITORIES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_repos
   base_sha TEXT,
   current_sha TEXT,
   PRIMARY KEY (repo_owner, repo_name)
+)`;
+
+const ATTACHMENTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  object_key TEXT NOT NULL,
+  message_id TEXT,
+  cleanup_claimed_at INTEGER,
+  created_at INTEGER NOT NULL
 )`;
 
 export const SCHEMA_SQL = `
@@ -66,6 +76,7 @@ CREATE TABLE IF NOT EXISTS participants (
   scm_login TEXT,                                   -- SCM username
   scm_email TEXT,                                   -- For git commit attribution
   scm_name TEXT,                                    -- Display name for git commits
+  auth_name TEXT,                                   -- Provider-agnostic display name (e.g. Google/OIDC) for presence
   role TEXT NOT NULL DEFAULT 'member',              -- 'owner', 'member'
   -- Token storage (AES-GCM encrypted)
   scm_access_token_encrypted TEXT,
@@ -110,8 +121,14 @@ CREATE TABLE IF NOT EXISTS artifacts (
   type TEXT NOT NULL,                               -- 'pr', 'screenshot', 'video', 'preview', 'branch'
   url TEXT,
   metadata TEXT,                                    -- JSON
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL                       -- last content change (PR lifecycle updates)
 );
+
+-- User session attachments stored in the media bucket (chat composer attachments).
+-- message_id is set once a message references the attachment; unreferenced rows are
+-- pruned (with their R2 objects) after a TTL.
+${ATTACHMENTS_TABLE_SQL};
 
 -- Sandbox state
 CREATE TABLE IF NOT EXISTS sandbox (
@@ -165,7 +182,7 @@ CREATE INDEX IF NOT EXISTS idx_participants_user ON participants(user_id);
 `;
 
 import { createLogger } from "../logger";
-import type { SqlStorage } from "./repository";
+import type { SqlStorage } from "./sql-storage";
 
 const schemaLog = createLogger("schema");
 
@@ -444,6 +461,27 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
       runMigration(sql, `ALTER TABLE session ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
       runMigration(sql, `ALTER TABLE session ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0`);
     },
+  },
+  {
+    id: 36,
+    description: "Add auth_name to participants (provider-agnostic presence display name)",
+    run: `ALTER TABLE participants ADD COLUMN auth_name TEXT`,
+  },
+  {
+    id: 37,
+    description: "Add updated_at to artifacts (PR lifecycle tracking)",
+    // SQLite cannot ADD COLUMN with NOT NULL and no default, so migrated DOs
+    // get a nullable column plus a backfill; fresh DOs get NOT NULL from
+    // SCHEMA_SQL and createArtifact always writes it.
+    run: (sql) => {
+      runMigration(sql, `ALTER TABLE artifacts ADD COLUMN updated_at INTEGER`);
+      sql.exec(`UPDATE artifacts SET updated_at = created_at WHERE updated_at IS NULL`);
+    },
+  },
+  {
+    id: 38,
+    description: "Create attachments table",
+    run: ATTACHMENTS_TABLE_SQL,
   },
 ];
 

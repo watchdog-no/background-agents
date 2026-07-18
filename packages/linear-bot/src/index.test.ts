@@ -1,9 +1,13 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateInternalToken } from "@open-inspect/shared";
 import type { Env } from "./types";
 import type * as WebhookHandler from "./webhook-handler";
 import {
   createFakeKV,
+  createLinearFetchMock,
+  linearAuthorizationCodeResponse,
+  linearClientCredentialsResponse,
+  linearIdentityResponse,
   makeExecutionContext,
   makeLinearBotEnv,
   signLinearWebhookRequest,
@@ -23,42 +27,16 @@ vi.mock("./webhook-handler", async (importOriginal) => {
 
 const { default: app } = await import("./index");
 
-function createMockKV(entries: Record<string, string> = {}) {
-  const store = new Map(Object.entries(entries));
-  return {
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async (options?: { prefix?: string }) => {
-      const prefix = options?.prefix ?? "";
-      return {
-        keys: Array.from(store.keys())
-          .filter((name) => name.startsWith(prefix))
-          .map((name) => ({ name })),
-      };
-    }),
-  };
-}
-
 function makeEnv(overrides: Partial<Env> = {}): Env {
-  return {
+  const { kv } = createFakeKV();
+  return makeLinearBotEnv(kv, {
     INTERNAL_CALLBACK_SECRET: "internal-secret",
-    LINEAR_KV: createMockKV() as unknown as KVNamespace,
-    DEFAULT_MODEL: "anthropic/claude-haiku-4-5",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 function makeCtx() {
-  return {
-    props: {},
-    waitUntil: vi.fn(),
-    passThroughOnException: vi.fn(),
-  } as unknown as ExecutionContext;
+  return makeExecutionContext();
 }
 
 async function authHeaders(secret = "internal-secret"): Promise<Record<string, string>> {
@@ -66,11 +44,18 @@ async function authHeaders(secret = "internal-secret"): Promise<Record<string, s
   return { Authorization: `Bearer ${token}` };
 }
 
-function freshToken(accessToken: string): string {
+function cachedClientCredentialsToken(accessToken: string): string {
+  const issuedAt = Date.now();
   return JSON.stringify({
+    version: 1,
     access_token: accessToken,
-    refresh_token: "refresh",
-    expires_at: Date.now() + 60 * 60 * 1000,
+    token_type: "Bearer",
+    scope: "read,write,app:assignable,app:mentionable",
+    issued_at: issuedAt,
+    expires_at: issuedAt + 60 * 60 * 1000,
+    organization_id: "org-1",
+    organization_name: "Acme",
+    app_user_id: "app-user-1",
   });
 }
 
@@ -113,11 +98,10 @@ describe("GET /internal/app-token", () => {
   });
 
   it("returns the app actor token for an authorized workspace", async () => {
-    const env = makeEnv({
-      LINEAR_KV: createMockKV({
-        "oauth:token:org-1": freshToken("app-token"),
-      }) as unknown as KVNamespace,
+    const { kv } = createFakeKV({
+      "oauth:client-credentials:org-1": cachedClientCredentialsToken("app-token"),
     });
+    const env = makeLinearBotEnv(kv, { INTERNAL_CALLBACK_SECRET: "internal-secret" });
 
     const response = await app.fetch(
       new Request("http://localhost/internal/app-token", {
@@ -137,6 +121,7 @@ function makeAgentSessionPayload(webhookId = "webhook-config-1") {
     type: "AgentSessionEvent",
     action: "created",
     organizationId: "org-1",
+    appUserId: "app-user-1",
     webhookId,
     agentSession: {
       id: "agent-session-1",
@@ -244,5 +229,100 @@ describe("POST /webhook", () => {
     expect(kv.put).not.toHaveBeenCalled();
     expect(ctx.waitUntil).not.toHaveBeenCalled();
     expect(mocks.handleAgentSessionEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /oauth/callback", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("establishes verified client credentials without storing authorization-code tokens", async () => {
+    const { kv, store } = createFakeKV({
+      "oauth:token:org-1": JSON.stringify({ refresh_token: "legacy-refresh-token" }),
+    });
+    const env = makeLinearBotEnv(kv);
+    const fetchMock = createLinearFetchMock({
+      authorizationCode: () =>
+        Response.json({
+          access_token: "installation-access-token",
+          token_type: "Bearer",
+        }),
+      clientCredentials: () => linearClientCredentialsResponse(),
+      identity: () => linearIdentityResponse(),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.fetch(
+      new Request("http://localhost/oauth/callback?code=authorization-code"),
+      env,
+      makeExecutionContext()
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      "Successfully connected to workspace: <strong>Acme</strong>"
+    );
+    const cached = store.get("oauth:client-credentials:org-1") ?? "";
+    expect(cached).toContain("runtime-access-token");
+    expect(cached).not.toContain("installation-access-token");
+    expect(cached).not.toContain("installation-refresh-token");
+    expect(store.has("oauth:token:org-1")).toBe(false);
+  });
+
+  it("does not claim readiness when client credentials are disabled", async () => {
+    const { kv, store } = createFakeKV({
+      "oauth:token:org-1": "legacy-token-record",
+    });
+    vi.stubGlobal(
+      "fetch",
+      createLinearFetchMock({
+        authorizationCode: () => linearAuthorizationCodeResponse(),
+        identity: () => linearIdentityResponse(),
+        clientCredentials: () =>
+          Response.json(
+            {
+              error: "Error",
+              error_description: "Client does not support the client_credentials grant type",
+            },
+            { status: 400 }
+          ),
+      })
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/oauth/callback?code=authorization-code"),
+      makeLinearBotEnv(kv),
+      makeExecutionContext()
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("Linear authentication setup failed");
+    expect(store.get("oauth:token:org-1")).toBe("legacy-token-record");
+    expect(store.has("oauth:client-credentials:org-1")).toBe(false);
+  });
+
+  it("does not claim readiness when the runtime credential cannot be cached", async () => {
+    const { kv, store } = createFakeKV({
+      "oauth:token:org-1": "legacy-token-record",
+    });
+    vi.mocked(kv.put).mockRejectedValueOnce(new Error("KV unavailable"));
+    vi.stubGlobal(
+      "fetch",
+      createLinearFetchMock({
+        authorizationCode: () => linearAuthorizationCodeResponse(),
+        clientCredentials: () => linearClientCredentialsResponse(),
+        identity: () => linearIdentityResponse(),
+      })
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/oauth/callback?code=authorization-code"),
+      makeLinearBotEnv(kv),
+      makeExecutionContext()
+    );
+
+    expect(response.status).toBe(500);
+    expect(store.get("oauth:token:org-1")).toBe("legacy-token-record");
   });
 });

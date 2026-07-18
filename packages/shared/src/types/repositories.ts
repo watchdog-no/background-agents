@@ -60,8 +60,8 @@ export interface SessionListRepository {
  * before multi-repo support carry no repo identity (`artifactRepo === null`)
  * and by construction belong to the session's primary. Identity is compared
  * case-insensitively, matching repo-identity comparison elsewhere. This is the
- * single home of that convention — the control-plane per-repo prUrl projection
- * (findPrArtifactForRepo) and the web per-repo PR chips both go through here.
+ * single home of that convention — the control-plane and web PR-artifact
+ * lookups (each a native find over its own artifact shape) go through here.
  */
 export function prArtifactBelongsToRepo(
   artifactRepo: { repoOwner: string; repoName: string } | null,
@@ -147,6 +147,46 @@ export const sessionRepositoriesInputSchema = repositoriesInputSchema.superRefin
 export interface RepositoryPair {
   repoOwner: string;
   repoName: string;
+}
+
+/** Format a structured repository identity for display or opaque selection keys. */
+export function formatRepositoryFullName(repository: RepositoryPair): string {
+  return `${repository.repoOwner}/${repository.repoName}`;
+}
+
+/** Encode a repository identity as the two path segments used by repository APIs. */
+export function encodeRepositoryPathSegments(repository: RepositoryPair): string {
+  return `${encodeURIComponent(repository.repoOwner)}/${encodeURIComponent(repository.repoName)}`;
+}
+
+/** Parse an owner/name string, preserving any nested namespace in the owner. */
+export function parseRepositoryFullName(fullName: string): RepositoryPair | null {
+  const separator = fullName.lastIndexOf("/");
+  if (separator <= 0 || separator === fullName.length - 1) return null;
+
+  const repoOwner = fullName.slice(0, separator);
+  const repoName = fullName.slice(separator + 1);
+  if (repoOwner.split("/").some((segment) => !segment)) return null;
+
+  return { repoOwner, repoName };
+}
+
+/** Decode and validate the two path segments used by repository APIs. */
+export function decodeRepositoryPathSegments(
+  encodedOwner: string,
+  encodedName: string
+): RepositoryPair | null {
+  try {
+    const repoOwner = decodeURIComponent(encodedOwner);
+    const repoName = decodeURIComponent(encodedName);
+    const repository = parseRepositoryFullName(formatRepositoryFullName({ repoOwner, repoName }));
+
+    return repository?.repoOwner === repoOwner && repository.repoName === repoName
+      ? repository
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export class RepositoryPairValidationError extends Error {
