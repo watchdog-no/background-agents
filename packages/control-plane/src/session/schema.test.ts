@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { applyMigrations, MIGRATIONS, SCHEMA_SQL } from "./schema";
-import type { SqlStorage, SqlResult } from "./repository";
+import type { SqlResult, SqlStorage } from "./sql-storage";
 
 /**
  * Create a mock SqlStorage that tracks calls and supports per-query data.
@@ -70,7 +70,7 @@ describe("applyMigrations", () => {
   });
 
   it("skips all migrations when fully migrated", () => {
-    // All 24 IDs already applied
+    // Every migration ID is already applied.
     const appliedRows = MIGRATIONS.map((m) => ({ id: m.id }));
     mock.setData("SELECT id FROM _schema_migrations", appliedRows);
 
@@ -84,6 +84,11 @@ describe("applyMigrations", () => {
 
     const alterCalls = mock.calls.filter((c) => c.query.includes("ALTER TABLE"));
     expect(alterCalls).toHaveLength(0);
+  });
+
+  it("uses unique migration IDs", () => {
+    const ids = MIGRATIONS.map((migration) => migration.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("runs only unapplied migrations when partially migrated", () => {
@@ -216,5 +221,38 @@ describe("applyMigrations", () => {
     expect(SCHEMA_SQL).toContain("(repo_owner IS NULL) = (repo_name IS NULL)");
     expect(SCHEMA_SQL).toContain("repo_owner IS NOT NULL");
     expect(SCHEMA_SQL).toContain("repo_id IS NULL AND base_branch IS NULL");
+  });
+
+  it("adds artifacts.updated_at for both fresh DOs and migrated DOs", () => {
+    // Fresh DOs get the column NOT NULL from SCHEMA_SQL; existing DOs get a
+    // nullable ADD COLUMN (SQLite restriction) plus a backfill via migration 37.
+    const artifactsTable = SCHEMA_SQL.split("CREATE TABLE IF NOT EXISTS artifacts")[1]?.split(
+      ");"
+    )[0];
+    expect(artifactsTable).toContain("updated_at INTEGER NOT NULL");
+
+    const migration = MIGRATIONS.find((m) => m.id === 37);
+    expect(migration).toBeDefined();
+    expect(typeof migration?.run).toBe("function");
+
+    (migration!.run as (sql: SqlStorage) => void)(mock.sql);
+
+    const alter = mock.calls.find((c) =>
+      c.query.includes("ALTER TABLE artifacts ADD COLUMN updated_at INTEGER")
+    );
+    expect(alter).toBeDefined();
+    const backfill = mock.calls.find(
+      (c) =>
+        c.query.includes("UPDATE artifacts SET updated_at = created_at") &&
+        c.query.includes("updated_at IS NULL")
+    );
+    expect(backfill).toBeDefined();
+  });
+
+  it("creates the final attachments schema in its single unshipped migration", () => {
+    const migration = MIGRATIONS.find((entry) => entry.id === 38);
+    expect(migration?.run).toContain("CREATE TABLE IF NOT EXISTS attachments");
+    expect(migration?.run).toContain("cleanup_claimed_at INTEGER");
+    expect(migration?.run).not.toContain("kind TEXT");
   });
 });

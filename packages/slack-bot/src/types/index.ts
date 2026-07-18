@@ -2,6 +2,8 @@
  * Type definitions for the Slack bot.
  */
 
+import type { SlackCompletionJob } from "../completion/job";
+
 /**
  * Cloudflare Worker environment bindings.
  */
@@ -11,6 +13,9 @@ export interface Env {
 
   // Service binding to control plane
   CONTROL_PLANE: Fetcher;
+
+  // Durable completion handoff. All Slack completion callbacks enqueue here.
+  SLACK_COMPLETION_QUEUE: Queue<SlackCompletionJob>;
 
   // Environment variables
   DEPLOYMENT_NAME: string;
@@ -147,6 +152,12 @@ export interface ThreadSession {
   reasoningEffort?: string;
   /** Unix timestamp of when the session was created. Used for debugging and observability. */
   createdAt: number;
+  /**
+   * Slack ts of the last thread message forwarded to the session. Follow-up
+   * prompts include the human messages posted after this point so the agent
+   * sees discussion that happened between invocations.
+   */
+  lastPromptTs?: string;
 }
 
 /**

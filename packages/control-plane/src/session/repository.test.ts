@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { SessionRepository, type SqlStorage, type SqlResult } from "./repository";
+import { SessionRepository } from "./repository";
+import {
+  AttachmentClaimConflictError,
+  SessionAttachmentRepository,
+} from "./session-attachment-repository";
+import type { SqlResult, SqlStorage } from "./sql-storage";
 
 /**
  * Create a mock SqlStorage that tracks calls and returns configurable data.
@@ -14,6 +19,7 @@ function createMockSql() {
   const calls: Array<{ query: string; params: unknown[] }> = [];
   const mockData: Map<string, unknown[]> = new Map();
   const rowsWrittenByQuery: Map<string, number> = new Map();
+  let defaultRowsWritten = 0;
   let oneValue: unknown = null;
 
   const sql: SqlStorage = {
@@ -31,7 +37,7 @@ function createMockSql() {
           return oneValue;
         },
         get rowsWritten() {
-          return consumed ? (rowsWrittenByQuery.get(query) ?? 0) : 0;
+          return consumed ? (rowsWrittenByQuery.get(query) ?? defaultRowsWritten) : 0;
         },
       };
     },
@@ -46,6 +52,9 @@ function createMockSql() {
     setRowsWritten(query: string, rowsWritten: number) {
       rowsWrittenByQuery.set(query, rowsWritten);
     },
+    setDefaultRowsWritten(rowsWritten: number) {
+      defaultRowsWritten = rowsWritten;
+    },
     setOne(value: unknown) {
       oneValue = value;
     },
@@ -53,6 +62,7 @@ function createMockSql() {
       calls.length = 0;
       mockData.clear();
       rowsWrittenByQuery.clear();
+      defaultRowsWritten = 0;
       oneValue = null;
     },
   };
@@ -64,7 +74,11 @@ describe("SessionRepository", () => {
 
   beforeEach(() => {
     mock = createMockSql();
-    repo = new SessionRepository(mock.sql);
+    repo = new SessionRepository(
+      mock.sql,
+      (closure) => closure(),
+      new SessionAttachmentRepository(mock.sql)
+    );
   });
 
   // === SESSION ===
@@ -486,6 +500,7 @@ describe("SessionRepository", () => {
         scmUserId: "gh-123",
         scmLogin: "testuser",
         scmName: "Test User",
+        authName: "Authenticated User",
         scmEmail: "test@example.com",
         scmAccessTokenEncrypted: "encrypted-token",
         scmTokenExpiresAt: 9000,
@@ -501,6 +516,7 @@ describe("SessionRepository", () => {
         "gh-123",
         "testuser",
         "Test User",
+        "Authenticated User",
         "test@example.com",
         "encrypted-token",
         null,
@@ -528,6 +544,7 @@ describe("SessionRepository", () => {
         null,
         null,
         null,
+        null,
         "member",
         1000,
       ]);
@@ -539,13 +556,15 @@ describe("SessionRepository", () => {
       repo.updateParticipantCoalesce("p-1", {
         scmLogin: "newlogin",
         scmName: null,
+        authName: "Authenticated User",
       });
 
       expect(mock.calls.length).toBe(1);
       expect(mock.calls[0].query).toContain("COALESCE");
       expect(mock.calls[0].params[0]).toBe(null); // scmUserId
       expect(mock.calls[0].params[1]).toBe("newlogin");
-      expect(mock.calls[0].params[7]).toBe("p-1"); // participantId
+      expect(mock.calls[0].params[3]).toBe("Authenticated User");
+      expect(mock.calls[0].params[8]).toBe("p-1"); // participantId
     });
   });
 
@@ -650,6 +669,46 @@ describe("SessionRepository", () => {
         "pending",
         1000,
       ]);
+    });
+  });
+
+  describe("createMessageWithAttachments", () => {
+    const message = {
+      id: "msg-1",
+      authorId: "p-1",
+      content: "Look",
+      source: "web" as const,
+      status: "pending" as const,
+      createdAt: 1000,
+    };
+
+    it("claims every upload and creates the message in one transaction", () => {
+      let transactions = 0;
+      repo = new SessionRepository(
+        mock.sql,
+        (closure) => {
+          transactions += 1;
+          return closure();
+        },
+        new SessionAttachmentRepository(mock.sql)
+      );
+      mock.setDefaultRowsWritten(2);
+
+      repo.createMessageWithAttachments(message, ["up-1", "up-2"]);
+
+      expect(transactions).toBe(1);
+      expect(mock.calls[0].query).toContain("UPDATE attachments SET message_id");
+      expect(mock.calls[0].params).toEqual(["msg-1", "up-1", "up-2"]);
+      expect(mock.calls[1].query).toContain("INSERT INTO messages");
+    });
+
+    it("fails before creating the message when not every upload can be claimed", () => {
+      mock.setDefaultRowsWritten(1);
+
+      expect(() => repo.createMessageWithAttachments(message, ["up-1", "up-2"])).toThrow(
+        AttachmentClaimConflictError
+      );
+      expect(mock.calls).toHaveLength(1);
     });
   });
 
@@ -999,7 +1058,7 @@ describe("SessionRepository", () => {
   // === ARTIFACTS ===
 
   describe("createArtifact", () => {
-    it("stores artifact", () => {
+    it("stores artifact with updated_at starting at created_at", () => {
       repo.createArtifact({
         id: "art-1",
         type: "pr",
@@ -1010,12 +1069,35 @@ describe("SessionRepository", () => {
 
       expect(mock.calls.length).toBe(1);
       expect(mock.calls[0].query).toContain("INSERT INTO artifacts");
+      expect(mock.calls[0].query).toContain("updated_at");
       expect(mock.calls[0].params).toEqual([
         "art-1",
         "pr",
         "https://github.com/owner/repo/pull/1",
         '{"number":1}',
         1000,
+        1000,
+      ]);
+    });
+  });
+
+  describe("updateArtifact", () => {
+    it("updates url, metadata, and updated_at in place", () => {
+      repo.updateArtifact("art-1", {
+        url: "https://github.com/owner/renamed/pull/1",
+        metadata: '{"number":1}',
+        updatedAt: 3000,
+      });
+
+      expect(mock.calls.length).toBe(1);
+      expect(mock.calls[0].query).toContain(
+        "UPDATE artifacts SET url = ?, metadata = ?, updated_at = ? WHERE id = ?"
+      );
+      expect(mock.calls[0].params).toEqual([
+        "https://github.com/owner/renamed/pull/1",
+        '{"number":1}',
+        3000,
+        "art-1",
       ]);
     });
   });

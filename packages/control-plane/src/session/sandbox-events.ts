@@ -96,6 +96,7 @@ export class SessionSandboxEventProcessor {
         url: event.url,
         metadata: event.metadata ?? null,
         createdAt: now,
+        updatedAt: now,
       };
 
       this.deps.repository.createArtifact({

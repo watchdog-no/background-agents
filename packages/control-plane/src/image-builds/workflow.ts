@@ -7,6 +7,7 @@ import {
   ImageBuildCallbackAuthError,
   markImageBuildFailedWithCallbackTokenOrThrow,
   requireInternalImageBuildCallbackAuth,
+  verifyImageBuildCallbackTokenOrThrow,
 } from "./callback-auth";
 import {
   ImageBuildCallbackAuthRejectedError,
@@ -22,6 +23,7 @@ import {
   ImageBuildTriggerFailedError,
   ImageBuildWorkflowUnavailableError,
 } from "./errors";
+import { DEFAULT_STALE_BUILD_MAX_AGE_MS } from "./maintenance";
 import {
   parseRuntimeVersionNumber,
   type ImageBuildProvider,
@@ -133,6 +135,37 @@ export class ImageBuildWorkflow {
     return await this.trigger(scope, ctx, { onlyIfStale: true });
   }
 
+  /**
+   * Lazy wedge recovery: a build whose sandbox died without a callback would
+   * hold the concurrency-1 guard forever (getActiveBuild has no age cutoff).
+   * Best-effort — a hygiene failure must never fail the trigger.
+   */
+  private async failStaleScopeBuild(
+    scope: ImageBuildScope,
+    provider: ImageBuildProvider,
+    ctx: ImageBuildWorkflowContext
+  ): Promise<void> {
+    const logContext = {
+      scope_kind: scope.kind,
+      scope_id: scope.id,
+      provider,
+      request_id: ctx.request_id,
+      trace_id: ctx.trace_id,
+    };
+    try {
+      const staleFailed = await this.store.markScopeStaleBuildFailed(
+        scope,
+        provider,
+        DEFAULT_STALE_BUILD_MAX_AGE_MS
+      );
+      if (staleFailed > 0) {
+        logger.warn("image_build.stale_lazy_marked", { build_count: staleFailed, ...logContext });
+      }
+    } catch (e) {
+      logger.warn("image_build.stale_lazy_mark_error", { error: errorMessage(e), ...logContext });
+    }
+  }
+
   private async trigger(
     scope: ImageBuildScope,
     ctx: ImageBuildWorkflowContext,
@@ -146,6 +179,8 @@ export class ImageBuildWorkflow {
     }
 
     const provider = this.provider;
+    await this.failStaleScopeBuild(scope, provider, ctx);
+
     const active = await this.store.getActiveBuild(scope, provider);
     if (active) {
       return { type: "already_building", buildId: active.id };
@@ -373,6 +408,13 @@ export class ImageBuildWorkflow {
       if (!providerSessionId) {
         throw new ImageBuildInvalidCallbackError("provider_session_id is required");
       }
+
+      await this.consumeTokenBuildCallbackAuth(command.callbackToken, {
+        buildId: build.id,
+        provider,
+        providerSessionId,
+        ctx,
+      });
 
       logger.info("image_build.build_complete_received", {
         build_id: validated.buildId,
@@ -780,6 +822,27 @@ export class ImageBuildWorkflow {
   }
 
   private async requireTokenBuildCallbackAuth(
+    token: string | null | undefined,
+    params: {
+      buildId: string;
+      provider: ImageBuildProvider;
+      providerSessionId: string;
+      ctx: ImageBuildWorkflowContext;
+    }
+  ): Promise<void> {
+    try {
+      await verifyImageBuildCallbackTokenOrThrow(this.store, this.env, token, {
+        buildId: params.buildId,
+        provider: params.provider,
+        providerSessionId: params.providerSessionId,
+        now: Date.now(),
+      });
+    } catch (e) {
+      throw this.loggedCallbackAuthError(e, params);
+    }
+  }
+
+  private async consumeTokenBuildCallbackAuth(
     token: string | null | undefined,
     params: {
       buildId: string;

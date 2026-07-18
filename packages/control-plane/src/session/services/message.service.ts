@@ -1,8 +1,10 @@
-import type { ArtifactRow, MessageRow } from "../types";
+import type { ArtifactRow } from "../types";
+import type { SessionAttachmentReference, SessionMessage } from "@open-inspect/shared";
 import type { ArtifactResponse, ListEventsResponse } from "../../types";
 import type { SessionRepository } from "../repository";
 import type { SessionMessageQueue } from "../message-queue";
 import { SessionEventStream, type SessionEventListRequest } from "../event-stream";
+import { parseStoredSessionAttachments } from "../session-attachment-resolver";
 
 export interface EnqueuePromptRequest {
   content: string;
@@ -10,7 +12,7 @@ export interface EnqueuePromptRequest {
   source: string;
   model?: string;
   reasoningEffort?: string;
-  attachments?: Array<{ type: string; name: string; url?: string }>;
+  attachments?: SessionAttachmentReference[];
   callbackContext?: Record<string, unknown>;
 
   // Identity enrichment (from router D1 lookup at prompt time)
@@ -69,6 +71,7 @@ export class MessageService {
       url: string | null;
       metadata: Record<string, unknown> | null;
       createdAt: number;
+      updatedAt: number;
     }>;
   } {
     const artifacts = this.deps.repository.listArtifacts();
@@ -79,6 +82,7 @@ export class MessageService {
         url: artifact.url,
         metadata: this.deps.parseArtifactMetadata(artifact),
         createdAt: artifact.created_at,
+        updatedAt: artifact.updated_at,
       })),
     };
   }
@@ -96,12 +100,13 @@ export class MessageService {
         url: artifact.url,
         metadata: this.deps.parseArtifactMetadata(artifact),
         createdAt: artifact.created_at,
+        updatedAt: artifact.updated_at,
       },
     };
   }
 
   listMessages(request: ListMessagesRequest): {
-    messages: MessageRow[];
+    messages: SessionMessage[];
     cursor: string | undefined;
     hasMore: boolean;
   } {
@@ -114,7 +119,17 @@ export class MessageService {
     if (hasMore) messages.pop();
 
     return {
-      messages,
+      messages: messages.map((message) => ({
+        id: message.id,
+        authorId: message.author_id,
+        content: message.content,
+        source: message.source,
+        attachments: parseStoredSessionAttachments(message.attachments) ?? null,
+        status: message.status,
+        createdAt: message.created_at,
+        startedAt: message.started_at,
+        completedAt: message.completed_at,
+      })),
       cursor: messages.length > 0 ? messages[messages.length - 1].created_at.toString() : undefined,
       hasMore,
     };

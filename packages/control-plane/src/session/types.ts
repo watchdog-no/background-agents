@@ -3,7 +3,7 @@
  */
 
 import type {
-  Attachment,
+  ResolvedSessionAttachment,
   SessionStatus,
   SandboxStatus,
   GitSyncStatus,
@@ -62,6 +62,7 @@ export interface ParticipantRow {
   scm_login: string | null;
   scm_email: string | null;
   scm_name: string | null;
+  auth_name: string | null;
   role: ParticipantRole;
   scm_access_token_encrypted: string | null;
   scm_refresh_token_encrypted: string | null;
@@ -87,6 +88,16 @@ export interface MessageRow {
   completed_at: number | null;
 }
 
+export interface SessionAttachmentRow {
+  id: string;
+  mime_type: string;
+  size_bytes: number;
+  object_key: string;
+  message_id: string | null; // Set once a prompt references this upload
+  cleanup_claimed_at: number | null; // Retained until object deletion is acknowledged
+  created_at: number;
+}
+
 export interface EventRow {
   id: string;
   type: EventType;
@@ -101,6 +112,8 @@ export interface ArtifactRow {
   url: string | null;
   metadata: string | null; // JSON
   created_at: number;
+  /** Last content change; migration 34 backfills it to created_at. */
+  updated_at: number;
 }
 
 export interface SandboxRow {
@@ -138,7 +151,7 @@ export interface PromptCommand {
     scmName: string | null;
     scmEmail: string | null;
   };
-  attachments?: Attachment[];
+  attachments?: ResolvedSessionAttachment[];
 }
 
 export interface StopCommand {

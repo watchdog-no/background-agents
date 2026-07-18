@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ENABLED_MODELS,
   DEFAULT_MODEL,
+  MODEL_CATALOG,
   MODEL_OPTIONS,
+  MODEL_REASONING_CONFIG,
+  VALID_MODELS,
   extractProviderAndModel,
   getDefaultReasoningEffort,
   getReasoningConfig,
@@ -10,6 +13,8 @@ import {
   isValidModel,
   isValidReasoningEffort,
   normalizeModelId,
+  normalizeValidModels,
+  resolveEnabledModel,
   supportsReasoning,
 } from "./models";
 
@@ -48,6 +53,42 @@ const DEEPSEEK_MODELS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro
 const ZAI_CODING_PLAN_MODELS = ["zai-coding-plan/glm-5.2"] as const;
 
 describe("model utilities", () => {
+  it("derives every public model view from the authoritative catalog", () => {
+    const catalogModels = MODEL_CATALOG.flatMap((group) => group.models);
+
+    expect(VALID_MODELS).toEqual(catalogModels.map((model) => model.id));
+    expect(MODEL_OPTIONS).toEqual(
+      MODEL_CATALOG.map((group) => ({
+        category: group.category,
+        models: group.models.map(({ id, name, description }) => ({ id, name, description })),
+      }))
+    );
+    expect(DEFAULT_ENABLED_MODELS).toEqual(
+      MODEL_CATALOG.filter((group) => group.enabledByDefault).flatMap((group) =>
+        group.models.map((model) => model.id)
+      )
+    );
+
+    const defaultModels = catalogModels.filter((model) => "default" in model && model.default);
+    expect(defaultModels).toHaveLength(1);
+    expect(DEFAULT_MODEL).toBe(defaultModels[0]?.id);
+
+    expect(MODEL_REASONING_CONFIG).toEqual(
+      Object.fromEntries(
+        catalogModels.flatMap((model) =>
+          "reasoning" in model
+            ? [
+                [
+                  model.id,
+                  { efforts: [...model.reasoning.efforts], default: model.reasoning.default },
+                ],
+              ]
+            : []
+        )
+      )
+    );
+  });
+
   it("uses GPT 5.6 Sol with xhigh reasoning as the valid default", () => {
     expect(DEFAULT_MODEL).toBe("openai/gpt-5.6-sol");
     expect(isValidModel(DEFAULT_MODEL)).toBe(true);
@@ -77,6 +118,65 @@ describe("model utilities", () => {
     expect(isValidModel("claude-fable-5")).toBe(true);
     expect(isValidModel("gpt-5.3-codex")).toBe(true);
     expect(isValidModel("gpt-5.6-sol")).toBe(true);
+  });
+
+  it("normalizes, filters, and deduplicates model lists", () => {
+    expect(
+      normalizeValidModels([
+        "openai/gpt-5.4",
+        "gpt-5.3-codex",
+        "openai/gpt-5.2",
+        "openai/gpt-5.3-codex",
+        "unknown/model",
+        "anthropic/claude-sonnet-4-6",
+      ])
+    ).toEqual(["openai/gpt-5.4", "openai/gpt-5.3-codex", "anthropic/claude-sonnet-4-6"]);
+    expect(normalizeValidModels(["openai/gpt-5.2", "unknown/model"])).toEqual([]);
+    expect(normalizeValidModels([])).toEqual([]);
+  });
+
+  it("resolves models using the shared enabled-model fallback policy", () => {
+    expect(
+      resolveEnabledModel({
+        model: "claude-opus-4-8",
+        fallbackModel: "gpt-5.4",
+        enabledModels: ["openai/gpt-5.2", "anthropic/claude-opus-4-8", "openai/gpt-5.4"],
+      })
+    ).toBe("anthropic/claude-opus-4-8");
+    expect(
+      resolveEnabledModel({
+        model: "anthropic/claude-opus-4-8",
+        fallbackModel: "gpt-5.4",
+        enabledModels: ["openai/gpt-5.2", "openai/gpt-5.4"],
+      })
+    ).toBe("openai/gpt-5.4");
+    expect(
+      resolveEnabledModel({
+        model: "anthropic/claude-opus-4-8",
+        fallbackModel: "anthropic/claude-sonnet-4-6",
+        enabledModels: ["openai/gpt-5.2", "gpt-5.5"],
+      })
+    ).toBe("openai/gpt-5.5");
+    expect(
+      resolveEnabledModel({
+        model: "anthropic/claude-opus-4-8",
+        fallbackModel: "openai/gpt-5.4",
+        enabledModels: ["openai/gpt-5.2"],
+      })
+    ).toBe("openai/gpt-5.4");
+    expect(
+      resolveEnabledModel({
+        model: "anthropic/claude-opus-4-8",
+        fallbackModel: "openai/gpt-5.4",
+      })
+    ).toBe("anthropic/claude-opus-4-8");
+    expect(
+      resolveEnabledModel({
+        model: "anthropic/claude-opus-4-8",
+        fallbackModel: "openai/gpt-5.4",
+        enabledModels: [],
+      })
+    ).toBe("openai/gpt-5.4");
   });
 
   it("rejects invalid, legacy, empty, and case-mismatched models", () => {

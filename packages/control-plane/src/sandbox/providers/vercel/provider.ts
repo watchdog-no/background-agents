@@ -35,7 +35,7 @@ import type {
   VercelVcpus,
 } from "./client";
 import { VercelSandboxApiError } from "./client";
-import { DEFAULT_VERCEL_RUNTIME, VERCEL_PYTHON_BIN } from "./bootstrap";
+import { DEFAULT_VERCEL_RUNTIME, VERCEL_PYTHON_BIN, VERCEL_SANDBOX_VERSION } from "./bootstrap";
 
 const log = createLogger("vercel-provider");
 
@@ -46,7 +46,8 @@ const TUNNEL_ENV_FILE_PATH = "/workspace/.tunnels.env";
 const TUNNEL_ENV_SANDBOX_ID_KEY = "TUNNEL_SANDBOX_ID";
 const EXPECTED_TUNNEL_PORTS_ENV_VAR = "EXPECTED_TUNNEL_PORTS";
 const DEFAULT_SNAPSHOT_EXPIRATION_MS = 0;
-const VERCEL_MAX_SANDBOX_TIMEOUT_MS = 45 * 60 * 1000;
+// Exported for the stale-threshold ceiling assertion in image-builds/maintenance.test.ts.
+export const VERCEL_MAX_SANDBOX_TIMEOUT_MS = 45 * 60 * 1000;
 const VERCEL_MEMORY_MIB_PER_VCPU = 2048;
 const VERCEL_SUPPORTED_VCPUS: readonly VercelVcpus[] = [1, 2, 4, 8];
 const VERCEL_MAX_VCPUS = VERCEL_SUPPORTED_VCPUS[VERCEL_SUPPORTED_VCPUS.length - 1];
@@ -429,6 +430,7 @@ export class VercelSandboxProvider implements SandboxProvider {
       PYTHONUNBUFFERED: "1",
       NODE_PATH: "/usr/lib/node_modules:/usr/local/lib/node_modules",
       SANDBOX_ID: config.sandboxId,
+      SANDBOX_VERSION: VERCEL_SANDBOX_VERSION,
       REPO_OWNER: config.repoOwner,
       REPO_NAME: config.repoName,
       IMAGE_BUILD_MODE: "true",

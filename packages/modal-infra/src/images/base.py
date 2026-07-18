@@ -25,11 +25,9 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 
 # OpenCode version to install.
 #
-# Keep the CLI and plugin packages in lockstep. OpenCode 1.15.12 kept the OpenAI
-# WebSocket response timeouts active and retried failed OpenAI WebSocket streams
-# before falling back, fixing dropped/hung OpenAI responses seen on 1.15.10.
-# 1.15.13 is the current pinned release.
-OPENCODE_VERSION = "1.15.13"
+# OpenCode restored `/event` stream context in 1.14.50 and fixed the remaining
+# eager-subscription race in 1.15.5. Keep the CLI and plugin on the same pin.
+OPENCODE_VERSION = "1.17.18"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"

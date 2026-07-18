@@ -6,7 +6,7 @@
  * Cloudflare Worker environment bindings.
  */
 export interface Env {
-  // KV namespace for config, OAuth tokens, and issue-to-session mapping
+  // KV namespace for config, runtime-token cache, and issue-to-session mapping
   LINEAR_KV: KVNamespace;
 
   // Service binding to control plane
@@ -32,22 +32,6 @@ export interface Env {
   LINEAR_API_KEY?: string; // kept for backward compat / fallback
   INTERNAL_CALLBACK_SECRET?: string;
   LOG_LEVEL?: string;
-}
-
-// ─── OAuth Types ─────────────────────────────────────────────────────────────
-
-export interface OAuthTokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  refresh_token: string;
-  scope?: string;
-}
-
-export interface StoredTokenData {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number;
 }
 
 // ─── Repo / Config Types ─────────────────────────────────────────────────────
@@ -219,7 +203,7 @@ export interface AgentSessionWebhook {
   action: string;
   organizationId: string;
   webhookId: string;
-  appUserId?: string;
+  appUserId: string;
   // Linear delivers `promptContext` as a TOP-LEVEL field — a preformatted XML
   // string of the issue, all relevant comment threads, and guidance. It is a
   // sibling of `agentSession`, NOT nested inside it. See
@@ -227,13 +211,15 @@ export interface AgentSessionWebhook {
   promptContext?: string;
   agentSession: {
     id: string;
+    creatorId?: string | null;
     issue?: AgentSessionWebhookIssue;
-    comment?: { body: string };
+    comment?: { body: string; userId?: string };
     // Older code read promptContext here; Linear never populates it at this
     // level. Retained only so the legacy fallback path keeps type-checking.
     promptContext?: string;
   };
   agentActivity?: {
+    userId?: string;
     content?: {
       type?: string;
       body?: string;

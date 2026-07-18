@@ -15,6 +15,8 @@ import { useSession, signOut } from "next-auth/react";
 import useSWR, { mutate } from "swr";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { archiveSession } from "@/lib/archive-session";
+import { pullRequestSummaryDisplay } from "@/lib/pr-summary";
+import { PullRequestStateIcon } from "@/components/pr-state-icon";
 import { formatRelativeTime, isInactiveSession } from "@/lib/time";
 import {
   applyTitleUpdate,
@@ -33,16 +35,15 @@ import {
   SidebarIcon,
   ArchiveIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
   AutomationsIcon,
   BranchIcon,
   BoxIcon,
   DataControlsIcon,
 } from "@/components/ui/icons";
-import { APP_SHORT_NAME } from "@/lib/site-config";
-import { formatRepoLabel, formatSessionRepositoriesLabel } from "@/lib/repo-label";
+import { formatSessionRepositoriesLabel } from "@/lib/repo-label";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useEnvironments } from "@/hooks/use-environments";
 import {
   DropdownMenu,
@@ -57,6 +58,38 @@ import type { Session } from "@open-inspect/shared";
 export type SessionItem = Session;
 
 export const MOBILE_LONG_PRESS_MS = 450;
+
+interface SidebarActionButtonProps {
+  onClick?: () => void;
+}
+
+export function SearchSessionsButton({ onClick }: SidebarActionButtonProps) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      title={`Search sessions (${SHORTCUT_LABELS.COMMAND_MENU})`}
+      aria-label={`Search sessions (${SHORTCUT_LABELS.COMMAND_MENU})`}
+    >
+      <SearchIcon className="w-4 h-4" />
+    </Button>
+  );
+}
+
+export function NewSessionButton({ onClick }: SidebarActionButtonProps) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      title={`New session (${SHORTCUT_LABELS.NEW_SESSION})`}
+      aria-label={`New session (${SHORTCUT_LABELS.NEW_SESSION})`}
+    >
+      <PlusIcon className="w-4 h-4" />
+    </Button>
+  );
+}
 const MOBILE_LONG_PRESS_MOVE_THRESHOLD_PX = 10;
 type SessionCreatorFilter = "all" | "mine";
 
@@ -78,17 +111,25 @@ export function buildSessionHref(session: SessionItem) {
 
 interface SessionSidebarProps {
   onNewSession?: () => void;
+  onSearchSessions?: () => void;
   onToggle?: () => void;
   onSessionSelect?: () => void;
 }
 
-export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: SessionSidebarProps) {
+export function SessionSidebar({
+  onNewSession,
+  onSearchSessions,
+  onToggle,
+  onSessionSelect,
+}: SessionSidebarProps) {
   const { data: authSession } = useSession();
   const pathname = usePathname();
   const router = useRouter();
-  const [searchQuery, setSearchQuery] = useState("");
   const [sessionCreatorFilter, setSessionCreatorFilter] = useState<SessionCreatorFilter>("all");
-  const [extraSessions, setExtraSessions] = useState<SessionItem[]>([]);
+  const [extraSessionsState, setExtraSessionsState] = useState<{
+    source: SessionListResponse | undefined;
+    sessions: SessionItem[];
+  }>({ source: undefined, sessions: [] });
   const [hasMorePages, setHasMorePages] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -115,18 +156,15 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
   const loading = sessionsLoading;
   const firstPageSessions = useMemo(() => data?.sessions ?? [], [data?.sessions]);
 
-  // Track data reference to clear extraSessions synchronously during render,
-  // preventing one frame of stale extra sessions after SWR revalidation.
-  const prevDataRef = useRef(data);
-  let effectiveExtraSessions = extraSessions;
-  if (prevDataRef.current !== data) {
-    prevDataRef.current = data;
-    effectiveExtraSessions = [];
-  }
+  // Hide paginated rows synchronously when SWR replaces their source page.
+  const extraSessions = useMemo(
+    () => (extraSessionsState.source === data ? extraSessionsState.sessions : []),
+    [data, extraSessionsState]
+  );
 
   useEffect(() => {
     sessionListVersionRef.current += 1;
-    setExtraSessions([]);
+    setExtraSessionsState({ source: data, sessions: [] });
     setLoadingMore(false);
     loadingMoreRef.current = false;
 
@@ -167,7 +205,10 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
         return;
       }
 
-      setExtraSessions((prev) => mergeUniqueSessions(prev, fetched));
+      setExtraSessionsState((previous) => ({
+        source: data,
+        sessions: mergeUniqueSessions(previous.source === data ? previous.sessions : [], fetched),
+      }));
       setHasMorePages(page.hasMore);
       offsetRef.current += fetched.length;
       hasMoreRef.current = page.hasMore;
@@ -179,7 +220,7 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
         setLoadingMore(false);
       }
     }
-  }, [authSession, sessionCreatorFilter, sidebarSessionsKey]);
+  }, [authSession, data, sessionCreatorFilter, sidebarSessionsKey]);
 
   const maybeLoadMoreSessions = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -208,27 +249,13 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
   ]);
 
   const sessions = useMemo(
-    () => mergeUniqueSessions(firstPageSessions, effectiveExtraSessions),
-    [firstPageSessions, effectiveExtraSessions]
+    () => mergeUniqueSessions(firstPageSessions, extraSessions),
+    [firstPageSessions, extraSessions]
   );
 
-  // Sort sessions by updatedAt (most recent first), filter by search query,
-  // and group children under their parent sessions
-  const { activeSessions, inactiveSessions, childrenMap, hasFilteredSessions } = useMemo(() => {
-    const filtered = sessions
-      .filter((session) => session.status !== "archived")
-      .filter((session) => {
-        if (!searchQuery) return true;
-        const query = searchQuery.toLowerCase();
-        const title = session.title?.toLowerCase() || "";
-        if (title.includes(query)) return true;
-        // Match against every member of the repository set, not just the
-        // primary; scalar fallback covers pre-multi-repo sessions.
-        const repoLabels = session.repositories?.length
-          ? session.repositories.map((repo) => formatRepoLabel(repo.repoOwner, repo.repoName))
-          : [formatRepoLabel(session.repoOwner, session.repoName)];
-        return repoLabels.some((label) => label.toLowerCase().includes(query));
-      });
+  // Sort sessions by updatedAt (most recent first) and group children under their parent sessions.
+  const { activeSessions, inactiveSessions, childrenMap } = useMemo(() => {
+    const filtered = sessions.filter((session) => session.status !== "archived");
 
     // Sort by updatedAt descending
     const sorted = [...filtered].sort((a, b) => {
@@ -274,9 +301,8 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
       activeSessions: active,
       inactiveSessions: inactive,
       childrenMap: children,
-      hasFilteredSessions: filtered.length > 0,
     };
-  }, [sessions, searchQuery]);
+  }, [sessions]);
 
   // Environment provenance for the cards, resolved once for the whole list.
   // Names are looked up so a deleted environment (or one still loading)
@@ -307,7 +333,10 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
             : current,
         { revalidate: false, populateCache: true }
       );
-      setExtraSessions((prev) => prev.filter((session) => session.id !== sessionId));
+      setExtraSessionsState((previous) => ({
+        ...previous,
+        sessions: previous.sessions.filter((session) => session.id !== sessionId),
+      }));
 
       if (currentSessionId === sessionId) {
         router.push("/");
@@ -325,11 +354,12 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
   const handleSessionRenamed = useCallback(
     (sessionId: string, title: string) => {
       const updatedAt = Date.now();
-      setExtraSessions((prev) =>
-        prev.map((session) =>
+      setExtraSessionsState((previous) => ({
+        ...previous,
+        sessions: previous.sessions.map((session) =>
           session.id === sessionId ? { ...session, title, updatedAt } : session
-        )
-      );
+        ),
+      }));
       if (!sidebarSessionsKey) return;
 
       void mutate<SessionListResponse>(
@@ -355,20 +385,10 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
           >
             <SidebarIcon className="w-4 h-4" />
           </Button>
-          <Link href="/" onClick={handleNavigationSelect} className="min-w-0">
-            <span className="block truncate font-semibold text-foreground">{APP_SHORT_NAME}</span>
-          </Link>
+          <SearchSessionsButton onClick={onSearchSessions} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onNewSession}
-            title={`New session (${SHORTCUT_LABELS.NEW_SESSION})`}
-            aria-label={`New session (${SHORTCUT_LABELS.NEW_SESSION})`}
-          >
-            <PlusIcon className="w-4 h-4" />
-          </Button>
+          <NewSessionButton onClick={onNewSession} />
           <Link
             href="/settings"
             onClick={handleNavigationSelect}
@@ -381,7 +401,6 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
           >
             <SettingsIcon className="w-4 h-4" />
           </Link>
-          <UserMenu user={authSession?.user} />
         </div>
       </div>
 
@@ -413,7 +432,7 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
         </Link>
       </div>
 
-      <div className="px-3 pt-2">
+      <div className="px-3 py-2">
         <ToggleGroup
           type="single"
           value={sessionCreatorFilter}
@@ -440,16 +459,6 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
         </ToggleGroup>
       </div>
 
-      {/* Search */}
-      <div className="px-3 py-2">
-        <Input
-          type="text"
-          placeholder="Search sessions..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-      </div>
-
       {/* Session List */}
       <div
         ref={scrollContainerRef}
@@ -462,10 +471,6 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
           </div>
         ) : sessions.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyMessage}</div>
-        ) : searchQuery && !hasFilteredSessions ? (
-          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No matching sessions
-          </div>
         ) : (
           <>
             {/* Active Sessions */}
@@ -523,6 +528,10 @@ export function SessionSidebar({ onNewSession, onToggle, onSessionSelect }: Sess
           </>
         )}
       </div>
+
+      <div className="border-t border-border-muted p-2">
+        <UserMenu user={authSession?.user} />
+      </div>
     </aside>
   );
 }
@@ -532,24 +541,24 @@ function UserMenu({ user }: { user?: { name?: string | null; image?: string | nu
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="w-7 h-7 rounded-full overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary"
+          type="button"
+          className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm font-medium text-foreground transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary"
           aria-label={`Signed in as ${user?.name || "User"}`}
           title={`Signed in as ${user?.name || "User"}`}
         >
-          {user?.image ? (
-            <img
-              src={user.image}
-              alt={user.name || "User"}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <span className="w-full h-full rounded-full bg-card flex items-center justify-center text-xs font-medium text-foreground">
-              {user?.name?.charAt(0).toUpperCase() || "?"}
-            </span>
-          )}
+          <span className="h-7 w-7 shrink-0 overflow-hidden rounded-full">
+            {user?.image ? (
+              <img src={user.image} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center rounded-full bg-card text-xs font-medium text-foreground">
+                {user?.name?.charAt(0).toUpperCase() || "?"}
+              </span>
+            )}
+          </span>
+          <span className="min-w-0 truncate">{user?.name || "User"}</span>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={4}>
+      <DropdownMenuContent align="start" side="top" sideOffset={4}>
         <DropdownMenuLabel className="font-medium truncate">
           {user?.name || "User"}
         </DropdownMenuLabel>
@@ -690,6 +699,7 @@ function SessionListItem({
     session.repoName,
     session.repositories
   );
+  const prDisplay = pullRequestSummaryDisplay(session.pullRequestSummary);
   const displayTitle = session.title || repoInfo;
   // Orphan child (parent filtered out) — show a subtle badge
   const isOrphanChild = session.parentSessionId && session.spawnSource === "agent";
@@ -888,7 +898,12 @@ function SessionListItem({
             onTouchCancel={handleTouchEnd}
             className="block pr-8"
           >
-            <div className="truncate text-sm font-medium text-foreground">{displayTitle}</div>
+            <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              {prDisplay && (
+                <PullRequestStateIcon state={prDisplay.state} label={prDisplay.label} />
+              )}
+              <span className="truncate">{displayTitle}</span>
+            </div>
             <div className="flex items-center gap-1 mt-0.5 text-xs text-muted-foreground">
               <span>{relativeTime}</span>
               <span>·</span>
@@ -977,6 +992,7 @@ function ChildSessionListItem({
 }) {
   const timestamp = session.updatedAt || session.createdAt;
   const relativeTime = formatRelativeTime(timestamp);
+  const prDisplay = pullRequestSummaryDisplay(session.pullRequestSummary);
   const displayTitle = session.title || "Sub-task";
   const paddingLeftRem = 1.75 + Math.max(depth - 1, 0) * 1;
   return (
@@ -994,6 +1010,7 @@ function ChildSessionListItem({
     >
       <div className="flex items-center gap-1.5 text-xs">
         <span className="shrink-0 text-muted-foreground">{relativeTime}</span>
+        {prDisplay && <PullRequestStateIcon state={prDisplay.state} label={prDisplay.label} />}
         <span className="truncate font-medium text-foreground">{displayTitle}</span>
       </div>
     </Link>

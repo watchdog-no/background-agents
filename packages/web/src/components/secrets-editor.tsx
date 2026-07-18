@@ -10,6 +10,7 @@ import {
 } from "react";
 import useSWR, { mutate } from "swr";
 import { toast } from "sonner";
+import { encodeRepositoryPathSegments } from "@open-inspect/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
@@ -200,8 +201,10 @@ function resolveScopePolicy(
       };
     case "repo": {
       const repoLabel = owner && name ? `${owner}/${name}` : "";
+      const repoPath =
+        owner && name ? encodeRepositoryPathSegments({ repoOwner: owner, repoName: name }) : "";
       return {
-        apiBase: `/api/repos/${owner}/${name}/secrets`,
+        apiBase: `/api/repos/${repoPath}/secrets`,
         ready: Boolean(owner && name),
         description: `Secrets apply to ${repoLabel || "the selected repo"}. Values are masked by default.`,
         emptyStateText: "No secrets set for this repo.",
