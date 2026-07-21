@@ -23,6 +23,7 @@ import {
   HttpError,
 } from "./routes/shared";
 import { integrationSettingsRoutes } from "./routes/integration-settings";
+import { commitSigningRoutes } from "./routes/commit-signing";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
 import { reposRoutes } from "./routes/repos";
 import { classifyRoutes } from "./routes/classify";
@@ -84,6 +85,17 @@ const SANDBOX_AUTH_ROUTES: RegExp[] = [
   /^\/sessions\/[^/]+\/slack-notify$/, // Agent-initiated Slack notification
 ];
 
+/** Routes that require the session-specific sandbox token and reject internal HMAC auth. */
+const SANDBOX_AUTH_ONLY_ROUTES: RegExp[] = [
+  /^\/sessions\/[^/]+\/commit-signing$/, // Public signing configuration and remote signer
+];
+
+/** Diff endpoints the sandbox needs, constrained by both path and method. */
+const SANDBOX_DIFF_AUTH_ROUTES: ReadonlyArray<{ method: string; pattern: RegExp }> = [
+  { method: "PUT", pattern: /^\/sessions\/[^/]+\/diff$/ },
+  { method: "POST", pattern: /^\/sessions\/[^/]+\/diff\/failure$/ },
+];
+
 type CachedScmProvider =
   | {
       envValue: string | undefined;
@@ -134,8 +146,15 @@ function isPublicRoute(path: string): boolean {
 /**
  * Check if a path matches any sandbox auth route pattern.
  */
-function isSandboxAuthRoute(path: string): boolean {
-  return SANDBOX_AUTH_ROUTES.some((pattern) => pattern.test(path));
+function isSandboxAuthRoute(path: string, method: string): boolean {
+  return (
+    SANDBOX_AUTH_ROUTES.some((pattern) => pattern.test(path)) ||
+    SANDBOX_DIFF_AUTH_ROUTES.some((route) => route.method === method && route.pattern.test(path))
+  );
+}
+
+function isSandboxAuthOnlyRoute(path: string): boolean {
+  return SANDBOX_AUTH_ONLY_ROUTES.some((pattern) => pattern.test(path));
 }
 
 function isScmAgnosticRoute(path: string): boolean {
@@ -144,7 +163,8 @@ function isScmAgnosticRoute(path: string): boolean {
     // Identity upserts are independent of the SCM provider. Only the known auth
     // providers are agnostic; an unimplemented SCM (e.g. gitlab) still 501s.
     /^\/provider-identities\/(github|slack|linear|google)\/[^/]+$/.test(path) ||
-    /^\/sessions\/[^/]+\/tunnel-urls$/.test(path)
+    /^\/sessions\/[^/]+\/(tunnel-urls|commit-signing)$/.test(path) ||
+    /^\/sessions\/[^/]+\/diff(?:\/.*)?$/.test(path)
   );
 }
 
@@ -325,6 +345,9 @@ const routes: Route[] = [
   // Integration settings
   ...integrationSettingsRoutes,
 
+  // Deployment-wide commit signing identity
+  ...commitSigningRoutes,
+
   // Automations
   ...automationRoutes,
 
@@ -354,17 +377,31 @@ export async function handleRequest(
   const method = request.method;
   const startTime = Date.now();
 
-  // Build correlation context with per-request metrics
+  // The DB binding is required (types.ts) and the control plane cannot serve
+  // requests without it. Reject a missing binding once here — the single
+  // honest boundary — so ctx.db is genuinely always present in handlers and
+  // no per-route degraded-mode guards are needed.
+  // eslint-disable-next-line no-restricted-syntax -- composition root: the one route-layer env.DB read
+  if (!env.DB) {
+    logger.error("DB binding is not configured; refusing request", { http_path: path });
+    return new Response(JSON.stringify({ error: "Database not configured" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Build correlation context with per-request metrics and the instrumented
+  // database handle. Handlers use ctx.db (never env.DB) so all queries are
+  // automatically timed.
   const metrics = createRequestMetrics();
   const ctx: RequestContext = {
     trace_id: request.headers.get("x-trace-id") || crypto.randomUUID(),
     request_id: crypto.randomUUID().slice(0, 8),
     metrics,
+    // eslint-disable-next-line no-restricted-syntax -- composition root: the one route-layer env.DB read
+    db: instrumentD1(env.DB, metrics),
     executionCtx,
   };
-
-  // Instrument D1 so all queries are automatically timed
-  const instrumentedEnv: Env = { ...env, DB: instrumentD1(env.DB, metrics) };
 
   // CORS preflight
   if (method === "OPTIONS") {
@@ -382,24 +419,26 @@ export async function handleRequest(
 
   // Require authentication for non-public routes
   if (!isPublicRoute(path)) {
-    const acceptsSandboxAuth = isSandboxAuthRoute(path);
-    // First try HMAC auth (for web app, slack bot, etc.)
-    const hmacAuthError = await requireInternalAuth(request, env, ctx);
-    let authError = hmacAuthError;
+    const requiresSandboxAuth = isSandboxAuthOnlyRoute(path);
+    let hmacAuthError: Response | null = null;
+    let authError: Response | null;
 
-    if (hmacAuthError) {
-      // HMAC auth failed - check if this route accepts sandbox auth
-      if (acceptsSandboxAuth) {
+    if (requiresSandboxAuth) {
+      const sessionIdMatch = path.match(/^\/sessions\/([^/]+)\//);
+      authError = sessionIdMatch
+        ? await verifySandboxAuth(request, env, sessionIdMatch[1], ctx)
+        : error("Unauthorized: Invalid session path", 401);
+    } else {
+      const acceptsSandboxAuth = isSandboxAuthRoute(path, method);
+      // First try HMAC auth (for web app, slack bot, etc.)
+      hmacAuthError = await requireInternalAuth(request, env, ctx);
+      authError = hmacAuthError;
+
+      if (hmacAuthError && acceptsSandboxAuth) {
         // Extract session ID from path (e.g., /sessions/abc123/pr -> abc123)
         const sessionIdMatch = path.match(/^\/sessions\/([^/]+)\//);
         if (sessionIdMatch) {
-          const sessionId = sessionIdMatch[1];
-          const sandboxAuthError = await verifySandboxAuth(request, env, sessionId, ctx);
-          if (!sandboxAuthError) {
-            authError = null;
-          } else {
-            authError = sandboxAuthError;
-          }
+          authError = await verifySandboxAuth(request, env, sessionIdMatch[1], ctx);
         }
       }
     }
@@ -433,7 +472,7 @@ export async function handleRequest(
       let response: Response;
       let outcome: "success" | "error";
       try {
-        response = await route.handler(request, instrumentedEnv, match, ctx);
+        response = await route.handler(request, env, match, ctx);
         outcome = response.status >= 500 ? "error" : "success";
       } catch (e) {
         if (e instanceof HttpError) {

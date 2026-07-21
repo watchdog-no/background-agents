@@ -18,6 +18,14 @@ import type { GitPushSpec } from "../source-control";
 
 // Database row types (match SQLite schema)
 
+export type PromptGitIdentity =
+  | {
+      mode: "attributed-user";
+      name: string;
+      email: string;
+    }
+  | { mode: "agent-only" };
+
 export interface SessionRow {
   id: string;
   session_name: string | null; // External session name for WebSocket routing
@@ -148,8 +156,7 @@ export interface PromptCommand {
   reasoningEffort?: string; // Reasoning effort level
   author: {
     userId: string;
-    scmName: string | null;
-    scmEmail: string | null;
+    gitIdentity: PromptGitIdentity;
   };
   attachments?: ResolvedSessionAttachment[];
 }
@@ -176,13 +183,18 @@ export interface PushCommand {
   pushSpec: GitPushSpec;
 }
 
+export interface RefreshDiffCommand {
+  type: "refresh_diff";
+}
+
 export type SandboxCommand =
   | PromptCommand
   | StopCommand
   | SnapshotCommand
   | ShutdownCommand
   | AckCommand
-  | PushCommand;
+  | PushCommand
+  | RefreshDiffCommand;
 
 // Internal session update types
 

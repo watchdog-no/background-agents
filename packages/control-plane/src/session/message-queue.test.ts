@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionMessageQueue } from "./message-queue";
 import { AttachmentClaimConflictError } from "./session-attachment-repository";
-import type { ClientInfo, Env, ServerMessage } from "../types";
+import type { SessionAttachmentRepository } from "./session-attachment-repository";
+import type { ClientInfo, ServerMessage } from "../types";
 import type { MessageRow, ParticipantRow, SessionRow, SessionAttachmentRow } from "./types";
+import type { SessionRepository } from "./repository";
+import type { SessionWebSocketManager } from "./websocket-manager";
+import type { ParticipantService } from "./participant-service";
+import type { CallbackNotificationService } from "./callback-notification-service";
+import type { SessionStatusService } from "./session-status-service";
 
 function createParticipant(overrides: Partial<ParticipantRow> = {}): ParticipantRow {
   return {
@@ -87,10 +93,9 @@ function createClientInfo(overrides: Partial<ClientInfo> = {}): ClientInfo {
   };
 }
 
-function buildQueue(options?: {
-  getClientInfo?: (ws: WebSocket) => ClientInfo | null;
-  session?: SessionRow;
-}) {
+const EXECUTION_TIMEOUT_MS = 60_000;
+
+function buildQueue(options?: { session?: SessionRow }) {
   const repository = {
     createMessageWithAttachments: vi.fn(),
     createEvent: vi.fn(),
@@ -99,6 +104,7 @@ function buildQueue(options?: {
     getNextPendingMessage: vi.fn(() => null as MessageRow | null),
     updateMessageToProcessing: vi.fn(),
     getParticipantById: vi.fn(() => createParticipant()),
+    getSession: vi.fn(() => options?.session ?? createSession()),
     updateParticipantCoalesce: vi.fn(),
     updateMessageCompletion: vi.fn(),
     upsertExecutionCompleteEvent: vi.fn(),
@@ -110,7 +116,7 @@ function buildQueue(options?: {
 
   const wsManager = {
     getSandboxSocket: vi.fn(() => null as WebSocket | null),
-    send: vi.fn(() => true),
+    send: vi.fn((_ws: WebSocket, _message: ServerMessage) => true),
   };
 
   const participantService = {
@@ -124,37 +130,40 @@ function buildQueue(options?: {
   };
 
   const broadcast = vi.fn((_message: ServerMessage) => {});
-  const spawnSandbox = vi.fn(async () => {});
-  const setSessionStatus = vi.fn(async (_status: string) => {});
-  const reconcileSessionStatusAfterExecution = vi.fn(async (_success: boolean) => {});
-  const updateLastActivity = vi.fn();
+  const messenger = { broadcast, sendToSandbox: vi.fn(() => true) };
+  const sessionStatus = {
+    transition: vi.fn(async (_status: string) => true),
+    reconcileAfterExecution: vi.fn(async (_success: boolean) => {}),
+  };
+  const sandboxLifecycle = {
+    spawnSandbox: vi.fn(async () => {}),
+    updateLastActivity: vi.fn((_timestamp: number) => {}),
+  };
   const waitUntil = vi.fn();
+  const getAlarm = vi.fn(async () => null as number | null);
+  const setAlarm = vi.fn(async (_timestamp: number) => {});
 
-  const queue = new SessionMessageQueue({
-    env: {} as Env,
-    ctx: { waitUntil } as unknown as DurableObjectState,
-    log: {
+  const queue = new SessionMessageQueue(
+    { waitUntil, storage: { getAlarm, setAlarm } } as unknown as DurableObjectState,
+    {
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
       child: vi.fn(),
     },
-    repository: repository as never,
-    attachmentRepository: attachmentRepository as never,
-    wsManager: wsManager as never,
-    participantService: participantService as never,
-    callbackService: callbackService as never,
-    scmProvider: "github",
-    getClientInfo: options?.getClientInfo ?? (() => createClientInfo()),
-    validateReasoningEffort: vi.fn(() => null),
-    getSession: vi.fn(() => options?.session ?? createSession()),
-    updateLastActivity,
-    spawnSandbox,
-    broadcast,
-    setSessionStatus,
-    reconcileSessionStatusAfterExecution,
-  });
+    repository as unknown as SessionRepository,
+    attachmentRepository as unknown as SessionAttachmentRepository,
+    wsManager as unknown as SessionWebSocketManager,
+    messenger,
+    participantService as unknown as ParticipantService,
+    callbackService as unknown as CallbackNotificationService,
+    sessionStatus as unknown as SessionStatusService,
+    sandboxLifecycle,
+    null,
+    "github",
+    EXECUTION_TIMEOUT_MS
+  );
 
   return {
     queue,
@@ -163,28 +172,16 @@ function buildQueue(options?: {
     wsManager,
     participantService,
     broadcast,
-    spawnSandbox,
-    setSessionStatus,
-    reconcileSessionStatusAfterExecution,
+    sessionStatus,
+    sandboxLifecycle,
     waitUntil,
+    getAlarm,
+    setAlarm,
     callbackService,
   };
 }
 
 describe("SessionMessageQueue", () => {
-  it("sends NOT_SUBSCRIBED when prompt arrives before subscribe", async () => {
-    const h = buildQueue({ getClientInfo: () => null });
-
-    await h.queue.handlePromptMessage({} as WebSocket, { content: "hello" });
-
-    expect(h.wsManager.send).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ code: "NOT_SUBSCRIBED" })
-    );
-    expect(h.repository.createMessageWithAttachments).not.toHaveBeenCalled();
-    expect(h.setSessionStatus).not.toHaveBeenCalled();
-  });
-
   it("spawns sandbox when queue has work but no sandbox socket", async () => {
     const h = buildQueue();
     h.repository.getNextPendingMessage.mockReturnValue(createMessage());
@@ -192,7 +189,7 @@ describe("SessionMessageQueue", () => {
     await h.queue.processMessageQueue();
 
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_spawning" });
-    expect(h.spawnSandbox).toHaveBeenCalledTimes(1);
+    expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledTimes(1);
     expect(h.repository.updateMessageToProcessing).not.toHaveBeenCalled();
     expect(h.callbackService.notifyStarted).not.toHaveBeenCalled();
   });
@@ -200,9 +197,9 @@ describe("SessionMessageQueue", () => {
   it("marks session active when a prompt is enqueued", async () => {
     const h = buildQueue();
 
-    await h.queue.handlePromptMessage({} as WebSocket, { content: "hello" });
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), { content: "hello" });
 
-    expect(h.setSessionStatus).toHaveBeenCalledWith("active");
+    expect(h.sessionStatus.transition).toHaveBeenCalledWith("active");
   });
 
   it("stores attachments and embeds content-free metadata in the user_message event", async () => {
@@ -219,7 +216,7 @@ describe("SessionMessageQueue", () => {
       },
     ]);
 
-    await h.queue.handlePromptMessage({} as WebSocket, {
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
       content: "look at this",
       attachments: [
         {
@@ -268,7 +265,7 @@ describe("SessionMessageQueue", () => {
       throw new AttachmentClaimConflictError("already claimed");
     });
 
-    await h.queue.handlePromptMessage({} as WebSocket, {
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
       content: "look",
       attachments: [{ name: "shot.png", attachmentId: "up-1" }],
     });
@@ -278,13 +275,13 @@ describe("SessionMessageQueue", () => {
       expect.objectContaining({ code: "INVALID_ATTACHMENTS" })
     );
     expect(h.repository.createEvent).not.toHaveBeenCalled();
-    expect(h.setSessionStatus).not.toHaveBeenCalled();
+    expect(h.sessionStatus.transition).not.toHaveBeenCalled();
   });
 
   it("rejects upload references that cannot be claimed", async () => {
     const h = buildQueue();
 
-    await h.queue.handlePromptMessage({} as WebSocket, {
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
       content: "look",
       attachments: [{ name: "missing.png", attachmentId: "missing" }],
     });
@@ -303,7 +300,7 @@ describe("SessionMessageQueue", () => {
     });
 
     await expect(
-      h.queue.handlePromptMessage({} as WebSocket, {
+      h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
         content: "look",
         attachments: [{ name: "shot.png", attachmentId: "up-1" }],
       })
@@ -329,7 +326,7 @@ describe("SessionMessageQueue", () => {
       },
     ]);
 
-    await h.queue.handlePromptMessage({} as WebSocket, {
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
       content: "watch this",
       attachments: [{ name: "document.pdf", attachmentId: "up-invalid" }],
     });
@@ -347,7 +344,7 @@ describe("SessionMessageQueue", () => {
   it("omits attachments from the user_message event when none are sent", async () => {
     const h = buildQueue();
 
-    await h.queue.handlePromptMessage({} as WebSocket, { content: "hello" });
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), { content: "hello" });
 
     const broadcastCall = h.broadcast.mock.calls.find(
       ([message]) =>
@@ -419,6 +416,86 @@ describe("SessionMessageQueue", () => {
     );
   });
 
+  it("falls back atomically when GitHub author mapping is incomplete", async () => {
+    const h = buildQueue();
+    const sandboxWs = { readyState: 1 } as WebSocket;
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-agent-only" }));
+    h.repository.getParticipantById.mockReturnValue(
+      createParticipant({
+        scm_user_id: null,
+        scm_login: "octocat",
+        scm_name: "Octo Cat",
+        scm_email: "private@example.com",
+      })
+    );
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+
+    await h.queue.processMessageQueue();
+
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      sandboxWs,
+      expect.objectContaining({
+        author: {
+          userId: "user-1",
+          gitIdentity: { mode: "agent-only" },
+        },
+      })
+    );
+  });
+
+  it("resolves each dispatched prompt's Git author from its current participant", async () => {
+    const h = buildQueue();
+    const sandboxWs = { readyState: 1 } as WebSocket;
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+    h.repository.getNextPendingMessage
+      .mockReturnValueOnce(createMessage({ id: "msg-ada", author_id: "part-ada" }))
+      .mockReturnValueOnce(createMessage({ id: "msg-grace", author_id: "part-grace" }));
+    h.repository.getParticipantById
+      .mockReturnValueOnce(
+        createParticipant({
+          id: "part-ada",
+          user_id: "user-ada",
+          scm_user_id: "1001",
+          scm_login: "ada",
+          scm_name: "Ada Lovelace",
+        })
+      )
+      .mockReturnValueOnce(
+        createParticipant({
+          id: "part-grace",
+          user_id: "user-grace",
+          scm_user_id: "1002",
+          scm_login: "grace",
+          scm_name: "Grace Hopper",
+        })
+      );
+
+    await h.queue.processMessageQueue();
+    await h.queue.processMessageQueue();
+
+    expect(h.wsManager.send.mock.calls.map(([, command]) => command)).toEqual([
+      expect.objectContaining({
+        author: {
+          userId: "user-ada",
+          gitIdentity: {
+            mode: "attributed-user",
+            name: "Ada Lovelace",
+            email: "1001+ada@users.noreply.github.com",
+          },
+        },
+      }),
+      expect.objectContaining({
+        author: {
+          userId: "user-grace",
+          gitIdentity: {
+            mode: "attributed-user",
+            name: "Grace Hopper",
+            email: "1002+grace@users.noreply.github.com",
+          },
+        },
+      }),
+    ]);
+  });
   it("notifies the integration after a prompt is dispatched to the sandbox", async () => {
     const h = buildQueue();
     const sandboxWs = { readyState: 1 } as WebSocket;
@@ -443,6 +520,58 @@ describe("SessionMessageQueue", () => {
     expect(h.waitUntil).not.toHaveBeenCalled();
   });
 
+  describe("execution timeout scheduling", () => {
+    function dispatchPrompt(h: ReturnType<typeof buildQueue>) {
+      h.repository.getNextPendingMessage.mockReturnValue(createMessage());
+      h.wsManager.getSandboxSocket.mockReturnValue({ readyState: 1 } as WebSocket);
+      return h.queue.processMessageQueue();
+    }
+
+    it("schedules the execution deadline when no alarm is set", async () => {
+      const h = buildQueue();
+      const before = Date.now();
+
+      await dispatchPrompt(h);
+
+      expect(h.setAlarm).toHaveBeenCalledTimes(1);
+      const deadline = h.setAlarm.mock.calls[0][0];
+      expect(deadline).toBeGreaterThanOrEqual(before + EXECUTION_TIMEOUT_MS);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + EXECUTION_TIMEOUT_MS);
+    });
+
+    it("keeps an earlier existing alarm", async () => {
+      const h = buildQueue();
+      h.getAlarm.mockResolvedValue(Date.now() + 1000);
+
+      await dispatchPrompt(h);
+
+      expect(h.setAlarm).not.toHaveBeenCalled();
+    });
+
+    it("replaces a later existing alarm with the execution deadline", async () => {
+      const h = buildQueue();
+      h.getAlarm.mockResolvedValue(Date.now() + EXECUTION_TIMEOUT_MS * 10);
+      const before = Date.now();
+
+      await dispatchPrompt(h);
+
+      expect(h.setAlarm).toHaveBeenCalledTimes(1);
+      const deadline = h.setAlarm.mock.calls[0][0];
+      expect(deadline).toBeGreaterThanOrEqual(before + EXECUTION_TIMEOUT_MS);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + EXECUTION_TIMEOUT_MS);
+    });
+
+    it("does not schedule when the prompt is deferred for sandbox spawn", async () => {
+      const h = buildQueue();
+      h.repository.getNextPendingMessage.mockReturnValue(createMessage());
+
+      await h.queue.processMessageQueue();
+
+      expect(h.getAlarm).not.toHaveBeenCalled();
+      expect(h.setAlarm).not.toHaveBeenCalled();
+    });
+  });
+
   it("marks processing message failed and broadcasts synthetic completion on stop", async () => {
     const h = buildQueue();
     const sandboxWs = { readyState: 1 } as WebSocket;
@@ -464,7 +593,7 @@ describe("SessionMessageQueue", () => {
     expect(h.broadcast).toHaveBeenCalledWith({ type: "processing_status", isProcessing: false });
     expect(h.wsManager.send).toHaveBeenCalledWith(sandboxWs, { type: "stop" });
     expect(h.waitUntil).toHaveBeenCalledTimes(1);
-    expect(h.reconcileSessionStatusAfterExecution).toHaveBeenCalledWith(false);
+    expect(h.sessionStatus.reconcileAfterExecution).toHaveBeenCalledWith(false);
   });
 
   it("suppresses session status reconcile when stopExecution is called with suppress flag", async () => {
@@ -473,7 +602,7 @@ describe("SessionMessageQueue", () => {
 
     await h.queue.stopExecution({ suppressStatusReconcile: true });
 
-    expect(h.reconcileSessionStatusAfterExecution).not.toHaveBeenCalled();
+    expect(h.sessionStatus.reconcileAfterExecution).not.toHaveBeenCalled();
   });
 
   it("reconciles session status when failing a stuck processing message", async () => {
@@ -482,11 +611,11 @@ describe("SessionMessageQueue", () => {
 
     await h.queue.failStuckProcessingMessage();
 
-    expect(h.reconcileSessionStatusAfterExecution).toHaveBeenCalledWith(false);
+    expect(h.sessionStatus.reconcileAfterExecution).toHaveBeenCalledWith(false);
   });
 
   describe("enqueuePromptFromApi", () => {
-    it("creates participant with authorDisplayName when new", async () => {
+    it("creates participant with the enriched identity name when new", async () => {
       const h = buildQueue();
       h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
 
@@ -494,13 +623,21 @@ describe("SessionMessageQueue", () => {
         content: "Fix bug",
         authorId: "github:1001",
         source: "github-bot",
-        authorDisplayName: "Octo Cat",
+        scmEnrichment: {
+          userId: "1001",
+          login: "octocat",
+          name: "Octo Cat",
+          email: "1001+octocat@users.noreply.github.com",
+          accessTokenEncrypted: null,
+          refreshTokenEncrypted: null,
+          tokenExpiresAt: null,
+        },
       });
 
       expect(h.participantService.create).toHaveBeenCalledWith("github:1001", "Octo Cat");
     });
 
-    it("uses authorId as display name when authorDisplayName is missing", async () => {
+    it("uses authorId as display name when identity enrichment is missing", async () => {
       const h = buildQueue();
       h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
 
@@ -513,24 +650,26 @@ describe("SessionMessageQueue", () => {
       expect(h.participantService.create).toHaveBeenCalledWith("github:1001", "github:1001");
     });
 
-    it("runs COALESCE update when enrichment fields are provided", async () => {
+    it("updates stored SCM identity and tokens after successful enrichment", async () => {
       const h = buildQueue();
 
       await h.queue.enqueuePromptFromApi({
         content: "Fix bug",
         authorId: "github:1001",
         source: "github-bot",
-        authorDisplayName: "Octo Cat",
-        authorEmail: "1001+octocat@users.noreply.github.com",
-        authorLogin: "octocat",
-        scmUserId: "1001",
-        scmAccessTokenEncrypted: "enc-access",
-        scmRefreshTokenEncrypted: "enc-refresh",
-        scmTokenExpiresAt: 9999999,
+        scmEnrichment: {
+          userId: "1001",
+          login: "octocat",
+          name: "Trusted Octo Cat",
+          email: "1001+octocat@users.noreply.github.com",
+          accessTokenEncrypted: "enc-access",
+          refreshTokenEncrypted: "enc-refresh",
+          tokenExpiresAt: 9999999,
+        },
       });
 
       expect(h.repository.updateParticipantCoalesce).toHaveBeenCalledWith("part-1", {
-        scmName: "Octo Cat",
+        scmName: "Trusted Octo Cat",
         scmEmail: "1001+octocat@users.noreply.github.com",
         scmLogin: "octocat",
         scmUserId: "1001",
@@ -538,10 +677,9 @@ describe("SessionMessageQueue", () => {
         scmRefreshTokenEncrypted: "enc-refresh",
         scmTokenExpiresAt: 9999999,
       });
-      expect(h.repository.getParticipantById).toHaveBeenCalledWith("part-1");
     });
 
-    it("skips COALESCE when no enrichment fields are provided", async () => {
+    it("leaves stored enrichment unchanged when no snapshot is provided", async () => {
       const h = buildQueue();
 
       await h.queue.enqueuePromptFromApi({

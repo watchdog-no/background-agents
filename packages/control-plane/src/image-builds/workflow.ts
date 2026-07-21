@@ -2,6 +2,7 @@ import { generateId } from "../auth/crypto";
 import { ImageBuildStore, type ImageBuildRegistration } from "../db/image-builds";
 import { createLogger } from "../logger";
 import type { Env } from "../types";
+import type { SqlDatabase } from "../db/sql-database";
 import {
   consumeImageBuildCallbackTokenOrThrow,
   ImageBuildCallbackAuthError,
@@ -81,6 +82,17 @@ type PlannedBuildStart = {
 };
 
 /**
+ * A configured image-build provider always travels with its planner — the
+ * pair is either supplied together or the workflow is unconfigured. Encoding
+ * the pairing here makes the invalid provider-without-planner state
+ * unconstructible.
+ */
+export type ImageBuildProviderDeps = {
+  provider: ImageBuildProvider;
+  planner: ImageBuildPlannerLike;
+} | null;
+
+/**
  * Application service for the image-build lifecycle.
  *
  * Sequences planning, provider adapter calls, callback authorization, store
@@ -92,17 +104,14 @@ type PlannedBuildStart = {
  * subclasses for route-level error mapping.
  */
 export class ImageBuildWorkflow {
-  private readonly planner: ImageBuildPlannerLike | null;
   private readonly reaper: ImageBuildReaper;
 
   constructor(
     private readonly env: Env,
     private readonly store: ImageBuildStore,
     private readonly adapterFactory: ImageBuildAdapterFactory,
-    private readonly provider: ImageBuildProvider | null,
-    planner?: ImageBuildPlannerLike
+    private readonly providerDeps: ImageBuildProviderDeps
   ) {
-    this.planner = planner ?? (provider ? new ImageBuildPlanner(env, provider) : null);
     this.reaper = new ImageBuildReaper(store, adapterFactory);
   }
 
@@ -171,14 +180,14 @@ export class ImageBuildWorkflow {
     ctx: ImageBuildWorkflowContext,
     options: { onlyIfStale: boolean }
   ): Promise<TriggerImageBuildResult> {
-    if (!this.provider || !this.planner) {
+    if (!this.providerDeps) {
       throw new ImageBuildWorkflowUnavailableError("Image build provider is not configured");
     }
     if (!this.env.WORKER_URL) {
       throw new ImageBuildWorkflowUnavailableError("WORKER_URL not configured");
     }
 
-    const provider = this.provider;
+    const { provider, planner } = this.providerDeps;
     await this.failStaleScopeBuild(scope, provider, ctx);
 
     const active = await this.store.getActiveBuild(scope, provider);
@@ -196,7 +205,7 @@ export class ImageBuildWorkflow {
     let target;
     let callbackAuth;
     try {
-      target = await this.planner.resolveTarget(scope);
+      target = await planner.resolveTarget(scope);
 
       if (
         options.onlyIfStale &&
@@ -212,7 +221,7 @@ export class ImageBuildWorkflow {
       // Probe the adapter now so a misconfigured provider fails 503 without
       // writing a failed row on every cron tick.
       this.createAdapterForOperation(provider, "trigger_build", ctx, buildId);
-      callbackAuth = await this.planner.createCallbackAuth();
+      callbackAuth = await planner.createCallbackAuth();
     } catch (e) {
       if (
         e instanceof ImageBuildScopeNotFoundError ||
@@ -253,7 +262,7 @@ export class ImageBuildWorkflow {
         return { type: "already_building", buildId: winner.id };
       }
 
-      const planned = await this.planner.planBuild({
+      const planned = await planner.planBuild({
         buildId,
         scope,
         callbackUrl,
@@ -1007,12 +1016,13 @@ export class ImageBuildWorkflow {
   }
 }
 
-export function createImageBuildWorkflowFromEnv(env: Env): ImageBuildWorkflow {
+export function createImageBuildWorkflowFromEnv(env: Env, db: SqlDatabase): ImageBuildWorkflow {
+  const provider = resolveImageBuildProvider(env.SANDBOX_PROVIDER);
   return new ImageBuildWorkflow(
     env,
-    new ImageBuildStore(env.DB),
+    new ImageBuildStore(db),
     createImageBuildAdapterFactory(env),
-    resolveImageBuildProvider(env.SANDBOX_PROVIDER)
+    provider ? { provider, planner: new ImageBuildPlanner(env, db, provider) } : null
   );
 }
 

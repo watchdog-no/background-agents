@@ -14,6 +14,7 @@ import { error, parsePattern, type Route } from "./shared";
 import { sessionRoute, type SessionRouteContext } from "./session-route";
 
 const logger = createLogger("router:session-prompt");
+
 function validateAttachments(raw: unknown): SessionAttachmentReference[] | Response | undefined {
   if (raw === undefined) return undefined;
   const result = sessionAttachmentReferencesSchema.safeParse(raw);
@@ -59,12 +60,18 @@ async function handleSessionPrompt(
 
   let enrichment: GitHubEnrichment | undefined;
   const parsed = parseAuthorId(authorId);
-  if (parsed) {
+  if (authorId !== "anonymous") {
     try {
-      const userStore = new UserStore(env.DB);
-      const identity = await userStore.getIdentity(parsed.provider, parsed.providerUserId);
-      if (identity) {
-        enrichment = (await resolveGitHubEnrichment(env, userStore, identity.userId)) ?? undefined;
+      const userStore = new UserStore(ctx.db);
+      let userId: string | undefined;
+      if (parsed) {
+        const identity = await userStore.getIdentity(parsed.provider, parsed.providerUserId);
+        userId = identity?.userId;
+      } else {
+        userId = (await userStore.getUserById(authorId))?.id;
+      }
+      if (userId) {
+        enrichment = (await resolveGitHubEnrichment(env, ctx.db, userStore, userId)) ?? undefined;
       }
     } catch (e) {
       logger.warn("Failed to enrich prompt with GitHub identity", {
@@ -85,17 +92,21 @@ async function handleSessionPrompt(
       reasoningEffort: body.reasoningEffort,
       attachments,
       callbackContext: body.callbackContext,
-      authorDisplayName: enrichment?.displayName,
-      authorEmail: enrichment?.email,
-      authorLogin: enrichment?.scmLogin,
-      scmUserId: enrichment?.scmUserId,
-      scmAccessTokenEncrypted: enrichment?.accessTokenEncrypted,
-      scmRefreshTokenEncrypted: enrichment?.refreshTokenEncrypted,
-      scmTokenExpiresAt: enrichment?.tokenExpiresAt,
+      scmEnrichment: enrichment
+        ? {
+            userId: enrichment.scmUserId,
+            login: enrichment.scmLogin ?? null,
+            name: enrichment.displayName ?? null,
+            email: enrichment.email ?? null,
+            accessTokenEncrypted: enrichment.accessTokenEncrypted ?? null,
+            refreshTokenEncrypted: enrichment.refreshTokenEncrypted ?? null,
+            tokenExpiresAt: enrichment.tokenExpiresAt ?? null,
+          }
+        : undefined,
     }),
   });
 
-  const store = new SessionIndexStore(env.DB);
+  const store = new SessionIndexStore(ctx.db);
   ctx.executionCtx?.waitUntil(
     store.touchUpdatedAt(sessionId).catch((error) => {
       logger.error("session_index.touch_updated_at.background_error", {

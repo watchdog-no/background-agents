@@ -11,6 +11,7 @@ import {
 import type { SecretsWriteResult } from "./scoped-secrets";
 import { normalizeKey } from "./secrets-validation";
 import type { SecretMetadata, SecretWithValue } from "./secrets-validation";
+import type { SqlDatabase } from "./sql-database";
 
 export type { SecretMetadata, SecretWithValue } from "./secrets-validation";
 
@@ -18,7 +19,7 @@ const log = createLogger("repo-secrets");
 
 export class RepoSecretsStore {
   constructor(
-    private readonly db: D1Database,
+    private readonly db: SqlDatabase,
     private readonly encryptionKey: string
   ) {}
 

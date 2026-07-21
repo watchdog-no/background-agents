@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionSandboxEventProcessor } from "./sandbox-events";
 import type { GitPushSpec } from "../source-control";
 import type { SandboxEvent, ServerMessage } from "../types";
+import type { CallbackNotificationService } from "./callback-notification-service";
+import type { SessionDiffService } from "./diffs/service";
+import type { SessionRepository } from "./repository";
+import type { SessionStatusService } from "./session-status-service";
+import type { SessionWebSocketManager } from "./websocket-manager";
 
 function createPushSpec(repoOwner: string, repoName: string, targetBranch: string): GitPushSpec {
   return {
@@ -16,9 +21,10 @@ function createPushSpec(repoOwner: string, repoName: string, targetBranch: strin
 }
 
 function createProcessor() {
+  const getProcessingMessage = vi.fn(() => null as { id: string } | null);
   const repository = {
     updateSandboxHeartbeat: vi.fn(),
-    getProcessingMessage: vi.fn(() => null as { id: string } | null),
+    getProcessingMessage,
     upsertTokenEvent: vi.fn(),
     upsertReasoningEvent: vi.fn(),
     createArtifact: vi.fn(),
@@ -26,7 +32,11 @@ function createProcessor() {
     addSessionCost: vi.fn(),
     setSessionContextUsage: vi.fn(),
     upsertExecutionCompleteEvent: vi.fn(),
-    updateMessageCompletion: vi.fn(),
+    // The real repository stops reporting a processing message once it is
+    // completed; the processing_status broadcast derives from that.
+    updateMessageCompletion: vi.fn(() => {
+      getProcessingMessage.mockReturnValue(null);
+    }),
     getMessageTimestamps: vi.fn(
       () => null as { created_at: number; started_at: number | null } | null
     ),
@@ -45,36 +55,38 @@ function createProcessor() {
   };
 
   const broadcast = vi.fn((_message: ServerMessage) => {});
+  const messenger = { broadcast, sendToSandbox: vi.fn(() => true) };
+  const diffService = { pinBaselines: vi.fn() };
   const triggerSnapshot = vi.fn(async (_reason: string) => {});
-  const reconcileSessionStatusAfterExecution = vi.fn(async (_success: boolean) => {});
+  const statusService = { reconcileAfterExecution: vi.fn(async (_success: boolean) => {}) };
   const scheduleInactivityCheck = vi.fn(async () => {});
   const processMessageQueue = vi.fn(async () => {});
   const updateLastActivity = vi.fn();
-  const getIsProcessing = vi.fn(() => false);
   const applySessionTitleUpdate = vi.fn((title: string) => ({ ok: true as const, title }));
   const waitUntil = vi.fn();
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(),
+  };
 
-  const processor = new SessionSandboxEventProcessor({
-    ctx: { waitUntil } as unknown as DurableObjectState,
-    log: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      child: vi.fn(),
-    },
-    repository: repository as never,
-    callbackService: callbackService as never,
-    wsManager: wsManager as never,
-    broadcast,
+  const processor = new SessionSandboxEventProcessor(
+    { waitUntil } as unknown as DurableObjectState,
+    () => log,
+    repository as unknown as SessionRepository,
+    callbackService as unknown as CallbackNotificationService,
+    wsManager as unknown as SessionWebSocketManager,
+    messenger,
+    diffService as unknown as SessionDiffService,
     applySessionTitleUpdate,
-    getIsProcessing,
     triggerSnapshot,
-    reconcileSessionStatusAfterExecution,
+    statusService as unknown as SessionStatusService,
     updateLastActivity,
     scheduleInactivityCheck,
-    processMessageQueue,
-  });
+    processMessageQueue
+  );
 
   return {
     processor,
@@ -82,8 +94,9 @@ function createProcessor() {
     wsManager,
     callbackService,
     broadcast,
+    diffService,
     triggerSnapshot,
-    reconcileSessionStatusAfterExecution,
+    statusService,
     scheduleInactivityCheck,
     processMessageQueue,
     updateLastActivity,
@@ -93,6 +106,23 @@ function createProcessor() {
 }
 
 describe("SessionSandboxEventProcessor", () => {
+  it("releases the next prompt without waiting for diff work", async () => {
+    const h = createProcessor();
+    h.repository.getProcessingMessage.mockReturnValue({ id: "msg-1" });
+    h.repository.getMessageTimestamps.mockReturnValue({ created_at: 1000, started_at: 1100 });
+
+    await h.processor.processSandboxEvent({
+      type: "execution_complete",
+      messageId: "msg-1",
+      success: true,
+      sandboxId: "sb-1",
+      timestamp: 2000,
+    });
+
+    expect(h.processMessageQueue).toHaveBeenCalledOnce();
+    expect(h.statusService.reconcileAfterExecution).toHaveBeenCalledWith(true);
+  });
+
   it("updates heartbeat without broadcasting", async () => {
     const h = createProcessor();
     const event: SandboxEvent = {
@@ -125,6 +155,19 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.repository.createEvent).not.toHaveBeenCalled();
     expect(h.broadcast).not.toHaveBeenCalled();
     expect(h.updateLastActivity).not.toHaveBeenCalled();
+  });
+
+  it("pins diff baselines on ready", async () => {
+    const h = createProcessor();
+    const event: SandboxEvent = {
+      type: "ready",
+      sandboxId: "sb-1",
+      timestamp: 1000,
+    };
+
+    await h.processor.processSandboxEvent(event);
+
+    expect(h.diffService.pinBaselines).toHaveBeenCalledWith(event);
   });
 
   it("persists token event and broadcasts it", async () => {
@@ -413,7 +456,7 @@ describe("SessionSandboxEventProcessor", () => {
     );
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
     expect(h.broadcast).toHaveBeenCalledWith({ type: "processing_status", isProcessing: false });
-    expect(h.reconcileSessionStatusAfterExecution).toHaveBeenCalledWith(true);
+    expect(h.statusService.reconcileAfterExecution).toHaveBeenCalledWith(true);
     expect(h.triggerSnapshot).toHaveBeenCalledWith("execution_complete");
     expect(h.scheduleInactivityCheck).toHaveBeenCalledTimes(1);
     expect(h.processMessageQueue).toHaveBeenCalledTimes(1);

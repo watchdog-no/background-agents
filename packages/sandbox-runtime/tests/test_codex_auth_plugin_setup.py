@@ -102,6 +102,7 @@ class TestCodexAuthPluginSetup:
         sup = _make_supervisor()
         sup.workspace_path = tmp_path / "workspace"
         sup.workspace_path.mkdir()
+        (sup.workspace_path / ".git").mkdir()
         sup.repo_path = sup.workspace_path / "app"
 
         plugin_source = tmp_path / "app" / "sandbox_runtime" / "plugins" / "codex-auth-plugin.js"
@@ -117,6 +118,7 @@ class TestCodexAuthPluginSetup:
             patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": "rt_real_secret"}, clear=False),
             patch("sandbox_runtime.entrypoint.Path") as mock_path,
             patch("sandbox_runtime.entrypoint.shutil.copy") as mock_copy,
+            patch("sandbox_runtime.entrypoint.install_runtime_git_excludes") as mock_excludes,
             patch(
                 "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=fake_proc),
@@ -143,6 +145,10 @@ class TestCodexAuthPluginSetup:
             plugin_source,
             sup.workspace_path / ".opencode" / "plugins" / "codex-auth-plugin.js",
         )
+        mock_excludes.assert_called_once_with(
+            sup.workspace_path,
+            {".opencode/plugins/codex-auth-plugin.js"},
+        )
 
     async def test_start_opencode_denies_doom_loop_permission(self, tmp_path):
         """Repeated identical tool calls should not be auto-approved in headless sessions."""
@@ -156,20 +162,20 @@ class TestCodexAuthPluginSetup:
         create_proc = AsyncMock(return_value=fake_proc)
 
         with (
-            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": ""}, clear=False),
-            patch(
-                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
-                create_proc,
+            patch.dict(
+                "os.environ",
+                {"OPENAI_OAUTH_REFRESH_TOKEN": "", "ANTHROPIC_OAUTH_ENABLED": ""},
+                clear=False,
             ),
+            patch("sandbox_runtime.entrypoint.asyncio.create_subprocess_exec", create_proc),
             patch(
                 "sandbox_runtime.entrypoint.asyncio.create_task",
                 side_effect=lambda coro: coro.close(),
             ),
         ):
             sup._setup_openai_oauth = MagicMock()
-            sup._install_tools = MagicMock()
-            sup._install_skills = MagicMock()
-            sup._install_bin_scripts = MagicMock()
+            sup._setup_anthropic_oauth = MagicMock()
+            sup._prepare_opencode_filesystem = MagicMock(return_value=set())
             sup._wait_for_health = AsyncMock()
 
             await sup.start_opencode()

@@ -1,7 +1,50 @@
-import type { SpawnSource } from "@open-inspect/shared";
+import {
+  formatGitHubNoreplyEmail,
+  githubLoginSchema,
+  type SpawnSource,
+} from "@open-inspect/shared";
 import { UserScmTokenStore } from "../db/user-scm-tokens";
 import type { ProviderIdentity, UserStore } from "../db/user-store";
+import type { SourceControlProviderName } from "../source-control";
 import type { Env } from "../types";
+import type { SqlDatabase } from "../db/sql-database";
+
+const FALLBACK_GIT_AUTHOR = {
+  name: "OpenInspect",
+  email: "open-inspect@noreply.github.com",
+} as const;
+
+export interface GitAuthorIdentity {
+  name: string;
+  email: string;
+}
+
+export interface GitAuthorIdentityInput {
+  scmProvider: SourceControlProviderName;
+  scmUserId?: string | null;
+  scmLogin?: string | null;
+  scmName?: string | null;
+  scmEmail?: string | null;
+}
+
+export function resolveGitAuthorIdentity(input: GitAuthorIdentityInput): GitAuthorIdentity | null {
+  if (input.scmProvider !== "github") {
+    return {
+      name: input.scmName?.trim() || FALLBACK_GIT_AUTHOR.name,
+      email: input.scmEmail?.trim() || FALLBACK_GIT_AUTHOR.email,
+    };
+  }
+
+  const login = githubLoginSchema.safeParse(input.scmLogin);
+  if (!input.scmUserId || !/^[1-9]\d*$/.test(input.scmUserId) || !login.success) {
+    return null;
+  }
+
+  return {
+    name: input.scmName?.trim() || login.data,
+    email: formatGitHubNoreplyEmail({ id: input.scmUserId, login: login.data }),
+  };
+}
 
 export interface GitHubEnrichment {
   scmUserId: string;
@@ -164,6 +207,7 @@ export function deriveParticipantUserId(body: SessionIdentityFields): string {
  */
 export async function resolveGitHubEnrichment(
   env: Env,
+  db: SqlDatabase,
   userStore: UserStore,
   userId: string
 ): Promise<GitHubEnrichment | null> {
@@ -174,23 +218,25 @@ export async function resolveGitHubEnrichment(
   const [user, tokens] = await Promise.all([
     userStore.getUserById(userId),
     env.TOKEN_ENCRYPTION_KEY
-      ? new UserScmTokenStore(env.DB, env.TOKEN_ENCRYPTION_KEY).getEncryptedTokens(
+      ? new UserScmTokenStore(db, env.TOKEN_ENCRYPTION_KEY).getEncryptedTokens(
           githubIdentity.providerUserId
         )
       : null,
   ]);
 
-  const email =
-    githubIdentity.providerEmail ??
-    (githubIdentity.providerLogin
-      ? `${githubIdentity.providerUserId}+${githubIdentity.providerLogin}@users.noreply.github.com`
-      : undefined);
+  const authorIdentity = resolveGitAuthorIdentity({
+    scmProvider: "github",
+    scmUserId: githubIdentity.providerUserId,
+    scmLogin: githubIdentity.providerLogin,
+    scmName: user?.displayName,
+    scmEmail: githubIdentity.providerEmail,
+  });
 
   return {
     scmUserId: githubIdentity.providerUserId,
     scmLogin: githubIdentity.providerLogin ?? undefined,
     displayName: user?.displayName ?? githubIdentity.providerLogin ?? undefined,
-    email,
+    email: authorIdentity?.email ?? undefined,
     accessTokenEncrypted: tokens?.accessTokenEncrypted,
     refreshTokenEncrypted: tokens?.refreshTokenEncrypted,
     tokenExpiresAt: tokens?.expiresAt,
