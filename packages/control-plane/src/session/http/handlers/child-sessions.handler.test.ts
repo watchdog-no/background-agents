@@ -147,6 +147,7 @@ function createHandler() {
     artifact.metadata ? (JSON.parse(artifact.metadata) as Record<string, unknown>) : null
   );
   const broadcast = vi.fn();
+  const messenger = { broadcast, sendToSandbox: vi.fn(() => true) };
 
   const handler = createChildSessionsHandler({
     repository,
@@ -154,7 +155,7 @@ function createHandler() {
     getSandbox,
     getPublicSessionId,
     parseArtifactMetadata,
-    broadcast,
+    messenger,
   });
 
   return {

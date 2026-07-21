@@ -5,6 +5,7 @@ import {
 } from "@open-inspect/shared";
 import { encryptTokenPair, generateId } from "../auth/crypto";
 import { resolveEnvironmentTarget, resolveSessionRepositories } from "../repos/resolve";
+import { resolveScmProviderFromEnv } from "../source-control";
 import { EnvironmentStore } from "../db/environments";
 import { DEFAULT_TOKEN_LIFETIME_MS, UserScmTokenStore } from "../db/user-scm-tokens";
 import { UserStore } from "../db/user-store";
@@ -81,7 +82,7 @@ async function handleCreateSession(
     // Snapshot the environment's members and resolve them like any other list
     // (design §7.6); environment_id records provenance on the session.
     const envInputs = await resolveEnvironmentTarget(
-      new EnvironmentStore(env.DB),
+      new EnvironmentStore(ctx.db),
       body.environmentId
     );
     repositories = await resolveSessionRepositories(env, envInputs, ctx, logger);
@@ -111,7 +112,7 @@ async function handleCreateSession(
 
   // Resolve canonical user model ID (for D1 session index).
   // Best-effort: if resolution fails, the session is created without a user_id.
-  const userStore = new UserStore(env.DB);
+  const userStore = new UserStore(ctx.db);
   let resolvedUserId: string | null = null;
   const providerIdentity = resolveProviderIdentity(body.spawnSource ?? "user", body);
   if (providerIdentity) {
@@ -126,6 +127,7 @@ async function handleCreateSession(
     }
   }
 
+  const githubDeployment = resolveScmProviderFromEnv(env.SCM_PROVIDER) === "github";
   let scmLogin = body.scmLogin;
   let scmName = body.scmName;
   let scmEmail = body.scmEmail;
@@ -150,8 +152,10 @@ async function handleCreateSession(
     }
   }
 
-  // Enrich the owner with their linked GitHub identity from D1: fill in SCM
-  // fields the caller didn't provide (email, display name, OAuth token).
+  // On GitHub deployments, enrich the owner with their linked GitHub identity
+  // from D1: fill in SCM fields the caller didn't provide (email, display name,
+  // OAuth token). Other SCM deployments retain their provider-native identity
+  // and credentials unchanged.
   //
   // This intentionally applies even when the session was authenticated via a
   // non-GitHub provider (e.g. Google): if the canonical user has ALSO linked a
@@ -161,9 +165,9 @@ async function handleCreateSession(
   // credential; a user with no linked GitHub identity gets null here and falls
   // back to the App bot. The invariant is "a Google credential is never used as
   // an SCM credential", not "a Google-authenticated session carries no SCM state".
-  if (resolvedUserId) {
+  if (resolvedUserId && githubDeployment) {
     try {
-      const enrichment = await resolveGitHubEnrichment(env, userStore, resolvedUserId);
+      const enrichment = await resolveGitHubEnrichment(env, ctx.db, userStore, resolvedUserId);
       if (enrichment) {
         scmUserId ??= enrichment.scmUserId;
         scmLogin ??= enrichment.scmLogin;
@@ -195,7 +199,7 @@ async function handleCreateSession(
   // from a saved environment layers its overrides on top (design §13.5).
   const scopeMembers = repositories ?? (repoOwner && repoName ? [{ repoOwner, repoName }] : []);
   const { codeServerEnabled, sandboxSettings } = await resolveSessionScopedSettings(
-    env.DB,
+    ctx.db,
     scopeMembers,
     environmentId
   );
@@ -242,7 +246,7 @@ async function handleCreateSession(
   // Populate D1 with the user's SCM tokens (non-blocking) so centralized refresh works
   if (scmUserId && scmToken && scmRefreshToken && env.TOKEN_ENCRYPTION_KEY) {
     ctx.executionCtx?.waitUntil(
-      new UserScmTokenStore(env.DB, env.TOKEN_ENCRYPTION_KEY)
+      new UserScmTokenStore(ctx.db, env.TOKEN_ENCRYPTION_KEY)
         .upsertTokens(
           scmUserId,
           scmToken,

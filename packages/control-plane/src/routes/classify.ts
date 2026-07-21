@@ -24,6 +24,7 @@ import {
 } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import { GlobalSecretsStore } from "../db/global-secrets";
+import type { SqlDatabase } from "../db/sql-database";
 import { OpenAITokenRefreshService } from "../session/openai-token-refresh-service";
 import { AnthropicTokenRefreshService } from "../session/anthropic-token-refresh-service";
 import { type Route, type RequestContext, parsePattern, json } from "./shared";
@@ -154,13 +155,14 @@ async function anthropicRequest(
 
 async function classifyWithAnthropic(
   env: Env,
+  db: SqlDatabase,
   prompt: string,
   model: string
 ): Promise<ClassifyRawResult> {
   // Prefer the API key (fastest), but fall back to OAuth if a configured key is
   // rejected — a revoked/blank key shouldn't break classification when an OAuth
   // token is available.
-  const apiKey = await readGlobalSecret(env, "ANTHROPIC_API_KEY");
+  const apiKey = await readGlobalSecret(env, db, "ANTHROPIC_API_KEY");
   if (apiKey) {
     try {
       return await anthropicRequest(prompt, model, { apiKey });
@@ -169,12 +171,12 @@ async function classifyWithAnthropic(
       log.warn("classify.api_key_rejected_falling_back_to_oauth", { provider: "anthropic" });
     }
   }
-  const oauthToken = await getAnthropicOAuthToken(env);
+  const oauthToken = await getAnthropicOAuthToken(env, db);
   return anthropicRequest(prompt, model, { oauthToken });
 }
 
 function oauthSecretsConfigured(env: Env): boolean {
-  return Boolean(env.DB && env.REPO_SECRETS_ENCRYPTION_KEY);
+  return Boolean(env.REPO_SECRETS_ENCRYPTION_KEY);
 }
 
 /**
@@ -182,10 +184,14 @@ function oauthSecretsConfigured(env: Env): boolean {
  * and the optional model API keys are managed via the Secrets UI). Returns
  * undefined when the store isn't configured, the key is absent, or a read fails.
  */
-async function readGlobalSecret(env: Env, key: string): Promise<string | undefined> {
+async function readGlobalSecret(
+  env: Env,
+  db: SqlDatabase,
+  key: string
+): Promise<string | undefined> {
   if (!oauthSecretsConfigured(env)) return undefined;
   try {
-    const store = new GlobalSecretsStore(env.DB, env.REPO_SECRETS_ENCRYPTION_KEY!);
+    const store = new GlobalSecretsStore(db, env.REPO_SECRETS_ENCRYPTION_KEY!);
     const secrets = await store.getDecryptedSecrets();
     return secrets[key] || undefined;
   } catch (e) {
@@ -202,8 +208,8 @@ function shouldFallbackToOAuth(e: unknown, oauthAvailable: boolean): boolean {
   return oauthAvailable && e instanceof ClassifyError && e.reason === "oauth_unauthorized";
 }
 
-async function getAnthropicOAuthToken(env: Env): Promise<string> {
-  if (!env.DB || !env.REPO_SECRETS_ENCRYPTION_KEY) {
+async function getAnthropicOAuthToken(env: Env, db: SqlDatabase): Promise<string> {
+  if (!env.REPO_SECRETS_ENCRYPTION_KEY) {
     throw new ClassifyError(
       "oauth_not_configured",
       "No ANTHROPIC_API_KEY and OAuth secret store is not configured",
@@ -215,7 +221,7 @@ async function getAnthropicOAuthToken(env: Env): Promise<string> {
       ? { clientId: env.ANTHROPIC_OAUTH_CLIENT_ID, tokenUrl: env.ANTHROPIC_OAUTH_TOKEN_URL }
       : undefined;
   const service = new AnthropicTokenRefreshService(
-    env.DB,
+    db,
     env.REPO_SECRETS_ENCRYPTION_KEY,
     refreshRepoIdUnsupported,
     log,
@@ -303,12 +309,13 @@ async function openaiRequest(
 
 async function classifyWithOpenAI(
   env: Env,
+  db: SqlDatabase,
   prompt: string,
   model: string
 ): Promise<ClassifyRawResult> {
   const oauthAvailable = oauthSecretsConfigured(env);
 
-  const apiKey = await readGlobalSecret(env, "OPENAI_API_KEY");
+  const apiKey = await readGlobalSecret(env, db, "OPENAI_API_KEY");
   if (apiKey) {
     try {
       return await openaiRequest(prompt, model, { apiKey });
@@ -318,12 +325,15 @@ async function classifyWithOpenAI(
     }
   }
 
-  const { accessToken, accountId } = await getOpenAIOAuthToken(env);
+  const { accessToken, accountId } = await getOpenAIOAuthToken(env, db);
   return openaiRequest(prompt, model, { oauthToken: accessToken, accountId });
 }
 
-async function getOpenAIOAuthToken(env: Env): Promise<{ accessToken: string; accountId?: string }> {
-  if (!env.DB || !env.REPO_SECRETS_ENCRYPTION_KEY) {
+async function getOpenAIOAuthToken(
+  env: Env,
+  db: SqlDatabase
+): Promise<{ accessToken: string; accountId?: string }> {
+  if (!env.REPO_SECRETS_ENCRYPTION_KEY) {
     throw new ClassifyError(
       "oauth_not_configured",
       "No OPENAI_API_KEY and OAuth secret store is not configured",
@@ -331,7 +341,7 @@ async function getOpenAIOAuthToken(env: Env): Promise<{ accessToken: string; acc
     );
   }
   const service = new OpenAITokenRefreshService(
-    env.DB,
+    db,
     env.REPO_SECRETS_ENCRYPTION_KEY,
     refreshRepoIdUnsupported,
     log
@@ -402,8 +412,8 @@ async function handleClassify(
   try {
     const result =
       provider === "openai"
-        ? await classifyWithOpenAI(env, prompt, modelId)
-        : await classifyWithAnthropic(env, prompt, modelId);
+        ? await classifyWithOpenAI(env, ctx.db, prompt, modelId)
+        : await classifyWithAnthropic(env, ctx.db, prompt, modelId);
     return json(result);
   } catch (e) {
     if (e instanceof ClassifyError) {

@@ -253,7 +253,6 @@ export class ModalApiError extends Error {
  */
 export class ModalClient {
   private createSandboxUrl: string;
-  private healthUrl: string;
   private snapshotSandboxUrl: string;
   private restoreSandboxUrl: string;
   private buildImageUrl: string;
@@ -270,7 +269,6 @@ export class ModalClient {
     this.secret = secret;
     const baseUrl = getModalBaseUrl(workspace, environmentWebSuffix);
     this.createSandboxUrl = `${baseUrl}-api-create-sandbox.modal.run`;
-    this.healthUrl = `${baseUrl}-api-health.modal.run`;
     this.snapshotSandboxUrl = `${baseUrl}-api-snapshot-sandbox.modal.run`;
     this.restoreSandboxUrl = `${baseUrl}-api-restore-sandbox.modal.run`;
     this.buildImageUrl = `${baseUrl}-api-build-image.modal.run`;
@@ -510,29 +508,6 @@ export class ModalClient {
         outcome,
       });
     }
-  }
-
-  /**
-   * Check Modal API health.
-   * Note: Health endpoint does not require authentication.
-   */
-  async health(): Promise<{ status: string; service: string }> {
-    const response = await fetch(this.healthUrl);
-
-    if (!response.ok) {
-      throw new ModalApiError(`Modal API error: ${response.status}`, response.status);
-    }
-
-    const result = (await response.json()) as ModalApiResponse<{
-      status: string;
-      service: string;
-    }>;
-
-    if (!result.success || !result.data) {
-      throw new Error(`Modal API error: ${result.error || "Unknown error"}`);
-    }
-
-    return result.data;
   }
 
   /**

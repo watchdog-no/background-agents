@@ -11,12 +11,13 @@ import {
 import type { SecretsWriteResult } from "./scoped-secrets";
 import { normalizeKey } from "./secrets-validation";
 import type { SecretMetadata, SecretWithValue } from "./secrets-validation";
+import type { SqlDatabase } from "./sql-database";
 
 const log = createLogger("global-secrets");
 
 export class GlobalSecretsStore {
   constructor(
-    private readonly db: D1Database,
+    private readonly db: SqlDatabase,
     private readonly encryptionKey: string
   ) {}
 

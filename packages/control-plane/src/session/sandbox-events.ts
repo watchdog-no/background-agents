@@ -3,36 +3,20 @@ import { contextTokensFromUsage } from "@open-inspect/shared";
 import { generateId } from "../auth/crypto";
 import type { Logger } from "../logger";
 import type { GitPushSpec } from "../source-control";
-import type { SandboxEvent, ServerMessage } from "../types";
+import type { SandboxEvent } from "../types";
 import { shouldPersistToolCallEvent } from "./event-persistence";
 import { assertArtifactType } from "./artifacts";
 import type { SessionRepository } from "./repository";
 import type { CallbackNotificationService } from "./callback-notification-service";
+import type { SessionDiffService } from "./diffs/service";
+import type { SessionMessenger } from "./messenger";
+import type { SessionStatusService } from "./session-status-service";
 import type { SessionWebSocketManager } from "./websocket-manager";
 import type { SessionTitleUpdateOptions, SessionTitleUpdateResult } from "./title";
 
 type PushResolver = { resolve: () => void; reject: (err: Error) => void };
 type SandboxEventWithAck = SandboxEvent & { ackId?: string };
 type PushTerminalEvent = Extract<SandboxEvent, { type: "push_complete" | "push_error" }>;
-
-interface SessionSandboxEventProcessorDeps {
-  ctx: DurableObjectState;
-  log: Logger;
-  repository: SessionRepository;
-  callbackService: CallbackNotificationService;
-  wsManager: SessionWebSocketManager;
-  broadcast: (message: ServerMessage) => void;
-  applySessionTitleUpdate: (
-    title: string,
-    options?: SessionTitleUpdateOptions
-  ) => SessionTitleUpdateResult;
-  getIsProcessing: () => boolean;
-  triggerSnapshot: (reason: string) => Promise<void>;
-  reconcileSessionStatusAfterExecution: (success: boolean) => Promise<void>;
-  updateLastActivity: (timestamp: number) => void;
-  scheduleInactivityCheck: () => Promise<void>;
-  processMessageQueue: () => Promise<void>;
-}
 
 /** How long a pending push waits for its terminal event before rejecting. */
 const PUSH_TIMEOUT_MS = 360_000;
@@ -49,13 +33,37 @@ const CRITICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
 export class SessionSandboxEventProcessor {
   private pendingPushResolvers = new Map<string, PushResolver>();
 
-  constructor(private readonly deps: SessionSandboxEventProcessorDeps) {}
+  constructor(
+    private readonly ctx: DurableObjectState,
+    // The DO swaps its logger for a request-scoped child during fetch();
+    // a getter keeps this singleton reading the current logger instead of
+    // capturing one by value at construction time.
+    private readonly getLog: () => Logger,
+    private readonly repository: SessionRepository,
+    private readonly callbackService: CallbackNotificationService,
+    private readonly wsManager: SessionWebSocketManager,
+    private readonly messenger: SessionMessenger,
+    private readonly diffService: SessionDiffService,
+    private readonly applySessionTitleUpdate: (
+      title: string,
+      options?: SessionTitleUpdateOptions
+    ) => SessionTitleUpdateResult,
+    private readonly triggerSnapshot: (reason: string) => Promise<void>,
+    private readonly statusService: SessionStatusService,
+    private readonly updateLastActivity: (timestamp: number) => void,
+    private readonly scheduleInactivityCheck: () => Promise<void>,
+    private readonly processMessageQueue: () => Promise<void>
+  ) {}
+
+  private get log(): Logger {
+    return this.getLog();
+  }
 
   async processSandboxEvent(event: SandboxEventWithAck): Promise<void> {
     if (event.type === "heartbeat" || event.type === "token") {
-      this.deps.log.debug("Sandbox event", { event_type: event.type });
+      this.log.debug("Sandbox event", { event_type: event.type });
     } else if (event.type !== "execution_complete") {
-      this.deps.log.info("Sandbox event", { event_type: event.type });
+      this.log.info("Sandbox event", { event_type: event.type });
     }
     const now = Date.now();
 
@@ -63,21 +71,25 @@ export class SessionSandboxEventProcessor {
     const ackId = event.ackId;
 
     if (event.type === "heartbeat") {
-      this.deps.repository.updateSandboxHeartbeat(now);
+      this.repository.updateSandboxHeartbeat(now);
       return;
     }
 
     if (event.type === "session_title") {
-      this.deps.applySessionTitleUpdate(event.title, { onlyIfUnset: true });
+      this.applySessionTitleUpdate(event.title, { onlyIfUnset: true });
       return;
     }
 
+    if (event.type === "ready") {
+      this.diffService.pinBaselines(event);
+    }
+
     const eventMessageId = "messageId" in event ? event.messageId : null;
-    const processingMessage = this.deps.repository.getProcessingMessage();
+    const processingMessage = this.repository.getProcessingMessage();
     const messageId = eventMessageId ?? processingMessage?.id ?? null;
 
     if (event.type === "artifact") {
-      this.deps.updateLastActivity(now);
+      this.updateLastActivity(now);
 
       const artifactType = assertArtifactType(event.artifactType);
       const artifactId =
@@ -99,14 +111,14 @@ export class SessionSandboxEventProcessor {
         updatedAt: now,
       };
 
-      this.deps.repository.createArtifact({
+      this.repository.createArtifact({
         id: artifact.id,
         type: artifact.type,
         url: artifact.url,
         metadata: artifact.metadata ? JSON.stringify(artifact.metadata) : null,
         createdAt: now,
       });
-      this.deps.repository.createEvent({
+      this.repository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(augmentedEvent),
@@ -114,23 +126,23 @@ export class SessionSandboxEventProcessor {
         createdAt: now,
       });
 
-      this.deps.broadcast({ type: "artifact_created", artifact });
-      this.deps.broadcast({ type: "sandbox_event", event: augmentedEvent });
+      this.messenger.broadcast({ type: "artifact_created", artifact });
+      this.messenger.broadcast({ type: "sandbox_event", event: augmentedEvent });
       return;
     }
 
     if (event.type === "token") {
       if (messageId) {
-        this.deps.repository.upsertTokenEvent(messageId, event, now);
+        this.repository.upsertTokenEvent(messageId, event, now);
       }
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
 
     if (event.type === "compaction") {
       // Persist each compaction marker (distinct events, not upserted) so it
       // replays in the timeline on reload, then broadcast it live.
-      this.deps.repository.createEvent({
+      this.repository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(event),
@@ -140,48 +152,48 @@ export class SessionSandboxEventProcessor {
       // Compaction shrinks the context, but the new size isn't known until the
       // next step. Clear the stored usage (keep the limit) so the gauge doesn't
       // show a stale pre-compaction count on reload until the next step_finish.
-      this.deps.repository.setSessionContextUsage(0, null, now);
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.repository.setSessionContextUsage(0, null, now);
+      this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
 
     if (event.type === "reasoning") {
       if (messageId) {
-        this.deps.repository.upsertReasoningEvent(messageId, event, now);
+        this.repository.upsertReasoningEvent(messageId, event, now);
       }
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
 
     if (event.type === "step_start" || event.type === "step_finish") {
-      this.deps.updateLastActivity(now);
+      this.updateLastActivity(now);
       if (
         event.type === "step_finish" &&
         typeof event.cost === "number" &&
         Number.isFinite(event.cost) &&
         event.cost > 0
       ) {
-        this.deps.repository.addSessionCost(event.cost, now);
+        this.repository.addSessionCost(event.cost, now);
       }
       // Persist current context-window pressure from the parent session's steps.
       // Subtask steps belong to a child session's context, so ignore them.
       // Include cached prompt and generated tokens so long responses don't show
       // false headroom near compaction.
       if (event.type === "step_finish" && !event.isSubtask && event.tokens !== undefined) {
-        this.deps.repository.setSessionContextUsage(
+        this.repository.setSessionContextUsage(
           contextTokensFromUsage(event.tokens),
           typeof event.contextLimit === "number" ? event.contextLimit : null,
           now
         );
       }
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
 
     if (event.type === "tool_call") {
-      this.deps.updateLastActivity(now);
+      this.updateLastActivity(now);
       if (shouldPersistToolCallEvent(event.status)) {
-        this.deps.repository.createEvent({
+        this.repository.createEvent({
           id: generateId(),
           type: event.type,
           data: JSON.stringify(event),
@@ -189,12 +201,12 @@ export class SessionSandboxEventProcessor {
           createdAt: now,
         });
       }
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.messenger.broadcast({ type: "sandbox_event", event });
 
       if (messageId) {
-        this.deps.ctx.waitUntil(
-          this.deps.callbackService.notifyToolCall(messageId, event).catch((error) => {
-            this.deps.log.error("callback.tool_call.background_error", {
+        this.ctx.waitUntil(
+          this.callbackService.notifyToolCall(messageId, event).catch((error) => {
+            this.log.error("callback.tool_call.background_error", {
               message_id: messageId,
               error,
             });
@@ -205,31 +217,30 @@ export class SessionSandboxEventProcessor {
     }
 
     if (event.type === "tool_result") {
-      this.deps.repository.createEvent({
+      this.repository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(event),
         messageId,
         createdAt: now,
       });
-      this.deps.broadcast({ type: "sandbox_event", event });
+      this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
 
     if (event.type === "execution_complete") {
       const completionMessageId = messageId;
       if (messageId) {
-        this.deps.repository.upsertExecutionCompleteEvent(messageId, event, now);
+        this.repository.upsertExecutionCompleteEvent(messageId, event, now);
       }
-
       const isStillProcessing =
         completionMessageId != null && processingMessage?.id === completionMessageId;
 
       if (isStillProcessing) {
         const status = event.success ? "completed" : "failed";
-        this.deps.repository.updateMessageCompletion(completionMessageId, status, now);
+        this.repository.updateMessageCompletion(completionMessageId, status, now);
 
-        const timestamps = this.deps.repository.getMessageTimestamps(completionMessageId);
+        const timestamps = this.repository.getMessageTimestamps(completionMessageId);
         const totalDurationMs = timestamps ? now - timestamps.created_at : undefined;
         const processingDurationMs =
           timestamps?.started_at != null ? now - timestamps.started_at : undefined;
@@ -238,7 +249,7 @@ export class SessionSandboxEventProcessor {
             ? timestamps.started_at - timestamps.created_at
             : undefined;
 
-        this.deps.log.info("prompt.complete", {
+        this.log.info("prompt.complete", {
           event: "prompt.complete",
           message_id: completionMessageId,
           outcome: event.success ? "success" : "failure",
@@ -248,33 +259,33 @@ export class SessionSandboxEventProcessor {
           queue_duration_ms: queueDurationMs,
         });
 
-        this.deps.broadcast({ type: "sandbox_event", event });
-        this.deps.broadcast({
+        this.messenger.broadcast({ type: "sandbox_event", event });
+        this.messenger.broadcast({
           type: "processing_status",
-          isProcessing: this.deps.getIsProcessing(),
+          isProcessing: this.repository.getProcessingMessage() !== null,
         });
-        this.deps.ctx.waitUntil(
-          this.deps.callbackService.notifyComplete(completionMessageId, event.success, event.error)
+        this.ctx.waitUntil(
+          this.callbackService.notifyComplete(completionMessageId, event.success, event.error)
         );
 
-        await this.deps.reconcileSessionStatusAfterExecution(event.success);
+        await this.statusService.reconcileAfterExecution(event.success);
       } else {
-        this.deps.log.info("prompt.complete", {
+        this.log.info("prompt.complete", {
           event: "prompt.complete",
           message_id: completionMessageId,
           outcome: "already_stopped",
         });
       }
 
-      this.deps.ctx.waitUntil(this.deps.triggerSnapshot("execution_complete"));
-      this.deps.updateLastActivity(now);
-      await this.deps.scheduleInactivityCheck();
-      await this.deps.processMessageQueue();
+      this.ctx.waitUntil(this.triggerSnapshot("execution_complete"));
+      this.updateLastActivity(now);
+      await this.scheduleInactivityCheck();
+      await this.processMessageQueue();
       this.sendAck(ackId);
       return;
     }
 
-    this.deps.repository.createEvent({
+    this.repository.createEvent({
       id: generateId(),
       type: event.type,
       data: JSON.stringify(event),
@@ -283,10 +294,10 @@ export class SessionSandboxEventProcessor {
     });
 
     if (event.type === "git_sync") {
-      this.deps.repository.updateSandboxGitSyncStatus(event.status);
+      this.repository.updateSandboxGitSyncStatus(event.status);
 
       if (event.sha) {
-        this.deps.repository.updateSessionCurrentSha(event.sha);
+        this.repository.updateSessionCurrentSha(event.sha);
       }
     }
 
@@ -294,7 +305,7 @@ export class SessionSandboxEventProcessor {
       this.handlePushEvent(event);
     }
 
-    this.deps.broadcast({ type: "sandbox_event", event });
+    this.messenger.broadcast({ type: "sandbox_event", event });
 
     if (CRITICAL_EVENT_TYPES.has(event.type)) {
       this.sendAck(ackId);
@@ -304,10 +315,10 @@ export class SessionSandboxEventProcessor {
   async pushBranchToRemote(
     pushSpec: GitPushSpec
   ): Promise<{ success: true } | { success: false; error: string }> {
-    const sandboxWs = this.deps.wsManager.getSandboxSocket();
+    const sandboxWs = this.wsManager.getSandboxSocket();
 
     if (!sandboxWs) {
-      this.deps.log.info("No sandbox connected, assuming branch was pushed manually");
+      this.log.info("No sandbox connected, assuming branch was pushed manually");
       return { success: true };
     }
 
@@ -329,22 +340,22 @@ export class SessionSandboxEventProcessor {
       }, PUSH_TIMEOUT_MS);
     });
 
-    this.deps.log.info("Sending push command", {
+    this.log.info("Sending push command", {
       branch_name: pushSpec.targetBranch,
       repo_owner: pushSpec.repoOwner,
       repo_name: pushSpec.repoName,
     });
-    this.deps.wsManager.send(sandboxWs, {
+    this.wsManager.send(sandboxWs, {
       type: "push",
       pushSpec,
     });
 
     try {
       await pushPromise;
-      this.deps.log.info("Push completed successfully", { branch_name: pushSpec.targetBranch });
+      this.log.info("Push completed successfully", { branch_name: pushSpec.targetBranch });
       return { success: true };
     } catch (pushError) {
-      this.deps.log.error("Push failed", {
+      this.log.error("Push failed", {
         branch_name: pushSpec.targetBranch,
         error: pushError instanceof Error ? pushError : String(pushError),
       });
@@ -359,7 +370,7 @@ export class SessionSandboxEventProcessor {
   private handlePushEvent(event: PushTerminalEvent): void {
     const entry = this.findPushResolver(event);
     if (!entry) {
-      this.deps.log.warn("Push event matched no pending resolver", {
+      this.log.warn("Push event matched no pending resolver", {
         event_type: event.type,
         branch_name: event.branchName ?? null,
         repo_owner: event.repoOwner ?? null,
@@ -371,14 +382,14 @@ export class SessionSandboxEventProcessor {
 
     const [resolverKey, resolver] = entry;
     if (event.type === "push_complete") {
-      this.deps.log.info("Push completed, resolving promise", {
+      this.log.info("Push completed, resolving promise", {
         branch_name: event.branchName ?? null,
         pending_resolvers: Array.from(this.pendingPushResolvers.keys()),
       });
       resolver.resolve();
     } else {
       const error = event.error || "Push failed";
-      this.deps.log.warn("Push failed for branch", {
+      this.log.warn("Push failed for branch", {
         branch_name: event.branchName ?? null,
         error,
       });
@@ -412,11 +423,11 @@ export class SessionSandboxEventProcessor {
 
   private sendAck(ackId: string | undefined): void {
     if (!ackId) return;
-    const sandboxWs = this.deps.wsManager.getSandboxSocket();
+    const sandboxWs = this.wsManager.getSandboxSocket();
     if (sandboxWs) {
-      this.deps.wsManager.send(sandboxWs, { type: "ack", ackId });
+      this.wsManager.send(sandboxWs, { type: "ack", ackId });
     } else {
-      this.deps.log.debug("Cannot send ACK: no sandbox socket", { ack_id: ackId });
+      this.log.debug("Cannot send ACK: no sandbox socket", { ack_id: ackId });
     }
   }
 

@@ -37,6 +37,11 @@ describe("createSessionInternalRoutes", () => {
       childSummary: noopHandler(),
       cancel: noopHandler(),
       childSessionUpdate: noopHandler(),
+      diffState: noopHandler(),
+      diffStore: noopHandler(),
+      diffFailure: noopHandler(),
+      diffResolveFile: noopHandler(),
+      diffRetry: noopHandler(),
     });
 
     const methodPathSet = new Set(routes.map((route) => `${route.method} ${route.path}`));
@@ -71,6 +76,11 @@ describe("createSessionInternalRoutes", () => {
         `GET ${SessionInternalPaths.childSummary}`,
         `POST ${SessionInternalPaths.cancel}`,
         `POST ${SessionInternalPaths.childSessionUpdate}`,
+        `GET ${SessionInternalPaths.diffState}`,
+        `POST ${SessionInternalPaths.diffStore}`,
+        `POST ${SessionInternalPaths.diffFailure}`,
+        `GET ${SessionInternalPaths.diffResolveFile}`,
+        `POST ${SessionInternalPaths.diffRetry}`,
       ])
     );
   });
