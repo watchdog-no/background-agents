@@ -1,4 +1,4 @@
-import { buildInternalAuthHeaders } from "@open-inspect/shared";
+import { generateInternalToken } from "@open-inspect/shared";
 import type { Logger } from "../logger";
 import type { Env } from "../types";
 
@@ -22,18 +22,18 @@ export const LINEAR_APP_TOKEN_FETCH_TIMEOUT_MS = 3000;
  * spawns without Linear access. It must not block or fail the spawn.
  */
 export async function injectLinearAppToken(
-  env: Pick<Env, "LINEAR_BOT" | "INTERNAL_CALLBACK_SECRET">,
+  env: Pick<Env, "LINEAR_BOT" | "SERVICE_AUTH_SECRET_LINEAR_BOT">,
   envVars: Record<string, string>,
   log: Logger
 ): Promise<void> {
-  if (!env.LINEAR_BOT || !env.INTERNAL_CALLBACK_SECRET) return;
+  if (!env.LINEAR_BOT || !env.SERVICE_AUTH_SECRET_LINEAR_BOT) return;
   // A user-provided key takes precedence over the app-actor identity.
   if (envVars.LINEAR_API_KEY) return;
 
   try {
-    const headers = await buildInternalAuthHeaders(env.INTERNAL_CALLBACK_SECRET);
+    const token = await generateInternalToken(env.SERVICE_AUTH_SECRET_LINEAR_BOT);
     const res = await env.LINEAR_BOT.fetch("https://internal/internal/app-token", {
-      headers,
+      headers: { Authorization: `Bearer ${token}` },
       // Bound the fetch so a slow/hung linear-bot can't stall the spawn.
       signal: AbortSignal.timeout(LINEAR_APP_TOKEN_FETCH_TIMEOUT_MS),
     });

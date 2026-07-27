@@ -17,7 +17,7 @@ function makeLogger(): Logger {
 
 function makeEnv(fetchImpl?: Fetcher["fetch"], secret = "internal-secret"): Env {
   return {
-    INTERNAL_CALLBACK_SECRET: secret,
+    SERVICE_AUTH_SECRET_LINEAR_BOT: secret,
     LINEAR_BOT: fetchImpl ? ({ fetch: fetchImpl } as unknown as Fetcher) : undefined,
   } as unknown as Env;
 }
@@ -33,7 +33,7 @@ describe("injectLinearAppToken", () => {
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it("skips when internal auth is not configured", async () => {
+  it("skips when Linear bot service auth is not configured", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ accessToken: "tok" })));
     const envVars: Record<string, string> = {};
     const log = makeLogger();

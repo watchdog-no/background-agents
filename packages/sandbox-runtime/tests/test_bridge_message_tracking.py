@@ -261,7 +261,7 @@ class TestBuildPromptRequestBody:
 
     @pytest.mark.parametrize(
         "model",
-        ["claude-opus-4-7", "claude-opus-4-8", "claude-fable-5"],
+        ["claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable-5"],
     )
     def test_fork_models_use_xhigh_adaptive_thinking(self, bridge: AgentBridge, model: str):
         body = bridge._ensure_prompt_stream()._build_prompt_request_body(

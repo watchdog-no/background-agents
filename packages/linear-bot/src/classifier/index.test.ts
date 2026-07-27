@@ -39,7 +39,7 @@ const TEST_REPOS: RepoConfig[] = [
 
 const TEST_ENV = {
   CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
-  INTERNAL_CALLBACK_SECRET: "test-secret",
+  SERVICE_AUTH_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
 
@@ -92,6 +92,9 @@ describe("classifyRepo", () => {
     const sent = JSON.parse((init as RequestInit).body as string);
     expect(sent.model).toBe("anthropic/claude-haiku-4-5");
     expect(typeof sent.prompt).toBe("string");
+    expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
+      "linear-bot"
+    );
   });
 
   it("sets failureReason when the endpoint reports an infra error", async () => {
@@ -105,6 +108,22 @@ describe("classifyRepo", () => {
     expect(result.needsClarification).toBe(true);
     expect(result.failureReason).toBe("oauth_unauthorized");
     expect(result.reasoning).toContain("classifier failed to run");
+  });
+
+  it("rejects malformed endpoint results", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({
+        repoId: "acme/prod",
+        confidence: "certain",
+        reasoning: "Invalid confidence.",
+      })
+    );
+
+    const result = await classify();
+
+    expect(result.repo).toBeNull();
+    expect(result.needsClarification).toBe(true);
+    expect(result.failureReason).toBe("provider_error");
   });
 
   it("short-circuits to the only repo without calling the endpoint", async () => {

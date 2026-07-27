@@ -302,6 +302,14 @@ access.
    > `{deployment_name}` is the unique value you set in `terraform.tfvars` (e.g., your GitHub
    > username or company name).
 
+   > **Keep "User-to-server token expiration" active** (GitHub App → **Optional Features**; it is
+   > the default for newly created Apps, but activate it if yours predates that default). Expiring
+   > user tokens are what make GitHub return a **refresh token** at sign-in, and Open-Inspect stores
+   > that per-user credential so sessions clone, commit, and push **as the signed-in user**. With
+   > expiration deactivated — or on an **OAuth App**, which never issues a refresh token — no
+   > per-user credential is captured and sessions fall back to the shared GitHub App **bot**
+   > identity for repository access.
+
 5. Set **Repository permissions**:
    - Contents: **Read & Write**
    - Issues: **Read & Write** _(required if enabling GitHub bot)_
@@ -368,6 +376,7 @@ Skip this step if you don't need Slack integration.
    - `groups:read`
    - `im:history`
    - `im:read`
+   - `files:read` (lets the bot read images attached to messages and forward them to sessions)
    - `files:write`
    - `reactions:write`
 3. Click **"Install to Workspace"**
@@ -383,11 +392,12 @@ Queued delivery applies to every Slack completion, including text-only replies. 
 
 1. Add **Account | Queues | Edit** to the Cloudflare API token used by Terraform. Terraform needs
    this permission to create the completion queue, dead-letter queue, Worker binding, and consumer.
-2. Add the Slack bot scope `files:write`, reinstall the app once for the workspace, and update
+2. Add the Slack bot scopes `files:write` and `files:read` (needed to forward images attached to
+   Slack messages into sessions), reinstall the app once for the workspace, and update
    `slack_bot_token` if Slack issued a replacement.
-3. Run `terraform apply`, then verify a text completion and a generated-media attachment. If the
-   token lacks Queue access, the apply fails while provisioning the new resources; grant the
-   permission and rerun the apply.
+3. Run `terraform apply`, then verify a text completion, an inbound image attached to a prompt, and
+   a generated-media attachment. If the token lacks Queue access, the apply fails while provisioning
+   the new resources; grant the permission and rerun the apply.
 
 No individual Slack user needs to reauthorize the app. Teams with `enable_slack_bot = false` do not
 create the Queue resources.
@@ -435,13 +445,10 @@ echo "token_encryption_key: $(openssl rand -base64 32)"
 # Repo secrets encryption key
 echo "repo_secrets_encryption_key: $(openssl rand -base64 32)"
 
-# Internal callback secret
-echo "internal_callback_secret: $(openssl rand -base64 32)"
-
 # Modal API secret (use hex for this one)
 echo "modal_api_secret: $(openssl rand -hex 32)"
 
-# NextAuth secret
+# Browser authentication secret (Terraform retains the legacy input name)
 echo "nextauth_secret: $(openssl rand -base64 32)"
 
 # GitHub webhook secret (only if enabling GitHub bot)
@@ -562,7 +569,6 @@ anthropic_api_key = "sk-ant-..."
 # Security Secrets (from Step 5)
 token_encryption_key          = "your-generated-value"
 repo_secrets_encryption_key   = "your-generated-value"
-internal_callback_secret      = "your-generated-value"
 modal_api_secret         = "your-generated-value"
 nextauth_secret          = "your-generated-value"
 
@@ -824,7 +830,7 @@ cloudflare_custom_domain = "app.example.com" # bare hostname, no scheme
 
 Cloudflare provisions the DNS record and edge certificate automatically. Notes:
 
-- The web app URL — including `NEXTAUTH_URL` and the links the bots send — becomes
+- The canonical browser-auth origin and the links the bots send become
   `https://{your-custom-domain}`, and the workers.dev route for the web Worker is disabled so the
   app has a single canonical origin.
 - Update the GitHub App callback URL (and the Google redirect URI, if Google login is enabled) to
@@ -920,7 +926,6 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `VERCEL_API_TOKEN`               | Vercel API token _(only if `web_platform = "vercel"`)_                                      |
 | `VERCEL_TEAM_ID`                 | Vercel team/account ID _(only if `web_platform = "vercel"`)_                                |
 | `VERCEL_PROJECT_ID`              | Vercel project ID _(only if `web_platform = "vercel"`)_                                     |
-| `NEXTAUTH_URL`                   | Your web app URL                                                                            |
 | `MODAL_TOKEN_ID`                 | Modal token ID                                                                              |
 | `MODAL_TOKEN_SECRET`             | Modal token secret                                                                          |
 | `MODAL_WORKSPACE`                | Modal workspace name                                                                        |
@@ -958,9 +963,8 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `DEEPSEEK_API_KEY`               | DeepSeek API key (optional, required only for DeepSeek models)                              |
 | `TOKEN_ENCRYPTION_KEY`           | Generated encryption key (OAuth tokens)                                                     |
 | `REPO_SECRETS_ENCRYPTION_KEY`    | Generated encryption key (repo secrets)                                                     |
-| `INTERNAL_CALLBACK_SECRET`       | Generated callback secret                                                                   |
 | `MODAL_API_SECRET`               | Generated Modal API secret                                                                  |
-| `NEXTAUTH_SECRET`                | Generated NextAuth secret                                                                   |
+| `NEXTAUTH_SECRET`                | Generated browser-auth secret (legacy Actions secret name)                                  |
 | `ALLOWED_USERS`                  | Comma-separated GitHub usernames (or empty for all users)                                   |
 | `ALLOWED_EMAIL_DOMAINS`          | Comma-separated email domains (or empty for all domains)                                    |
 | `ALLOWED_EMAILS`                 | Comma-separated exact email addresses (for individual users on shared domains)              |
@@ -1117,6 +1121,20 @@ If the bot doesn't see the original message when tagged in a thread reply:
    check these scopes and that the bot is invited to the target channel.
 3. If you added missing scopes, **reinstall the app** to your workspace for the new permissions to
    take effect.
+
+### Slack image attachment does not reach the agent
+
+1. Verify the bot has the `files:read` scope and reinstall the app after adding it. The
+   `files:write` scope is for generated media posted back to Slack, not images sent to the agent.
+2. Use PNG, JPEG, WebP, or GIF images no larger than 10 MiB. Open-Inspect forwards at most six
+   images per message.
+3. In a channel, `@mention` the bot with the image. DMs do not require a mention. Watched-channel
+   automations do not forward file attachments.
+4. For channel mentions and replies, verify `channels:history` for public channels or
+   `groups:history` for private channels. Slack may omit files from the mention event, so the bot
+   uses conversation history to retrieve them.
+5. Check the Slack thread for a warning about images that were too large or could not be downloaded
+   or uploaded. Other images and any text are still sent when possible.
 
 ### Slack completion does not attach generated media
 

@@ -7,9 +7,9 @@
  */
 
 import type { Env, RepoConfig, ClassificationResult } from "../types";
-import type { ClassifyRawResult, ClassifyErrorResponse } from "@open-inspect/shared";
+import { z } from "zod";
 import { getAvailableRepos, buildRepoDescriptions } from "./repos";
-import { buildInternalAuthHeaders } from "../utils/internal";
+import { signedControlPlaneFetch } from "../internal-auth";
 import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
@@ -18,6 +18,21 @@ const log = createLogger("classifier");
 // and OpenAI subscription OAuth routes to the chatgpt.com Codex backend, which
 // edge-blocks Worker egress (403). The Anthropic OAuth path uses api.anthropic.com.
 const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+const classifyRawResultSchema = z.object({
+  repoId: z.string().nullable(),
+  confidence: z.enum(["high", "medium", "low"]),
+  reasoning: z.string(),
+  alternatives: z.array(z.string()),
+});
+const classifyErrorResponseSchema = z.object({
+  reason: z.enum([
+    "oauth_not_configured",
+    "oauth_unauthorized",
+    "provider_error",
+    "invalid_request",
+  ]),
+  message: z.string(),
+});
 
 /**
  * Build classification prompt from Linear issue context.
@@ -91,31 +106,36 @@ async function callClassifyEndpoint(
   prompt: string,
   model: string,
   traceId?: string
-): Promise<ClassifyRawResult> {
-  const headers = {
-    "Content-Type": "application/json",
-    ...(await buildInternalAuthHeaders(env.INTERNAL_CALLBACK_SECRET, traceId)),
-  };
-  const response = await env.CONTROL_PLANE.fetch("https://internal/classify", {
+): Promise<z.infer<typeof classifyRawResultSchema>> {
+  const url = "https://internal/classify";
+  const body = JSON.stringify({ prompt, model });
+  const response = await signedControlPlaneFetch(env, {
     method: "POST",
-    headers,
-    body: JSON.stringify({ prompt, model }),
+    url,
+    body,
+    traceId,
   });
 
   if (!response.ok) {
     let reason: ClassificationResult["failureReason"] = "provider_error";
     let message = `classify endpoint returned ${response.status}`;
     try {
-      const errBody = (await response.json()) as ClassifyErrorResponse;
-      if (errBody.reason) reason = errBody.reason;
-      if (errBody.message) message = errBody.message;
+      const errBody = classifyErrorResponseSchema.safeParse(await response.json());
+      if (errBody.success) {
+        reason = errBody.data.reason;
+        message = errBody.data.message;
+      }
     } catch {
       /* non-JSON error body */
     }
     throw new ClassifierEndpointError(reason, message);
   }
 
-  return (await response.json()) as ClassifyRawResult;
+  const result = classifyRawResultSchema.safeParse(await response.json());
+  if (!result.success) {
+    throw new ClassifierEndpointError("provider_error", "Malformed classify endpoint response");
+  }
+  return result.data;
 }
 
 /**

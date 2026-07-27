@@ -187,12 +187,12 @@ await configureGitIdentity({
 
 Choose the AI model that fits your task, with per-session reasoning effort controls:
 
-| Provider         | Models                                                          |
-| ---------------- | --------------------------------------------------------------- |
-| Anthropic        | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5 |
-| OpenAI           | GPT 5.4, GPT 5.5, 5.3 Codex, 5.3 Codex Spark                    |
-| OpenCode Zen     | Kimi K2.5/K2.6, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1 (opt-in)   |
-| Z.AI Coding Plan | GLM 5.2 (opt-in)                                                |
+| Provider         | Models                                                            |
+| ---------------- | ----------------------------------------------------------------- |
+| Anthropic        | Claude Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8/5, Fable 5 |
+| OpenAI           | GPT 5.4, GPT 5.5, 5.3 Codex, 5.3 Codex Spark                      |
+| OpenCode Zen     | Kimi K2.5/K2.6, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1 (opt-in)     |
+| Z.AI Coding Plan | GLM 5.2 (opt-in)                                                  |
 
 Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
 work with your existing ChatGPT subscription via OAuth. See
@@ -206,8 +206,9 @@ Interact with agents from wherever your team already works:
 
 - **Web UI** — Full session management with real-time streaming, model/reasoning selectors, terminal
   panel, and multiplayer presence
-- **Slack Bot** — @mention or DM to start a session; replies thread back with results. Per-user
-  model and branch preferences via App Home. See [Slack integration](docs/integrations/SLACK.md)
+- **Slack Bot** — @mention or DM to start a session, with PNG, JPEG, WebP, and GIF prompt
+  attachments; replies thread back with results. Per-user model and branch preferences via App Home.
+  See [Slack integration](docs/integrations/SLACK.md)
 - **GitHub Bot** — Auto-review on PR open or respond to @mentions in PR comments. Configurable
   per-repo. See [GitHub integration](docs/integrations/GITHUB.md)
 - **Linear Bot** — Mention or assign the agent on an issue to start a coding session, post progress
