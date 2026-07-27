@@ -25,7 +25,7 @@ function makeEnv(fetchMedia: () => Promise<Response> = async () => mediaResponse
     CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret",
-    INTERNAL_CALLBACK_SECRET: "internal-secret",
+    SERVICE_AUTH_SECRET: "internal-secret",
   };
 }
 

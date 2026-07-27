@@ -134,6 +134,15 @@ d1_execute_with_retry "tracking table creation" \
 d1_execute_with_retry "legacy migration key healing" \
   --command "UPDATE OR IGNORE _schema_migrations SET version = name WHERE version <> name"
 
+# Each migration and its ledger row are submitted in one SQL file. D1 executes
+# the file atomically, so a failed migration cannot leave the schema and ledger
+# out of sync.
+MIGRATION_BATCH_DIR="$(mktemp -d)"
+cleanup() {
+  rm -r -- "$MIGRATION_BATCH_DIR"
+}
+trap cleanup EXIT
+
 # 3. Get applied filenames (parse JSON output)
 APPLIED_JSON=$(d1_execute_with_retry "applied migration read" \
   --command "SELECT name FROM _schema_migrations ORDER BY name" \
@@ -152,27 +161,30 @@ for file in "$MIGRATIONS_DIR"/*.sql; do
   fi
 
   echo "Applying: $FILENAME"
+  SAFE_FILENAME=${FILENAME//\'/\'\'}
+  MIGRATION_BATCH="$MIGRATION_BATCH_DIR/$FILENAME"
+  cp "$file" "$MIGRATION_BATCH"
+  printf "\n\nINSERT OR IGNORE INTO _schema_migrations (version, name) VALUES ('%s', '%s');\n" \
+    "$SAFE_FILENAME" "$SAFE_FILENAME" >>"$MIGRATION_BATCH"
+
   # Tolerate "duplicate column name": the migration was already applied under a
   # different filename (e.g. a file renamed after a collision) so the schema
   # is already in the target state. ADD COLUMN has no IF NOT EXISTS in SQLite,
   # so record it as applied and move on instead of aborting the whole deploy.
   # Every other error still aborts.
   #
-  # Do not retry migration files automatically: several migrations are not
-  # safely repeatable if D1 times out after partial execution. The idempotent
-  # bookkeeping commands around them are retried above and below.
-  if APPLY_OUTPUT=$(d1_execute_once --file "$file"); then
+  # Do not retry migration batches automatically: several migrations are not
+  # safely repeatable if the client loses the response after a commit.
+  if APPLY_OUTPUT=$(d1_execute_once --file "$MIGRATION_BATCH"); then
     echo "$APPLY_OUTPUT"
   elif echo "$APPLY_OUTPUT" | grep -qi "duplicate column name"; then
     echo "  Columns already present; recording as applied without re-running."
+    d1_execute_with_retry "migration record insert" \
+      --command "INSERT OR IGNORE INTO _schema_migrations (version, name) VALUES ('$SAFE_FILENAME', '$SAFE_FILENAME')"
   else
     echo "$APPLY_OUTPUT" >&2
     exit 1
   fi
-
-  SAFE_FILENAME=${FILENAME//\'/\'\'}
-  d1_execute_with_retry "migration record insert" \
-    --command "INSERT OR IGNORE INTO _schema_migrations (version, name) VALUES ('$SAFE_FILENAME', '$SAFE_FILENAME')"
 
   COUNT=$((COUNT + 1))
 done

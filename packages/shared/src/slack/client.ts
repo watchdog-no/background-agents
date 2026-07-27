@@ -395,6 +395,63 @@ export async function getThreadMessages(
   return { ok: true, messages };
 }
 
+/** A file object as it appears on a Slack message (subset of fields we use). */
+export interface SlackMessageFile {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  url_private?: string;
+  url_private_download?: string;
+  size?: number;
+  /** "external" marks remote files whose url_private is third-party-hosted. */
+  mode?: string;
+}
+
+/**
+ * Fetch the files attached to a single message.
+ *
+ * `app_mention` events don't include the message's `files` array, so when an
+ * event arrives without files we recover them from conversation history. Pass
+ * `threadTs` when the message is a thread reply; otherwise the top-level
+ * message at `ts` is fetched. Returns the failure arm on API errors so callers
+ * can distinguish "the message has no files" from "the lookup failed".
+ */
+export async function getMessageFiles(
+  token: string,
+  channelId: string,
+  ts: string,
+  threadTs?: string
+): Promise<SlackEnvelope<{ files: SlackMessageFile[] }>> {
+  // Single-message fetch. The two endpoints sort differently, so the window
+  // anchor differs: conversations.history returns newest-first, so
+  // `latest=<ts>&inclusive=true&limit=1` yields the target; conversations.replies
+  // returns oldest-first, so the anchor must be `oldest=<ts>&inclusive=true` (a
+  // `latest` anchor would yield the thread root instead). Never set oldest and
+  // latest to the same ts — an equal pair is a zero-width window that Slack
+  // returns empty for. `limit=2` on replies tolerates the thread root being
+  // included alongside the target; the find-by-ts below is the source of truth.
+  type HistoryResult = { messages?: Array<{ ts?: string; files?: SlackMessageFile[] }> };
+  const res =
+    threadTs && threadTs !== ts
+      ? await slackGet<HistoryResult>(token, "conversations.replies", {
+          channel: channelId,
+          ts: threadTs,
+          oldest: ts,
+          inclusive: "true",
+          limit: "2",
+        })
+      : await slackGet<HistoryResult>(token, "conversations.history", {
+          channel: channelId,
+          latest: ts,
+          inclusive: "true",
+          limit: "1",
+        });
+  if (!res.ok) return res;
+  const message = res.messages?.find((m) => m.ts === ts);
+  return { ok: true, files: message?.files ?? [] };
+}
+
 export interface SlackUser {
   id: string;
   name: string;

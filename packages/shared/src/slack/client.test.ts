@@ -5,6 +5,7 @@ import {
   completeExternalUpload,
   getExternalUploadUrl,
   getChannelInfo,
+  getMessageFiles,
   getPermalink,
   getThreadMessages,
   getUserInfo,
@@ -722,5 +723,104 @@ describe("listChannels", () => {
     if (!result.ok) {
       expect(result.error).toBe("missing_scope");
     }
+  });
+});
+
+describe("getMessageFiles", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fetches a single top-level message via conversations.history without oldest", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        messages: [{ ts: "1.0", files: [{ id: "F1", mimetype: "image/png" }] }],
+      })
+    );
+
+    const result = await getMessageFiles("xoxb-token", "C123", "1.0");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0]!.id).toBe("F1");
+    }
+    const [url] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe(
+      "https://slack.com/api/conversations.history?channel=C123&latest=1.0&inclusive=true&limit=1"
+    );
+  });
+
+  it("fetches a thread reply via conversations.replies anchored on oldest", async () => {
+    // conversations.replies returns oldest-first, so an oldest=<ts> anchor puts
+    // the target reply first in the window; a latest anchor would return the
+    // thread root instead.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        messages: [{ ts: "1.5", files: [{ id: "F2", mimetype: "image/jpeg" }] }, { ts: "1.7" }],
+      })
+    );
+
+    const result = await getMessageFiles("xoxb-token", "C123", "1.5", "1.0");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0]!.id).toBe("F2");
+    }
+    const [url] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe(
+      "https://slack.com/api/conversations.replies?channel=C123&ts=1.0&oldest=1.5&inclusive=true&limit=2"
+    );
+  });
+
+  it("finds the target reply even when the thread root is included in the page", async () => {
+    // Some conversations.replies responses include the thread root alongside
+    // the windowed replies; find-by-ts must still pick the target.
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        messages: [{ ts: "1.0" }, { ts: "1.5", files: [{ id: "F3", mimetype: "image/png" }] }],
+      })
+    );
+
+    const result = await getMessageFiles("xoxb-token", "C123", "1.5", "1.0");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.files[0]!.id).toBe("F3");
+    }
+  });
+
+  it("uses conversations.history when threadTs equals ts (thread parent)", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ ok: true, messages: [{ ts: "1.0" }] }));
+
+    await getMessageFiles("xoxb-token", "C123", "1.0", "1.0");
+
+    const [url] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toContain("conversations.history");
+  });
+
+  it("returns empty files when the message has none or is not found", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ ok: true, messages: [{ ts: "9.9" }] })
+    );
+
+    expect(await getMessageFiles("xoxb-token", "C123", "1.0")).toEqual({ ok: true, files: [] });
+  });
+
+  it("returns the failure arm on Slack API errors (e.g. missing_scope)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ ok: false, error: "missing_scope" })
+    );
+
+    expect(await getMessageFiles("xoxb-token", "C123", "1.0")).toEqual({
+      ok: false,
+      error: "missing_scope",
+    });
   });
 });

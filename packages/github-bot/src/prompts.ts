@@ -34,9 +34,32 @@ export function buildCodeReviewPrompt(params: {
   head: string;
   isPublic: boolean;
   codeReviewInstructions?: string | null;
+  isSelfReview?: boolean;
 }): string {
-  const { owner, repo, number, title, body, author, base, head, isPublic, codeReviewInstructions } =
-    params;
+  const {
+    owner,
+    repo,
+    number,
+    title,
+    body,
+    author,
+    base,
+    head,
+    isPublic,
+    codeReviewInstructions,
+    isSelfReview = false,
+  } = params;
+  const selfReviewGuidance = isSelfReview
+    ? `
+3. GitHub does not allow pull request authors to approve their own PRs. Post this self-review as a
+   comment review:
+
+   gh api repos/${owner}/${repo}/pulls/${number}/reviews \\
+     --method POST \\
+     -f body="<your review summary>" \\
+     -f event="COMMENT"
+`
+    : "";
 
   return `You are reviewing Pull Request #${number} in ${owner}/${repo}.
 The repository has been cloned and you are on the PR head branch.
@@ -53,11 +76,12 @@ ${wrapUntrusted("github_pr_description", body ?? "_No description provided._")}
 
    /code-review --pr ${number} --post
 
-3. The review must be posted to GitHub because this session was started by a GitHub webhook and the
+${selfReviewGuidance}
+4. The review must be posted to GitHub because this session was started by a GitHub webhook and the
    PR is where users will see the result. Do not stop after a local dry-run review.
-4. You may read individual files in the repo for context beyond the diff, but do not make code
+5. You may read individual files in the repo for context beyond the diff, but do not make code
    changes as part of the review.
-5. Apply any Custom Instructions below as review focus while still posting the review.
+6. Apply any Custom Instructions below as review focus while still posting the review.
 
 ${buildCustomInstructionsSection(codeReviewInstructions)}
 ${buildCommentGuidelines(isPublic)}`;

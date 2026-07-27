@@ -51,6 +51,7 @@ export function makeLinearBotEnv(kv: KVNamespace, overrides: Partial<Env> = {}):
     LINEAR_CLIENT_ID: "linear-client-id",
     LINEAR_CLIENT_SECRET: "linear-client-secret",
     WORKER_URL: "https://linear-bot.example.test",
+    SERVICE_AUTH_SECRET: "service-auth-secret",
     CONTROL_PLANE: { fetch: vi.fn() } as unknown as Fetcher,
     ...overrides,
   };

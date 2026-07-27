@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { browserApiFetch, type BrowserApiPath } from "@/lib/browser-api-fetch";
 
 import { normalizeKey, parseMaybeEnvContent, type ParsedEnvEntry } from "@/lib/env-paste";
 
@@ -165,7 +166,7 @@ function SecretValueField({
 type SecretsScope = "repo" | "global" | "environment";
 
 interface SecretsScopePolicy {
-  apiBase: string;
+  apiBase: BrowserApiPath;
   ready: boolean;
   description: string;
   emptyStateText: string;
@@ -409,7 +410,7 @@ export function SecretsEditor({
     setError("");
 
     try {
-      const response = await fetch(`${apiBase}/${normalizedKey}`, {
+      const response = await browserApiFetch(`${apiBase}/${normalizedKey}`, {
         method: "DELETE",
       });
       const data = await response.json();
@@ -499,7 +500,7 @@ export function SecretsEditor({
         payload[entry.key] = entry.value;
       }
 
-      const response = await fetch(apiBase, {
+      const response = await browserApiFetch(apiBase, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ secrets: payload }),

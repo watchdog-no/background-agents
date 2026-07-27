@@ -12,13 +12,13 @@ import { buildEnvironmentDescriptions } from "./environments";
 import { loadTargetCatalog, type TargetCatalog } from "./catalog";
 import { matchTargetId, resolveChannelTargets, resolveRoutingRuleTargets } from "./routing";
 import {
-  buildInternalAuthHeaders,
   escapeMrkdwnText,
   type ClassifyErrorResponse,
   type ClassifyRawResult,
   type ConfidenceLevel,
 } from "@open-inspect/shared";
 import { targetId, targetLabel, targetValue, type SlackSessionTarget } from "../targets";
+import { signedControlPlaneFetch } from "../internal-auth";
 import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
@@ -172,14 +172,13 @@ async function callClassifyEndpoint(
   model: string,
   traceId?: string
 ): Promise<ClassifyRawResult> {
-  const headers = {
-    "Content-Type": "application/json",
-    ...(await buildInternalAuthHeaders(env.INTERNAL_CALLBACK_SECRET, traceId)),
-  };
-  const response = await env.CONTROL_PLANE.fetch("https://internal/classify", {
+  const url = "https://internal/classify";
+  const body = JSON.stringify({ prompt, model });
+  const response = await signedControlPlaneFetch(env, {
     method: "POST",
-    headers,
-    body: JSON.stringify({ prompt, model }),
+    url,
+    body,
+    traceId,
   });
 
   if (!response.ok) {

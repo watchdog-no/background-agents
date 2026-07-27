@@ -30,7 +30,7 @@ const { default: app } = await import("./index");
 function makeEnv(overrides: Partial<Env> = {}): Env {
   const { kv } = createFakeKV();
   return makeLinearBotEnv(kv, {
-    INTERNAL_CALLBACK_SECRET: "internal-secret",
+    SERVICE_AUTH_SECRET: "internal-secret",
     ...overrides,
   });
 }
@@ -63,7 +63,7 @@ describe("GET /internal/app-token", () => {
   it("returns 500 when internal auth is not configured", async () => {
     const response = await app.fetch(
       new Request("http://localhost/internal/app-token"),
-      makeEnv({ INTERNAL_CALLBACK_SECRET: undefined }),
+      makeEnv({ SERVICE_AUTH_SECRET: undefined }),
       makeCtx()
     );
 
@@ -101,7 +101,7 @@ describe("GET /internal/app-token", () => {
     const { kv } = createFakeKV({
       "oauth:client-credentials:org-1": cachedClientCredentialsToken("app-token"),
     });
-    const env = makeLinearBotEnv(kv, { INTERNAL_CALLBACK_SECRET: "internal-secret" });
+    const env = makeLinearBotEnv(kv, { SERVICE_AUTH_SECRET: "internal-secret" });
 
     const response = await app.fetch(
       new Request("http://localhost/internal/app-token", {

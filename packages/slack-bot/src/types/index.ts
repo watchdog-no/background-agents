@@ -36,7 +36,7 @@ export interface Env {
   SLACK_SIGNING_SECRET: string;
   SLACK_APP_TOKEN?: string;
   CONTROL_PLANE_API_KEY?: string;
-  INTERNAL_CALLBACK_SECRET?: string; // For verifying callbacks from control-plane
+  SERVICE_AUTH_SECRET?: string; // Per-service sig1 signing secret; also verifies CP callbacks
   LOG_LEVEL?: string;
 }
 

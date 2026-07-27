@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
-import { useSession, signIn } from "next-auth/react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { signIn, useAuthSession } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { NewSessionButton, SearchSessionsButton, SessionSidebar } from "./session-sidebar";
@@ -74,7 +74,7 @@ export function CollapsedSidebarControls() {
 }
 
 export function SidebarLayout({ children }: SidebarLayoutProps) {
-  const { data: session, status } = useSession();
+  const { data: session, status } = useAuthSession();
   const router = useRouter();
   const sidebar = useSidebar();
   const isMobile = useIsMobile();
@@ -111,6 +111,10 @@ export function SidebarLayout({ children }: SidebarLayoutProps) {
   const handleSearchSessions = useCallback(() => {
     setIsCommandMenuOpen(true);
   }, []);
+  const appShellActions = useMemo(
+    () => ({ searchSessions: handleSearchSessions, newSession: handleNewSession }),
+    [handleSearchSessions, handleNewSession]
+  );
 
   useGlobalShortcuts({
     enabled: status === "authenticated" && Boolean(session),
@@ -154,9 +158,7 @@ export function SidebarLayout({ children }: SidebarLayoutProps) {
 
   return (
     <SidebarContext.Provider value={sidebar}>
-      <AppShellActionsContext.Provider
-        value={{ searchSessions: handleSearchSessions, newSession: handleNewSession }}
-      >
+      <AppShellActionsContext.Provider value={appShellActions}>
         <div className="flex h-dvh overflow-hidden">
           {/* Mobile: overlay backdrop */}
           {isMobile && (

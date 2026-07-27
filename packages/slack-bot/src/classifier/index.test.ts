@@ -73,7 +73,7 @@ const TEST_ENVIRONMENT: Environment = {
 
 const TEST_ENV = {
   CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
-  INTERNAL_CALLBACK_SECRET: "test-secret",
+  SERVICE_AUTH_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
 
@@ -134,6 +134,9 @@ describe("RepoClassifier", () => {
     const sentBody = JSON.parse((init as RequestInit).body as string);
     expect(sentBody.model).toBe("anthropic/claude-haiku-4-5");
     expect(typeof sentBody.prompt).toBe("string");
+    expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
+      "slack-bot"
+    );
   });
 
   it("flags an infra failure with the endpoint reason when the endpoint errors", async () => {
