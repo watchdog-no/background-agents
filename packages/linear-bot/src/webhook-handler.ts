@@ -303,8 +303,12 @@ async function handleStop(webhook: AgentSessionWebhook, env: Env, traceId: strin
   });
 }
 
-function getNewSessionActorUserId(webhook: AgentSessionWebhook): string | undefined {
-  return webhook.agentSession.comment?.userId ?? webhook.agentSession.creatorId ?? undefined;
+function getNewSessionActorUserId(webhook: AgentSessionWebhook): string {
+  return (
+    webhook.agentSession.comment?.userId?.trim() ||
+    webhook.agentSession.creatorId?.trim() ||
+    webhook.appUserId
+  );
 }
 
 function shouldTransitionIssueOnStart(webhook: AgentSessionWebhook): boolean {

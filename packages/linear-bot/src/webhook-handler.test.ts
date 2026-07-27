@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ACTOR_HEADER } from "@open-inspect/shared";
 import {
   buildFollowUpPrompt,
   buildPrompt,
@@ -565,7 +566,7 @@ describe("handleAgentSessionEvent environment targets", () => {
     expect(issueSession).not.toHaveProperty("environmentId");
   });
 
-  it("omits actor identity and issue transition for an automation-created session", async () => {
+  it("uses the verified app actor without transitioning an automation-created issue", async () => {
     const { kv } = createFakeKV({
       "oauth:client-credentials:org-1": validToken(),
       "config:project-repos": JSON.stringify({
@@ -580,6 +581,14 @@ describe("handleAgentSessionEvent environment targets", () => {
     await handleAgentSessionEvent(webhook, env, "trace-automation");
 
     expect(createSessionBody(fetchMock)).not.toHaveProperty("actorUserId");
+    const sessionCall = fetchMock.mock.calls.find(
+      ([input]) => String(input) === "https://internal/sessions"
+    );
+    expect(new Headers(sessionCall?.[1]?.headers).get(ACTOR_HEADER)).toBe("linear:app-user-1");
+    const promptCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/sessions/session-xyz/prompt")
+    );
+    expect(new Headers(promptCall?.[1]?.headers).get(ACTOR_HEADER)).toBe("linear:app-user-1");
     expect(promptBody(fetchMock)).toMatchObject({
       callbackContext: { transitionIssueOnStart: false },
     });

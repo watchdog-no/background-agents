@@ -7,6 +7,11 @@ import { createUserAuth } from "./better-auth";
 import { GitHubProviderIdentityResolver } from "./providers/github-identity";
 import { GitHubSignInProfileResolver } from "./providers/github-profile";
 import { GoogleSignInProfileResolver } from "./providers/google-profile";
+import type { ProviderProfileResolver } from "./provider-profile";
+import {
+  D1BrowserUserProvisioner,
+  type BrowserAuthProvider,
+} from "../../db/browser-user-provisioner";
 import { D1CanonicalUserProjection } from "../../db/canonical-user-projection";
 import type { Env } from "../../types";
 
@@ -67,6 +72,20 @@ function createAdmissionPolicy(env: Env): AdmissionPolicy {
   });
 }
 
+function withBrowserUserProvisioning(
+  provider: BrowserAuthProvider,
+  resolver: ProviderProfileResolver,
+  provisioner: D1BrowserUserProvisioner
+): ProviderProfileResolver {
+  return async (tokens) => {
+    const profile = await resolver(tokens);
+    if (profile) {
+      await provisioner.provision(provider, profile);
+    }
+    return profile;
+  };
+}
+
 export function createUserAuthFromEnv(env: Env, database: D1Database) {
   const publicWebOrigin = parsePublicWebOrigin(env.WEB_APP_URL);
   const secret = requireConfig(env.BROWSER_AUTH_SECRET, "BROWSER_AUTH_SECRET");
@@ -103,6 +122,7 @@ export function createUserAuthFromEnv(env: Env, database: D1Database) {
           admissionPolicy,
         })
       : null;
+  const browserUserProvisioner = new D1BrowserUserProvisioner(database);
 
   return createUserAuth({
     database,
@@ -112,14 +132,22 @@ export function createUserAuthFromEnv(env: Env, database: D1Database) {
     github: {
       clientId: githubClientId,
       clientSecret: githubClientSecret,
-      getUserInfo: githubProfile.getUserInfo,
+      getUserInfo: withBrowserUserProvisioning(
+        "github",
+        githubProfile.getUserInfo,
+        browserUserProvisioner
+      ),
     },
     ...(googleProfile && googleClientId && googleClientSecret
       ? {
           google: {
             clientId: googleClientId,
             clientSecret: googleClientSecret,
-            getUserInfo: googleProfile.getUserInfo,
+            getUserInfo: withBrowserUserProvisioning(
+              "google",
+              googleProfile.getUserInfo,
+              browserUserProvisioner
+            ),
           },
         }
       : {}),

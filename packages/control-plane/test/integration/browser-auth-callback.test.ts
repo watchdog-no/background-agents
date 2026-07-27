@@ -1,5 +1,9 @@
 import { env } from "cloudflare:test";
-import { buildServiceAuthHeaders, isCanonicalUserId } from "@open-inspect/shared";
+import {
+  BROWSER_AUTH_CLIENT_IP_HEADER,
+  buildServiceAuthHeaders,
+  isCanonicalUserId,
+} from "@open-inspect/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getUserAuth } from "../../src/auth/user/runtime";
 import { resolveGitHubCredentialAuthority } from "../../src/source-control/github-credential-authority";
@@ -19,6 +23,7 @@ async function signedWebRequest(
     method: "GET" | "POST";
     body?: string;
     cookie?: string;
+    clientIp?: string;
   }
 ): Promise<Request> {
   const url = `${CONTROL_PLANE_ORIGIN}${path}`;
@@ -27,6 +32,7 @@ async function signedWebRequest(
     headers: {
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.cookie ? { Cookie: init.cookie } : {}),
+      ...(init.clientIp ? { [BROWSER_AUTH_CLIENT_IP_HEADER]: init.clientIp } : {}),
       Origin: PUBLIC_WEB_ORIGIN,
       ...(await buildServiceAuthHeaders({
         service: "web",
@@ -46,6 +52,52 @@ function cookiePair(response: Response, cookieName: string): string {
     .find((value) => value.startsWith(`${cookieName}=`));
   if (!cookie) throw new Error(`Missing ${cookieName} cookie`);
   return cookie.split(";", 1)[0];
+}
+
+let nextTestClientIp = 1;
+
+async function signInWithGitHub(): Promise<string> {
+  const clientIp = `198.51.100.${nextTestClientIp++}`;
+  const initiationResponse = await handleRequest(
+    await signedWebRequest("/api/auth/sign-in/social", {
+      method: "POST",
+      clientIp,
+      body: JSON.stringify({
+        provider: "github",
+        callbackURL: "/after-sign-in",
+        disableRedirect: true,
+      }),
+    }),
+    env
+  );
+  expect(initiationResponse.status).toBe(200);
+  const providerUrl = new URL((await initiationResponse.json<{ url: string }>()).url);
+  const state = providerUrl.searchParams.get("state");
+  const stateCookie = cookiePair(initiationResponse, "__Secure-openinspect.state");
+
+  const callbackResponse = await handleRequest(
+    await signedWebRequest(
+      `/api/auth/callback/github?code=authorization-code&state=${encodeURIComponent(state ?? "")}`,
+      {
+        method: "GET",
+        cookie: stateCookie,
+        clientIp,
+      }
+    ),
+    env
+  );
+  expect(callbackResponse.status).toBe(302);
+
+  const sessionResponse = await handleRequest(
+    await signedWebRequest("/api/auth/get-session", {
+      method: "GET",
+      cookie: cookiePair(callbackResponse, "__Secure-openinspect.session_token"),
+      clientIp,
+    }),
+    env
+  );
+  expect(sessionResponse.status).toBe(200);
+  return (await sessionResponse.json<{ user: { id: string } }>()).user.id;
 }
 
 beforeAll(() => {
@@ -221,6 +273,86 @@ describe("browser auth callback", () => {
       env
     );
     expect(channelOnlyResponse.status).toBe(401);
+  });
+
+  it("links a bot-created user by verified email before browser sign-in", async () => {
+    const canonicalUserId = "44444444444444444444444444444444";
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (
+           id, display_name, email, avatar_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(canonicalUserId, "Bot User", "octocat@example.com", null, now, now),
+      env.DB.prepare(
+        `INSERT INTO user_identities (
+           id, user_id, provider, provider_user_id, provider_login,
+           provider_email, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        "55555555555555555555555555555555",
+        canonicalUserId,
+        "slack",
+        "U0123",
+        null,
+        "octocat@example.com",
+        now
+      ),
+    ]);
+
+    await expect(signInWithGitHub()).resolves.toBe(canonicalUserId);
+    await expect(
+      env.DB.prepare(
+        `SELECT user_id
+         FROM user_identities
+         WHERE provider = 'github' AND provider_user_id = '583231'`
+      ).first<{ user_id: string }>()
+    ).resolves.toEqual({ user_id: canonicalUserId });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>()
+    ).resolves.toEqual({ count: 1 });
+  });
+
+  it("links a bot-created user by provider identity when it has no email", async () => {
+    const canonicalUserId = "66666666666666666666666666666666";
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (
+           id, display_name, email, avatar_url, created_at, updated_at
+         ) VALUES (?, ?, NULL, ?, ?, ?)`
+      ).bind(canonicalUserId, "Bot User", null, now, now),
+      env.DB.prepare(
+        `INSERT INTO user_identities (
+           id, user_id, provider, provider_user_id, provider_login,
+           provider_email, created_at
+         ) VALUES (?, ?, ?, ?, ?, NULL, ?)`
+      ).bind(
+        "77777777777777777777777777777777",
+        canonicalUserId,
+        "github",
+        "583231",
+        "octocat",
+        now
+      ),
+    ]);
+
+    await expect(signInWithGitHub()).resolves.toBe(canonicalUserId);
+    await expect(
+      env.DB.prepare("SELECT email FROM users WHERE id = ?")
+        .bind(canonicalUserId)
+        .first<{ email: string }>()
+    ).resolves.toEqual({ email: "octocat@example.com" });
+    await expect(
+      env.DB.prepare(
+        `SELECT userId
+         FROM auth_accounts
+         WHERE providerId = 'github' AND accountId = '583231'`
+      ).first<{ userId: string }>()
+    ).resolves.toEqual({ userId: canonicalUserId });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>()
+    ).resolves.toEqual({ count: 1 });
   });
 
   it("signs an existing canonical user in through a migrated GitHub account", async () => {
