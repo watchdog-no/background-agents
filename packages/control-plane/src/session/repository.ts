@@ -13,6 +13,7 @@ import type {
   EventRow,
   ArtifactRow,
   SandboxRow,
+  SessionRepositoryRow,
 } from "./types";
 import type {
   SessionStatus,
@@ -49,9 +50,11 @@ export interface WsClientMappingResult {
   participant_id: string;
   client_id: string;
   user_id: string;
+  canonical_user_id?: string | null;
   scm_name: string | null;
   scm_login: string | null;
-  auth_name: string | null;
+  /** Dormant legacy column may still be present on older mapping fixtures. */
+  auth_name?: string | null;
 }
 
 /**
@@ -93,20 +96,6 @@ export interface UpsertSessionData {
 }
 
 /**
- * One member repository row, in position order (position 0 = primary).
- */
-export interface SessionRepositoryRow {
-  position: number;
-  repo_owner: string;
-  repo_name: string;
-  repo_id: number | null;
-  base_branch: string;
-  branch_name: string | null;
-  base_sha: string | null;
-  current_sha: string | null;
-}
-
-/**
  * Data for writing a session's member repository set — mirrors the
  * session_repositories columns the init path populates (per-repo git state
  * is written separately, by push handling).
@@ -135,10 +124,10 @@ export interface CreateSandboxData {
 export interface CreateParticipantData {
   id: string;
   userId: string;
+  canonicalUserId?: string | null;
   scmUserId?: string | null;
   scmLogin?: string | null;
   scmName?: string | null;
-  authName?: string | null;
   scmEmail?: string | null;
   scmAccessTokenEncrypted?: string | null;
   scmRefreshTokenEncrypted?: string | null;
@@ -151,10 +140,10 @@ export interface CreateParticipantData {
  * Data for updating a participant with COALESCE (only non-null values update).
  */
 export interface UpdateParticipantData {
+  canonicalUserId?: string | null;
   scmUserId?: string | null;
   scmLogin?: string | null;
   scmName?: string | null;
-  authName?: string | null;
   scmEmail?: string | null;
   scmAccessTokenEncrypted?: string | null;
   scmRefreshTokenEncrypted?: string | null;
@@ -689,14 +678,14 @@ export class SessionRepository {
 
   createParticipant(data: CreateParticipantData): void {
     this.sql.exec(
-      `INSERT INTO participants (id, user_id, scm_user_id, scm_login, scm_name, auth_name, scm_email, scm_access_token_encrypted, scm_refresh_token_encrypted, scm_token_expires_at, role, joined_at)
+      `INSERT INTO participants (id, user_id, canonical_user_id, scm_user_id, scm_login, scm_name, scm_email, scm_access_token_encrypted, scm_refresh_token_encrypted, scm_token_expires_at, role, joined_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.id,
       data.userId,
+      data.canonicalUserId ?? null,
       data.scmUserId ?? null,
       data.scmLogin ?? null,
       data.scmName ?? null,
-      data.authName ?? null,
       data.scmEmail ?? null,
       data.scmAccessTokenEncrypted ?? null,
       data.scmRefreshTokenEncrypted ?? null,
@@ -709,19 +698,19 @@ export class SessionRepository {
   updateParticipantCoalesce(participantId: string, data: UpdateParticipantData): void {
     this.sql.exec(
       `UPDATE participants SET
+         canonical_user_id = COALESCE(?, canonical_user_id),
          scm_user_id = COALESCE(?, scm_user_id),
          scm_login = COALESCE(?, scm_login),
          scm_name = COALESCE(?, scm_name),
-         auth_name = COALESCE(?, auth_name),
          scm_email = COALESCE(?, scm_email),
          scm_access_token_encrypted = COALESCE(?, scm_access_token_encrypted),
          scm_refresh_token_encrypted = COALESCE(?, scm_refresh_token_encrypted),
          scm_token_expires_at = COALESCE(?, scm_token_expires_at)
        WHERE id = ?`,
+      data.canonicalUserId ?? null,
       data.scmUserId ?? null,
       data.scmLogin ?? null,
       data.scmName ?? null,
-      data.authName ?? null,
       data.scmEmail ?? null,
       data.scmAccessTokenEncrypted ?? null,
       data.scmRefreshTokenEncrypted ?? null,
@@ -794,6 +783,14 @@ export class SessionRepository {
     return rows[0] ?? null;
   }
 
+  getProcessingMessageWithCreatedAt(): { id: string; created_at: number } | null {
+    const result = this.sql.exec(
+      `SELECT id, created_at FROM messages WHERE status = 'processing' LIMIT 1`
+    );
+    const rows = result.toArray() as Array<{ id: string; created_at: number }>;
+    return rows[0] ?? null;
+  }
+
   getProcessingMessageWithStartedAt(): { id: string; started_at: number } | null {
     const result = this.sql.exec(
       `SELECT id, started_at FROM messages WHERE status = 'processing' LIMIT 1`
@@ -804,7 +801,7 @@ export class SessionRepository {
 
   getNextPendingMessage(): MessageRow | null {
     const result = this.sql.exec(
-      `SELECT * FROM messages WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`
+      `SELECT * FROM messages WHERE status = 'pending' ORDER BY created_at ASC, id ASC LIMIT 1`
     );
     const rows = this.rows<MessageRow>(result);
     return rows[0] ?? null;
@@ -1097,7 +1094,7 @@ export class SessionRepository {
 
   getWsClientMapping(wsId: string): WsClientMappingResult | null {
     const result = this.sql.exec(
-      `SELECT m.participant_id, m.client_id, p.user_id, p.scm_name, p.scm_login, p.auth_name
+      `SELECT m.participant_id, m.client_id, p.user_id, p.canonical_user_id, p.scm_name, p.scm_login
        FROM ws_client_mapping m
        JOIN participants p ON m.participant_id = p.id
        WHERE m.ws_id = ?`,

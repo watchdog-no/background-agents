@@ -27,7 +27,7 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 #
 # OpenCode restored `/event` stream context in 1.14.50 and fixed the remaining
 # eager-subscription race in 1.15.5. Keep the CLI and plugin on the same pin.
-OPENCODE_VERSION = "1.17.18"
+OPENCODE_VERSION = "1.18.11"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"

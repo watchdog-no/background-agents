@@ -1,4 +1,4 @@
-import { generateInternalToken } from "@open-inspect/shared";
+import { generateInternalToken } from "@open-inspect/shared/auth";
 import type { Logger } from "../logger";
 import type { Env } from "../types";
 

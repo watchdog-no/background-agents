@@ -1,11 +1,16 @@
 import { z } from "zod";
 import { sessionArtifactSchema } from "./artifacts";
 import { sandboxEventSchema, tolerantSandboxEventsSchema } from "./sandbox-events";
-import { participantPresenceSchema, sessionStateSchema } from "./sessions";
-import { sandboxStatusSchema, sessionStatusSchema } from "./statuses";
+import {
+  participantPresenceSchema,
+  sandboxStatusSchema,
+  sessionStateSchema,
+  sessionStatusSchema,
+} from "./sessions";
 
 const participantSummarySchema = z.object({
   participantId: z.string(),
+  userId: z.string().optional(),
   name: z.string(),
   avatar: z.string().optional(),
 });

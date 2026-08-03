@@ -15,7 +15,11 @@ import { ScreenshotArtifactCard } from "@/components/screenshot-artifact-card";
 import { ToolCallGroup } from "@/components/tool-call-group";
 import { copyToClipboard } from "@/lib/format";
 import type { Artifact, SandboxEvent } from "@/types/session";
+import type { SessionParticipantProfile } from "@open-inspect/shared";
 import { CheckIcon, CopyIcon, ErrorIcon } from "@/components/ui/icons";
+import { resolveParticipantDisplay } from "@/lib/participant-display";
+import { TerminalMessageReadObserver } from "./terminal-message-read-observer";
+import type { SessionReadAttemptDisposition } from "@/lib/session-read-state";
 
 type ToolCallEvent = Extract<SandboxEvent, { type: "tool_call" }>;
 
@@ -101,22 +105,55 @@ export function SessionTimeline({
   events,
   sessionId,
   currentParticipantId,
+  participantProfiles,
   isProcessing,
   loadingHistory,
   showSkeleton,
   onLoadOlder,
   onOpenMedia,
+  terminalMessageReadObservationEnabled = false,
+  onMarkMessageRead,
 }: {
   events: SandboxEvent[];
   sessionId: string;
   currentParticipantId: string | null;
+  participantProfiles: Record<string, SessionParticipantProfile>;
   isProcessing: boolean;
   loadingHistory: boolean;
   showSkeleton: boolean;
   onLoadOlder: () => void;
   onOpenMedia: (artifactId: string) => void;
+  terminalMessageReadObservationEnabled?: boolean;
+  onMarkMessageRead?: (messageId: string) => Promise<SessionReadAttemptDisposition>;
 }) {
   const groupedEvents = useMemo(() => dedupeAndGroupEvents(events), [events]);
+  const latestTerminalMessageId = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.type === "execution_complete" && event.messageId) return event.messageId;
+    }
+    return null;
+  }, [events]);
+  const latestTerminalMessageGroupRange = useMemo(() => {
+    if (!latestTerminalMessageId) return null;
+    const completionIndex = groupedEvents.findIndex(
+      (group) =>
+        group.type === "single" &&
+        group.event.type === "execution_complete" &&
+        group.event.messageId === latestTerminalMessageId
+    );
+    if (completionIndex < 0) return null;
+    const outputIndex = groupedEvents.findIndex(
+      (group) =>
+        group.type === "single" &&
+        group.event.type === "token" &&
+        group.event.messageId === latestTerminalMessageId
+    );
+    return {
+      start: outputIndex >= 0 ? Math.min(outputIndex, completionIndex) : completionIndex,
+      end: Math.max(outputIndex, completionIndex),
+    };
+  }, [groupedEvents, latestTerminalMessageId]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -165,6 +202,20 @@ export function SessionTimeline({
     }
   }, [events]);
 
+  const renderGroup = (group: EventGroup) =>
+    group.type === "tool_group" ? (
+      <ToolCallGroup key={group.id} events={group.events} groupId={group.id} />
+    ) : (
+      <EventItem
+        key={group.id}
+        event={group.event}
+        sessionId={sessionId}
+        currentParticipantId={currentParticipantId}
+        participantProfiles={participantProfiles}
+        onOpenMedia={onOpenMedia}
+      />
+    );
+
   useEffect(() => {
     if (isNearBottomRef.current && !isPrependingRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -185,19 +236,37 @@ export function SessionTimeline({
         {showSkeleton ? (
           <TimelineSkeleton />
         ) : (
-          groupedEvents.map((group) =>
-            group.type === "tool_group" ? (
-              <ToolCallGroup key={group.id} events={group.events} groupId={group.id} />
-            ) : (
-              <EventItem
-                key={group.id}
-                event={group.event}
-                sessionId={sessionId}
-                currentParticipantId={currentParticipantId}
-                onOpenMedia={onOpenMedia}
-              />
-            )
-          )
+          groupedEvents.map((group, index) => {
+            if (
+              latestTerminalMessageGroupRange &&
+              onMarkMessageRead &&
+              index === latestTerminalMessageGroupRange.start
+            ) {
+              return (
+                <TerminalMessageReadObserver
+                  key={`terminal-message-${latestTerminalMessageId}`}
+                  messageId={latestTerminalMessageId!}
+                  enabled={terminalMessageReadObservationEnabled}
+                  onMarkMessageRead={onMarkMessageRead}
+                >
+                  {groupedEvents
+                    .slice(
+                      latestTerminalMessageGroupRange.start,
+                      latestTerminalMessageGroupRange.end + 1
+                    )
+                    .map(renderGroup)}
+                </TerminalMessageReadObserver>
+              );
+            }
+            if (
+              latestTerminalMessageGroupRange &&
+              index > latestTerminalMessageGroupRange.start &&
+              index <= latestTerminalMessageGroupRange.end
+            ) {
+              return null;
+            }
+            return renderGroup(group);
+          })
         )}
         {isProcessing && <ThinkingIndicator />}
 
@@ -240,6 +309,7 @@ type EventRendererProps = {
   event: SandboxEvent;
   sessionId: string;
   currentParticipantId: string | null;
+  participantProfiles: Record<string, SessionParticipantProfile>;
   copied: boolean;
   onCopyContent: (content: string) => void;
   onOpenMedia: (artifactId: string) => void;
@@ -374,6 +444,7 @@ function UserMessageEvent({
   event,
   sessionId,
   currentParticipantId,
+  participantProfiles,
   copied,
   onCopyContent,
 }: EventRendererProps) {
@@ -385,14 +456,23 @@ function UserMessageEvent({
     event.author?.participantId && currentParticipantId
       ? event.author.participantId === currentParticipantId
       : !event.author;
-  const authorName = isCurrentUser ? "You" : event.author?.name || "Unknown User";
+  const profile = event.author?.userId ? participantProfiles[event.author.userId] : undefined;
+  const display = resolveParticipantDisplay(
+    {
+      name: event.author?.name || "Unknown User",
+      avatar: event.author?.avatar,
+    },
+    profile
+  );
+  const authorName = isCurrentUser ? "You" : display.name;
+  const avatar = display.avatar;
 
   return (
     <MessageFrame
       label={
         <div className="flex items-center gap-2">
-          {!isCurrentUser && event.author?.avatar && (
-            <img src={event.author.avatar} alt={authorName} className="w-5 h-5 rounded-full" />
+          {!isCurrentUser && avatar && (
+            <img src={avatar} alt={authorName} className="w-5 h-5 rounded-full" />
           )}
           <span className="text-xs text-accent">{authorName}</span>
         </div>
@@ -573,11 +653,13 @@ export const EventItem = memo(function EventItem({
   event,
   sessionId,
   currentParticipantId,
+  participantProfiles,
   onOpenMedia,
 }: {
   event: SandboxEvent;
   sessionId: string;
   currentParticipantId: string | null;
+  participantProfiles: Record<string, SessionParticipantProfile>;
   onOpenMedia: (artifactId: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -612,6 +694,7 @@ export const EventItem = memo(function EventItem({
     event,
     sessionId,
     currentParticipantId,
+    participantProfiles,
     copied,
     onCopyContent: handleCopyContent,
     onOpenMedia,

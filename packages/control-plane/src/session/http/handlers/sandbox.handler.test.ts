@@ -15,9 +15,9 @@ function createHandler() {
   const isValidSandboxToken = vi.fn();
   const getSession = vi.fn<() => SessionRow | null>();
   const refreshOpenAIToken = vi.fn();
-  const isOpenAISecretsConfigured = vi.fn();
   const refreshAnthropicToken = vi.fn();
-  const isAnthropicSecretsConfigured = vi.fn();
+  const refreshXaiToken = vi.fn();
+  const isManagedSecretsConfigured = vi.fn();
   const getScmCredentials = vi.fn();
   const broadcast = vi.fn();
   const messenger = { broadcast, sendToSandbox: vi.fn(() => true) };
@@ -39,9 +39,9 @@ function createHandler() {
     isValidSandboxToken,
     getSession,
     refreshOpenAIToken,
-    isOpenAISecretsConfigured,
     refreshAnthropicToken,
-    isAnthropicSecretsConfigured,
+    refreshXaiToken,
+    isManagedSecretsConfigured,
     getScmCredentials,
     messenger,
     generateId,
@@ -55,6 +55,7 @@ function createHandler() {
     verifySandboxToken: (request: Request) => sandboxHandler.verifySandboxToken(request, log),
     openaiTokenRefresh: () => sandboxHandler.openaiTokenRefresh(log),
     anthropicTokenRefresh: () => sandboxHandler.anthropicTokenRefresh(log),
+    xaiTokenRefresh: () => sandboxHandler.xaiTokenRefresh(log),
     scmCredentials: () => sandboxHandler.scmCredentials(log),
     tunnelUrls: () => sandboxHandler.tunnelUrls(log),
   };
@@ -67,9 +68,9 @@ function createHandler() {
     isValidSandboxToken,
     getSession,
     refreshOpenAIToken,
-    isOpenAISecretsConfigured,
     refreshAnthropicToken,
-    isAnthropicSecretsConfigured,
+    refreshXaiToken,
+    isManagedSecretsConfigured,
     getScmCredentials,
     broadcast,
     generateId,
@@ -481,9 +482,9 @@ describe("createSandboxHandler", () => {
   });
 
   it("returns 500 when openai secrets are not configured", async () => {
-    const { handler, getSession, isOpenAISecretsConfigured } = createHandler();
+    const { handler, getSession, isManagedSecretsConfigured } = createHandler();
     getSession.mockReturnValue({} as SessionRow);
-    isOpenAISecretsConfigured.mockReturnValue(false);
+    isManagedSecretsConfigured.mockReturnValue(false);
 
     const response = await handler.openaiTokenRefresh();
 
@@ -492,9 +493,9 @@ describe("createSandboxHandler", () => {
   });
 
   it("returns mapped service error from openai token refresh", async () => {
-    const { handler, getSession, isOpenAISecretsConfigured, refreshOpenAIToken } = createHandler();
+    const { handler, getSession, isManagedSecretsConfigured, refreshOpenAIToken } = createHandler();
     getSession.mockReturnValue({ id: "session-1" } as SessionRow);
-    isOpenAISecretsConfigured.mockReturnValue(true);
+    isManagedSecretsConfigured.mockReturnValue(true);
     refreshOpenAIToken.mockResolvedValue({
       ok: false,
       status: 502,
@@ -508,11 +509,11 @@ describe("createSandboxHandler", () => {
   });
 
   it("returns openai access token payload on success", async () => {
-    const { handler, getSession, isOpenAISecretsConfigured, refreshOpenAIToken, log } =
+    const { handler, getSession, isManagedSecretsConfigured, refreshOpenAIToken, log } =
       createHandler();
     const session = { id: "session-1" } as SessionRow;
     getSession.mockReturnValue(session);
-    isOpenAISecretsConfigured.mockReturnValue(true);
+    isManagedSecretsConfigured.mockReturnValue(true);
     refreshOpenAIToken.mockResolvedValue({
       ok: true,
       accessToken: "access-token",
@@ -523,6 +524,7 @@ describe("createSandboxHandler", () => {
     const response = await handler.openaiTokenRefresh();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({
       access_token: "access-token",
       expires_in: 3600,
@@ -531,33 +533,68 @@ describe("createSandboxHandler", () => {
     expect(refreshOpenAIToken).toHaveBeenCalledWith(session, log);
   });
 
-  it("returns 404 when anthropic token refresh has no session", async () => {
+  it("returns xAI access token payload on success", async () => {
+    const { handler, getSession, isManagedSecretsConfigured, refreshXaiToken, log } =
+      createHandler();
+    const session = { id: "session-1" } as SessionRow;
+    getSession.mockReturnValue(session);
+    isManagedSecretsConfigured.mockReturnValue(true);
+    refreshXaiToken.mockResolvedValue({ ok: true, accessToken: "xai-access", expiresIn: 3600 });
+
+    const response = await handler.xaiTokenRefresh();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({ access_token: "xai-access", expires_in: 3600 });
+    expect(refreshXaiToken).toHaveBeenCalledWith(session, log);
+  });
+
+  it("returns 404 when xAI token refresh has no session", async () => {
     const { handler, getSession } = createHandler();
     getSession.mockReturnValue(null);
 
-    const response = await handler.anthropicTokenRefresh();
+    const response = await handler.xaiTokenRefresh();
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "No session" });
   });
 
-  it("returns 500 when anthropic secrets are not configured", async () => {
-    const { handler, getSession, isAnthropicSecretsConfigured } = createHandler();
-    getSession.mockReturnValue({} as SessionRow);
-    isAnthropicSecretsConfigured.mockReturnValue(false);
+  it("returns 404 when anthropic token refresh has no session", async () => {
+    const { handler, getSession } = createHandler();
+    getSession.mockReturnValue(null);
 
     const response = await handler.anthropicTokenRefresh();
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "No session" });
+  });
+
+  it("returns 500 when managed secrets are not configured for xAI", async () => {
+    const { handler, getSession, isManagedSecretsConfigured } = createHandler();
+    getSession.mockReturnValue({} as SessionRow);
+    isManagedSecretsConfigured.mockReturnValue(false);
+
+    const response = await handler.xaiTokenRefresh();
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Secrets not configured" });
   });
 
+  it("returns 500 when managed secrets are not configured for Anthropic", async () => {
+    const { handler, getSession, isManagedSecretsConfigured } = createHandler();
+    getSession.mockReturnValue({} as SessionRow);
+    isManagedSecretsConfigured.mockReturnValue(false);
+
+    const response = await handler.anthropicTokenRefresh();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Secrets not configured" });
+  });
+
   it("returns anthropic access token payload on success", async () => {
-    const { handler, getSession, isAnthropicSecretsConfigured, refreshAnthropicToken, log } =
+    const { handler, getSession, isManagedSecretsConfigured, refreshAnthropicToken, log } =
       createHandler();
     const session = { id: "session-1" } as SessionRow;
     getSession.mockReturnValue(session);
-    isAnthropicSecretsConfigured.mockReturnValue(true);
+    isManagedSecretsConfigured.mockReturnValue(true);
     refreshAnthropicToken.mockResolvedValue({
       ok: true,
       accessToken: "access-token",
@@ -567,6 +604,7 @@ describe("createSandboxHandler", () => {
     const response = await handler.anthropicTokenRefresh();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({
       access_token: "access-token",
       expires_in: 3600,
@@ -575,11 +613,11 @@ describe("createSandboxHandler", () => {
   });
 
   it("returns mapped service error from anthropic token refresh", async () => {
-    const { handler, getSession, isAnthropicSecretsConfigured, refreshAnthropicToken, log } =
+    const { handler, getSession, isManagedSecretsConfigured, refreshAnthropicToken, log } =
       createHandler();
     const session = { id: "session-1" } as SessionRow;
     getSession.mockReturnValue(session);
-    isAnthropicSecretsConfigured.mockReturnValue(true);
+    isManagedSecretsConfigured.mockReturnValue(true);
     refreshAnthropicToken.mockResolvedValue({
       ok: false,
       status: 502,
@@ -591,6 +629,18 @@ describe("createSandboxHandler", () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "Anthropic token refresh failed" });
     expect(refreshAnthropicToken).toHaveBeenCalledWith(session, log);
+  });
+
+  it("returns mapped service error from xAI token refresh", async () => {
+    const { handler, getSession, isManagedSecretsConfigured, refreshXaiToken } = createHandler();
+    getSession.mockReturnValue({ id: "session-1" } as SessionRow);
+    isManagedSecretsConfigured.mockReturnValue(true);
+    refreshXaiToken.mockResolvedValue({ ok: false, status: 401, error: "xAI unauthorized" });
+
+    const response = await handler.xaiTokenRefresh();
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "xAI unauthorized" });
   });
 
   it("returns 404 when scm credentials have no session", async () => {

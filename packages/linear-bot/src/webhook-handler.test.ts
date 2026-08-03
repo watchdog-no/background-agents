@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ACTOR_HEADER } from "@open-inspect/shared";
+import { ACTOR_HEADER } from "@open-inspect/shared/service-auth";
 import {
   buildFollowUpPrompt,
   buildPrompt,

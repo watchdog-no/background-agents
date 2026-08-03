@@ -2,10 +2,11 @@ import {
   DEFAULT_CODE_SERVER_PORT,
   DEFAULT_TERMINAL_PORT,
   findSandboxPortConflict,
+  isValidSandboxTimeoutMs,
   MAX_TUNNEL_PORTS,
   type ConfiguredSandboxPort,
   type SandboxSettings,
-} from "@open-inspect/shared";
+} from "@open-inspect/shared/types/integrations";
 
 export type InvalidSandboxSettingsBehavior = "throw" | "omit";
 
@@ -19,6 +20,12 @@ export class SandboxSettingsValidationError extends Error {
     super(message);
     this.name = "SandboxSettingsValidationError";
   }
+}
+
+/** Decode and normalize a session's persisted sandbox settings snapshot. */
+export function parsePersistedSandboxSettings(settingsJson: string | null): SandboxSettings {
+  if (settingsJson === null) return {};
+  return normalizeSandboxSettings(JSON.parse(settingsJson), { invalid: "omit" });
 }
 
 /**
@@ -121,6 +128,14 @@ export function normalizeSandboxSettings(
       reject("memoryMib must be a positive integer");
     } else {
       result.memoryMib = settings.memoryMib;
+    }
+  }
+
+  if (settings.sandboxTimeoutMs !== undefined) {
+    if (!isValidSandboxTimeoutMs(settings.sandboxTimeoutMs)) {
+      reject("sandboxTimeoutMs must be a positive whole number of seconds");
+    } else {
+      result.sandboxTimeoutMs = settings.sandboxTimeoutMs;
     }
   }
 

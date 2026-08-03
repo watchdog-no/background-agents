@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateInternalToken } from "@open-inspect/shared";
+import { generateInternalToken } from "@open-inspect/shared/auth";
 import type { Env } from "./types";
 import type * as WebhookHandler from "./webhook-handler";
 import {

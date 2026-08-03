@@ -25,20 +25,6 @@ export type {
 export { clientMessageSchema } from "./websocket";
 export type { ClientMessage } from "./websocket";
 
-export { sessionStatusSchema } from "./statuses";
-export type {
-  SessionStatus,
-  SandboxStatus,
-  GitSyncStatus,
-  MessageStatus,
-  MessageSource,
-  ArtifactType,
-  EventType,
-  ParticipantRole,
-  SpawnSource,
-  ConfidenceLevel,
-} from "./statuses";
-
 export {
   MAX_TARGET_REPOSITORIES,
   MAX_SESSION_REPOSITORIES,
@@ -62,6 +48,13 @@ export type {
   RepositoryPair,
 } from "./repositories";
 
+export {
+  installationRepositorySchema,
+  repoMetadataSchema,
+  enrichedRepositorySchema,
+  repoConfigSchema,
+  controlPlaneReposResponseSchema,
+} from "./repository-catalog";
 export type {
   InstallationRepository,
   RepoMetadata,
@@ -74,6 +67,7 @@ export type {
   ClassifyRawResult,
   ClassifyErrorReason,
   ClassifyErrorResponse,
+  ConfidenceLevel,
 } from "./repository-catalog";
 
 export { toDisplayStatus } from "./artifacts";
@@ -93,6 +87,7 @@ export type {
   ArtifactInfo,
   MediaArtifactInfo,
   AgentResponse,
+  ArtifactType,
 } from "./artifacts";
 
 export { contextTokensFromUsage, sandboxEventSchema } from "./sandbox-events";
@@ -102,6 +97,8 @@ export type {
   TokenUsage,
   EventResponse,
   ListEventsResponse,
+  GitSyncStatus,
+  EventType,
 } from "./sandbox-events";
 
 export type {
@@ -111,6 +108,25 @@ export type {
   SessionState,
   ParticipantPresence,
   PullRequestSummary,
+  SessionReadState,
+  SessionReadAction,
+  SessionReadResult,
+  SessionParticipantProfile,
+  SessionParticipantProfilesResponse,
+  SessionStatus,
+  SandboxStatus,
+  MessageStatus,
+  MessageSource,
+  ParticipantRole,
+  SpawnSource,
+} from "./sessions";
+export {
+  messageSourceSchema,
+  sessionStatusSchema,
+  sessionReadActionSchema,
+  sessionReadResultSchema,
+  sessionParticipantProfileSchema,
+  sessionParticipantProfilesResponseSchema,
 } from "./sessions";
 
 export { serverMessageSchema } from "./server-messages";
@@ -216,11 +232,11 @@ export type {
 } from "./environments";
 
 export type {
-  AutomationTriggerType,
   AutomationRunStatus,
   AutomationInvocationSource,
   AutomationInvocationStatus,
 } from "./automations";
+export type { AutomationTriggerType } from "../triggers/types";
 
 export {
   MAX_AUTOMATION_REPOSITORIES,
@@ -245,8 +261,6 @@ export type {
   ImageBuildScopeKind,
   RepositoryShaEntry,
   ImageBuildRecordView,
-  ImageBuildCompleteCallback,
-  ImageBuildFailedCallback,
 } from "./image-builds";
 
 export { ANALYTICS_DAYS, ANALYTICS_BREAKDOWN_BY } from "./analytics";

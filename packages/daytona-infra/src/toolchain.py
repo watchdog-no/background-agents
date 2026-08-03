@@ -10,7 +10,7 @@ from daytona import CreateSnapshotParams, Daytona, Image
 #
 # OpenCode restored `/event` stream context in 1.14.50 and fixed the remaining
 # eager-subscription race in 1.15.5. Keep the CLI and plugin on the same pin.
-OPENCODE_VERSION = "1.17.18"
+OPENCODE_VERSION = "1.18.11"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
 LINEAR_CLI_VERSION = "2.0.0"
@@ -22,7 +22,8 @@ CTX7_VERSION = "0.4.4"
 # daytona-v4: install ctx7 (Context7) for agent-side library documentation.
 # daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
 # daytona-v6: upgrade OpenCode after upstream SSE fixes.
-SANDBOX_VERSION = "daytona-v6-opencode-1-17-18"
+# daytona-v7: upgrade to OpenCode 1.18.11.
+SANDBOX_VERSION = "daytona-v7-opencode-1-18-11"
 
 
 def build_base_image(repo_root: Path) -> Image:

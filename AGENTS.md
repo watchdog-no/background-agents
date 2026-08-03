@@ -141,8 +141,10 @@ under 72 characters. Use the PR body for details, not the commit message.
   migrations must use the 9000+ prefix band (`9001_*.sql`, …) so upstream's sequential numbering
   never reaches them. Never rename a migration file that has already been applied — the rename makes
   it look unapplied.
-- **Modal deployment**: never deploy `src/app.py` directly — use `modal deploy deploy.py` or
-  `modal deploy -m src`. The `app.py` file doesn't import function modules.
+- **Modal deployment**: from `packages/modal-infra`, run
+  `uv run python deploy.py --build-sandbox-image` before `uv run modal deploy deploy.py` (or
+  `uv run modal deploy -m src`). Never deploy `src/app.py` directly; it doesn't import function
+  modules.
 - **Modal image rebuild**: update `CACHE_BUSTER` in `src/images/base.py` to force a rebuild.
 - **Web platform choice**: set `web_platform = "cloudflare"` in Terraform variables to deploy the
   web app to Cloudflare Workers via OpenNext instead of Vercel. When using Cloudflare, Vercel

@@ -42,8 +42,8 @@ Defaults:
 - workdir: `/tmp/openinspect-local-smoke`
 
 The script removes any repo `.opencode` directory before installing the bundled runtime
-`.opencode/skills` and `.opencode/tools` directories, which mirrors a fresh sandbox checkout. It
-also runs OpenCode with an isolated `HOME`, disables OpenCode autoupdate like production, copies
+`.opencode/skills` and `.opencode/tool` directories, which mirrors a fresh sandbox checkout. It also
+runs OpenCode with an isolated `HOME`, disables OpenCode autoupdate like production, copies
 `~/.local/share/opencode/auth.json` into that home by default, and passes `gh auth token` as
 `GH_TOKEN` so local user skills do not pollute the repro while PR metadata still resolves. When
 cloning from a local checkout, it resets `origin` to `https://github.com/<owner>/<repo>.git` by
