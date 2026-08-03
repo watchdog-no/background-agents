@@ -2,9 +2,9 @@ import type { Artifact, SandboxEvent } from "@/types/session";
 import {
   contextTokensFromUsage,
   type ParticipantPresence,
-  type ServerMessage,
   type SessionState,
 } from "@open-inspect/shared";
+import type { ServerMessage } from "@open-inspect/shared/types/server-messages";
 import { toUiArtifact } from "./artifact-metadata";
 import { collapseReplayTokenEvents, toUiSandboxEvent } from "./event-log";
 

@@ -16,7 +16,8 @@ import {
 } from "./utils/linear-client";
 import { callbacksRouter } from "./callbacks";
 import { createLogger } from "./logger";
-import { resolveAppName, verifyInternalToken } from "@open-inspect/shared";
+import { resolveAppName } from "@open-inspect/shared/app-name";
+import { verifyInternalToken } from "@open-inspect/shared/auth";
 import { handleAgentSessionEvent, escapeHtml } from "./webhook-handler";
 import { isDuplicateEvent } from "./kv-store";
 

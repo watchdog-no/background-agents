@@ -43,7 +43,7 @@ class TestAnthropicAuthPluginSetup:
             ),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         data = json.loads(_auth_file(tmp_path).read_text())
         assert data["anthropic"]["refresh"] == "managed-by-control-plane"
@@ -92,8 +92,7 @@ class TestAnthropicAuthPluginSetup:
                 if p == "/app/sandbox_runtime/plugins/anthropic-auth-plugin.js"
                 else original_path(p)
             )
-            sup._setup_openai_oauth = MagicMock()
-            sup._setup_anthropic_oauth = MagicMock()
+            sup._setup_managed_oauth = MagicMock()
             sup._install_tools = MagicMock()
             sup._install_skills = MagicMock()
             sup._install_bin_scripts = MagicMock()
@@ -142,8 +141,7 @@ class TestAnthropicAuthPluginSetup:
                 if p == "/app/sandbox_runtime/plugins/anthropic-auth-plugin.js"
                 else original_path(p)
             )
-            sup._setup_openai_oauth = MagicMock()
-            sup._setup_anthropic_oauth = MagicMock()
+            sup._setup_managed_oauth = MagicMock()
             sup._install_tools = MagicMock()
             sup._install_skills = MagicMock()
             sup._install_bin_scripts = MagicMock()

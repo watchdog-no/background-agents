@@ -1,4 +1,4 @@
-"""Tests for SandboxSupervisor._setup_anthropic_oauth()."""
+"""Tests for Anthropic support in SandboxSupervisor._setup_managed_oauth()."""
 
 import json
 import os
@@ -30,7 +30,7 @@ def _auth_file(tmp_path):
 
 
 class TestAnthropicOauthSetup:
-    """Cases for _setup_anthropic_oauth()."""
+    """Cases for Anthropic managed OAuth setup."""
 
     def test_writes_auth_json_when_oauth_enabled(self, tmp_path):
         sup = _make_supervisor()
@@ -39,7 +39,7 @@ class TestAnthropicOauthSetup:
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         data = json.loads(_auth_file(tmp_path).read_text())
         assert data == {
@@ -60,7 +60,7 @@ class TestAnthropicOauthSetup:
         monkeypatch.delenv("ANTHROPIC_OAUTH_ENABLED", raising=False)
 
         with patch("pathlib.Path.home", return_value=tmp_path):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         assert not _auth_file(tmp_path).exists()
 
@@ -71,7 +71,7 @@ class TestAnthropicOauthSetup:
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         assert not _auth_file(tmp_path).exists()
 
@@ -82,7 +82,7 @@ class TestAnthropicOauthSetup:
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         mode = _auth_file(tmp_path).stat().st_mode & 0o777
         assert mode == 0o600
@@ -96,7 +96,7 @@ class TestAnthropicOauthSetup:
             patch("os.open", side_effect=OSError("disk full")),
             pytest.raises(OSError, match="disk full"),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
     def test_no_temp_file_left_on_write_failure(self, tmp_path):
         sup = _make_supervisor()
@@ -113,7 +113,7 @@ class TestAnthropicOauthSetup:
             patch("os.open", side_effect=fail_on_tmp),
             pytest.raises(OSError, match="disk full"),
         ):
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         auth_dir = tmp_path / ".local" / "share" / "opencode"
         tmp_file = auth_dir / ".auth.json.tmp"
@@ -127,15 +127,14 @@ class TestAnthropicOauthSetup:
             patch.dict(
                 "os.environ",
                 {
-                    "OPENAI_OAUTH_REFRESH_TOKEN": "rt_openai",
+                    "OPENAI_OAUTH_MANAGED": "1",
                     "ANTHROPIC_OAUTH_ENABLED": "true",
                 },
                 clear=False,
             ),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_openai_oauth()
-            sup._setup_anthropic_oauth()
+            sup._setup_managed_oauth()
 
         data = json.loads(_auth_file(tmp_path).read_text())
         assert set(data.keys()) == {"openai", "anthropic"}

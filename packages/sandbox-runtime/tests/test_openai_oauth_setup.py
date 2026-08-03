@@ -1,4 +1,4 @@
-"""Tests for SandboxSupervisor._setup_openai_oauth()."""
+"""Tests for OpenAI support in SandboxSupervisor._setup_managed_oauth()."""
 
 import json
 import os
@@ -30,16 +30,16 @@ def _auth_file(tmp_path):
 
 
 class TestOpenaiOauthSetup:
-    """Cases for _setup_openai_oauth()."""
+    """Cases for OpenAI managed OAuth setup."""
 
     def test_writes_auth_json_when_refresh_token_present(self, tmp_path):
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"OPENAI_OAUTH_MANAGED": "1"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
         data = json.loads(_auth_file(tmp_path).read_text())
         assert data == {
@@ -51,33 +51,33 @@ class TestOpenaiOauthSetup:
             }
         }
 
-    def test_includes_account_id_when_present(self, tmp_path):
+    def test_does_not_require_account_id_in_sandbox_env(self, tmp_path):
         sup = _make_supervisor()
 
         with (
             patch.dict(
                 "os.environ",
                 {
-                    "OPENAI_OAUTH_REFRESH_TOKEN": "rt_abc123",
+                    "OPENAI_OAUTH_MANAGED": "1",
                     "OPENAI_OAUTH_ACCOUNT_ID": "acct_xyz",
                 },
                 clear=False,
             ),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
         data = json.loads(_auth_file(tmp_path).read_text())
-        assert data["openai"]["accountId"] == "acct_xyz"
+        assert "accountId" not in data["openai"]
 
     def test_skips_when_no_refresh_token(self, tmp_path, monkeypatch):
         sup = _make_supervisor()
 
         # Explicitly remove the key so it is absent regardless of test ordering
-        monkeypatch.delenv("OPENAI_OAUTH_REFRESH_TOKEN", raising=False)
+        monkeypatch.delenv("OPENAI_OAUTH_MANAGED", raising=False)
 
         with patch("pathlib.Path.home", return_value=tmp_path):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
         assert not _auth_file(tmp_path).exists()
 
@@ -85,10 +85,10 @@ class TestOpenaiOauthSetup:
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"OPENAI_OAUTH_MANAGED": "1"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
         mode = _auth_file(tmp_path).stat().st_mode & 0o777
         assert mode == 0o600
@@ -97,12 +97,12 @@ class TestOpenaiOauthSetup:
         sup = _make_supervisor()
 
         with (
-            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"OPENAI_OAUTH_MANAGED": "1"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=OSError("disk full")),
             pytest.raises(OSError, match="disk full"),
         ):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
     def test_no_temp_file_left_on_write_failure(self, tmp_path):
         sup = _make_supervisor()
@@ -114,12 +114,12 @@ class TestOpenaiOauthSetup:
             return original_open(path, *args, **kwargs)
 
         with (
-            patch.dict("os.environ", {"OPENAI_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
+            patch.dict("os.environ", {"OPENAI_OAUTH_MANAGED": "1"}, clear=False),
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("os.open", side_effect=fail_on_tmp),
             pytest.raises(OSError, match="disk full"),
         ):
-            sup._setup_openai_oauth()
+            sup._setup_managed_oauth()
 
         auth_dir = tmp_path / ".local" / "share" / "opencode"
         tmp_file = auth_dir / ".auth.json.tmp"

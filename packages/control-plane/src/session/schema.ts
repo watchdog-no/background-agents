@@ -83,11 +83,12 @@ CREATE TABLE IF NOT EXISTS session (
 CREATE TABLE IF NOT EXISTS participants (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
+  canonical_user_id TEXT,                           -- D1 users.id for cosmetic profile joins only
   scm_user_id TEXT,                                 -- SCM numeric ID
   scm_login TEXT,                                   -- SCM username
   scm_email TEXT,                                   -- For git commit attribution
   scm_name TEXT,                                    -- Display name for git commits
-  auth_name TEXT,                                   -- Provider-agnostic display name (e.g. Google/OIDC) for presence
+  auth_name TEXT,                                   -- Dormant legacy profile snapshot; retained for schema compatibility
   role TEXT NOT NULL DEFAULT 'member',              -- 'owner', 'member'
   -- Token storage (AES-GCM encrypted)
   scm_access_token_encrypted TEXT,
@@ -503,6 +504,13 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
     id: 39,
     description: "Add durable latest session diff bundle",
     run: SESSION_DIFF_TABLE_SQL,
+  },
+  {
+    // IDs 36-39 have already shipped in the fork. Append upstream's new
+    // migration so existing Durable Objects do not mistake it for migration 37.
+    id: 40,
+    description: "Add canonical D1 user reference to participants",
+    run: `ALTER TABLE participants ADD COLUMN canonical_user_id TEXT`,
   },
 ];
 

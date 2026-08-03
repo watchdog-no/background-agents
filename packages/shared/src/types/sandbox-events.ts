@@ -1,8 +1,31 @@
 import { z } from "zod";
 import { recordSchema } from "./artifacts";
 import { sessionDiffBaselineRepositorySchema } from "./session-diffs";
-import { gitSyncStatusSchema, type EventType } from "./statuses";
 import { resolvedSessionAttachmentsSchema } from "./session-attachments";
+
+export type GitSyncStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export const gitSyncStatusSchema = z.enum(["pending", "in_progress", "completed", "failed"]);
+
+export type EventType =
+  | "heartbeat"
+  | "ready"
+  | "token"
+  | "reasoning"
+  | "tool_call"
+  | "step_start"
+  | "step_finish"
+  | "tool_result"
+  | "git_sync"
+  | "error"
+  | "execution_complete"
+  | "compaction"
+  | "artifact"
+  | "push_complete"
+  | "push_error"
+  | "warning"
+  | "session_title"
+  | "user_message";
 
 export interface AgentEvent {
   id: string;
@@ -192,6 +215,7 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
     author: z
       .object({
         participantId: z.string(),
+        userId: z.string().optional(),
         name: z.string(),
         avatar: z.string().optional(),
       })

@@ -63,10 +63,10 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tmp_path / "no-tools"):
             installed = sup._install_tools(workdir)
 
-        dest = workdir / ".opencode" / "tools" / "create-pull-request.js"
+        dest = workdir / ".opencode" / "tool" / "create-pull-request.js"
         assert dest.exists()
         assert dest.read_text() == "// legacy tool"
-        assert installed == {".opencode/tools/create-pull-request.js"}
+        assert installed == {".opencode/tool/create-pull-request.js"}
 
     def test_tools_dir_files_copied(self, tmp_path):
         """All .js files from tools/ directory should be copied."""
@@ -77,18 +77,18 @@ class TestInstallTools:
         tools_dir = tmp_path / "app" / "sandbox" / "tools"
         tools_dir.mkdir(parents=True)
         (tools_dir / "_bridge-client.js").write_text("// bridge client")
-        (tools_dir / "spawn-task.js").write_text("// spawn task")
-        (tools_dir / "get-task-status.js").write_text("// get status")
-        (tools_dir / "cancel-task.js").write_text("// cancel task")
+        (tools_dir / "spawn-child.js").write_text("// spawn child")
+        (tools_dir / "get-child-status.js").write_text("// get status")
+        (tools_dir / "cancel-child.js").write_text("// cancel child")
 
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
+        tool_dest = workdir / ".opencode" / "tool"
         assert (tool_dest / "_bridge-client.js").exists()
-        assert (tool_dest / "spawn-task.js").exists()
-        assert (tool_dest / "get-task-status.js").exists()
-        assert (tool_dest / "cancel-task.js").exists()
+        assert (tool_dest / "spawn-child.js").exists()
+        assert (tool_dest / "get-child-status.js").exists()
+        assert (tool_dest / "cancel-child.js").exists()
         assert (tool_dest / "_bridge-client.js").read_text() == "// bridge client"
 
     def test_non_js_files_skipped(self, tmp_path):
@@ -99,15 +99,15 @@ class TestInstallTools:
 
         tools_dir = tmp_path / "app" / "sandbox" / "tools"
         tools_dir.mkdir(parents=True)
-        (tools_dir / "spawn-task.js").write_text("// tool")
+        (tools_dir / "spawn-child.js").write_text("// tool")
         (tools_dir / "README.md").write_text("# docs")
         (tools_dir / "helper.py").write_text("# python")
 
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
-        assert (tool_dest / "spawn-task.js").exists()
+        tool_dest = workdir / ".opencode" / "tool"
+        assert (tool_dest / "spawn-child.js").exists()
         assert not (tool_dest / "README.md").exists()
         assert not (tool_dest / "helper.py").exists()
 
@@ -124,7 +124,7 @@ class TestInstallTools:
         with _patch_paths(legacy=legacy_tool, tools=tmp_path / "no-tools"):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
+        tool_dest = workdir / ".opencode" / "tool"
         assert (tool_dest / "create-pull-request.js").exists()
         js_files = list(tool_dest.glob("*.js"))
         assert len(js_files) == 1
@@ -176,7 +176,7 @@ class TestInstallTools:
         pkg = json.loads((opencode_dir / "package.json").read_text())
         assert "@opencode-ai/plugin" in pkg["dependencies"]
         assert installed == {
-            ".opencode/tools/create-pull-request.js",
+            ".opencode/tool/create-pull-request.js",
             ".opencode/package.json",
             ".opencode/package-lock.json",
             ".opencode/node_modules/",
@@ -200,7 +200,7 @@ class TestInstallTools:
         (deps_cache / "node_modules").mkdir()
 
         # Pre-create .opencode/ with existing files (e.g. from snapshot restore)
-        opencode_dir = workdir / ".opencode" / "tools"
+        opencode_dir = workdir / ".opencode" / "tool"
         opencode_dir.mkdir(parents=True)
         existing_pkg = workdir / ".opencode" / "package.json"
         existing_pkg.write_text('{"name": "existing"}')
@@ -262,15 +262,15 @@ class TestInstallTools:
 
         tools_dir = tmp_path / "app" / "sandbox" / "tools"
         tools_dir.mkdir(parents=True)
-        (tools_dir / "spawn-task.js").write_text("// spawn")
+        (tools_dir / "spawn-child.js").write_text("// spawn")
         (tools_dir / "_bridge-client.js").write_text("// bridge")
 
         with _patch_paths(legacy=legacy_tool, tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
+        tool_dest = workdir / ".opencode" / "tool"
         assert (tool_dest / "create-pull-request.js").exists()
-        assert (tool_dest / "spawn-task.js").exists()
+        assert (tool_dest / "spawn-child.js").exists()
         assert (tool_dest / "_bridge-client.js").exists()
         js_files = list(tool_dest.glob("*.js"))
         assert len(js_files) == 3
@@ -291,21 +291,21 @@ class TestInstallTools:
         tools_dir = tmp_path / "app" / "sandbox" / "tools"
         tools_dir.mkdir(parents=True)
         (tools_dir / "_bridge-client.js").write_text("// bridge")
-        (tools_dir / "spawn-task.js").write_text("// spawn")
-        (tools_dir / "get-task-status.js").write_text("// get")
-        (tools_dir / "get-task-status-format.js").write_text("// format")
-        (tools_dir / "cancel-task.js").write_text("// cancel")
+        (tools_dir / "spawn-child.js").write_text("// spawn")
+        (tools_dir / "get-child-status.js").write_text("// get")
+        (tools_dir / "get-child-status-format.js").write_text("// format")
+        (tools_dir / "cancel-child.js").write_text("// cancel")
 
         with _patch_paths(legacy=legacy_tool, tools=tools_dir):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
+        tool_dest = workdir / ".opencode" / "tool"
         assert (tool_dest / "_bridge-client.js").exists()
         assert not (tool_dest / "create-pull-request.js").exists()
-        assert (tool_dest / "spawn-task.js").exists()
-        assert (tool_dest / "get-task-status.js").exists()
-        assert (tool_dest / "get-task-status-format.js").exists()
-        assert (tool_dest / "cancel-task.js").exists()
+        assert (tool_dest / "spawn-child.js").exists()
+        assert (tool_dest / "get-child-status.js").exists()
+        assert (tool_dest / "get-child-status-format.js").exists()
+        assert (tool_dest / "cancel-child.js").exists()
 
     def test_slack_notify_installed_when_enabled(self, tmp_path):
         """slack-notify.js should be installed when AGENT_SLACK_NOTIFY_ENABLED=true."""
@@ -316,7 +316,7 @@ class TestInstallTools:
         tools_dir = tmp_path / "app" / "sandbox" / "tools"
         tools_dir.mkdir(parents=True)
         (tools_dir / "slack-notify.js").write_text("// slack-notify")
-        (tools_dir / "spawn-task.js").write_text("// spawn-task")
+        (tools_dir / "spawn-child.js").write_text("// spawn-child")
 
         with (
             patch.dict("os.environ", {"AGENT_SLACK_NOTIFY_ENABLED": "true"}),
@@ -324,9 +324,9 @@ class TestInstallTools:
         ):
             sup._install_tools(workdir)
 
-        tool_dest = workdir / ".opencode" / "tools"
+        tool_dest = workdir / ".opencode" / "tool"
         assert (tool_dest / "slack-notify.js").exists()
-        assert (tool_dest / "spawn-task.js").exists()
+        assert (tool_dest / "spawn-child.js").exists()
 
 
 class TestInstallBinScripts:
@@ -509,7 +509,7 @@ def _make_opencode_deps_staging(tmp_path: Path) -> Path:
     """Build a fake /app/opencode-deps staging tree (plugin-only, in sync)."""
     deps_cache = tmp_path / "opencode-deps"
     deps_cache.mkdir()
-    (deps_cache / "package.json").write_text('{"dependencies": {"@opencode-ai/plugin": "1.17.18"}}')
+    (deps_cache / "package.json").write_text('{"dependencies": {"@opencode-ai/plugin": "1.18.11"}}')
     (deps_cache / "package-lock.json").write_text('{"lockfileVersion": 3}')
     plugin = deps_cache / "node_modules" / "@opencode-ai" / "plugin"
     plugin.mkdir(parents=True)

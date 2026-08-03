@@ -2,11 +2,11 @@
  * API router for Open-Inspect Control Plane.
  */
 
+import { isBrowserAuthProxyRoute } from "@open-inspect/shared/browser-auth-routes";
 import type { Env } from "./types";
-import { isBrowserAuthProxyRoute } from "@open-inspect/shared";
 import { authenticate, isAuthError } from "./auth/authenticate";
 import type { Principal } from "./auth/principal";
-import { getUserAuth } from "./auth/user/runtime";
+import { getUserAuth, getUserAuthRuntime } from "./auth/user/runtime";
 import {
   resolveScmProviderFromEnv,
   SourceControlProviderError,
@@ -26,6 +26,7 @@ import {
   HttpError,
 } from "./routes/shared";
 import { browserAuthRoutes } from "./routes/browser-auth";
+import { signInProviderRoutes } from "./routes/sign-in-providers";
 import { integrationSettingsRoutes } from "./routes/integration-settings";
 import { commitSigningRoutes } from "./routes/commit-signing";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
@@ -78,6 +79,7 @@ const SANDBOX_AUTH_ROUTES: RegExp[] = [
   /^\/sessions\/[^/]+\/pr$/, // PR creation from sandbox
   /^\/sessions\/[^/]+\/openai-token-refresh$/, // OpenAI token refresh from sandbox
   /^\/sessions\/[^/]+\/anthropic-token-refresh$/, // Anthropic token refresh from sandbox
+  /^\/sessions\/[^/]+\/xai-token-refresh$/, // xAI token refresh from sandbox
   /^\/sessions\/[^/]+\/scm-credentials$/, // SCM credential broker for git credential helper
   /^\/sessions\/[^/]+\/tunnel-urls$/, // Tunnel URL fetch for sandboxes whose .tunnels.env write isn't visible from inside
   /^\/sessions\/[^/]+\/media$/, // Media upload from sandbox
@@ -91,6 +93,8 @@ const SANDBOX_AUTH_ROUTES: RegExp[] = [
 /** Routes that require the session-specific sandbox token and reject internal HMAC auth. */
 const SANDBOX_AUTH_ONLY_ROUTES: RegExp[] = [
   /^\/sessions\/[^/]+\/commit-signing$/, // Public signing configuration and remote signer
+  /^\/sessions\/[^/]+\/openai-token-refresh$/, // OpenAI access-token broker
+  /^\/sessions\/[^/]+\/xai-token-refresh$/, // xAI access-token broker
 ];
 
 /** Diff endpoints the sandbox needs, constrained by both path and method. */
@@ -160,11 +164,21 @@ function isSandboxAuthOnlyRoute(path: string): boolean {
   return SANDBOX_AUTH_ONLY_ROUTES.some((pattern) => pattern.test(path));
 }
 
-function isScmAgnosticRoute(method: string, path: string): boolean {
+function isWebServiceAuthRoute(method: string, path: string): boolean {
   return (
     isBrowserAuthProxyRoute(method, path) ||
+    (method === "GET" && path === "/internal/auth/sign-in-providers")
+  );
+}
+
+export function isScmAgnosticRoute(method: string, path: string): boolean {
+  return (
+    isWebServiceAuthRoute(method, path) ||
     /^\/analytics\/(summary|timeseries|breakdown|pull-requests)$/.test(path) ||
-    /^\/sessions\/[^/]+\/(tunnel-urls|commit-signing)$/.test(path) ||
+    (method === "PATCH" && /^\/sessions\/[^/]+\/read-state$/.test(path)) ||
+    /^\/sessions\/[^/]+\/(tunnel-urls|commit-signing|participant-profiles|openai-token-refresh|xai-token-refresh)$/.test(
+      path
+    ) ||
     /^\/sessions\/[^/]+\/diff(?:\/.*)?$/.test(path)
   );
 }
@@ -282,8 +296,6 @@ function logPrincipal(principal: Principal, ctx: RequestContext, path: string): 
   const fields: Record<string, string | undefined> = { principal_kind: principal.kind };
   switch (principal.kind) {
     case "service":
-      // Kept as a log key for dashboard continuity; per-service is the only
-      // service scheme since the shared bearer's retirement.
       fields.auth_scheme = "per-service";
       fields.service = principal.service;
       fields.actor = principal.actor?.participantUserId;
@@ -316,6 +328,7 @@ const routes: Route[] = [
   },
 
   ...browserAuthRoutes,
+  ...signInProviderRoutes,
 
   // Session management
   ...sessionRoutes,
@@ -402,6 +415,8 @@ export async function handleRequest(
     db: instrumentD1(env.DB, metrics),
     // eslint-disable-next-line no-restricted-syntax -- composition root injects the raw D1 adapter required by Better Auth
     getUserAuth: () => getUserAuth(env, env.DB),
+    // eslint-disable-next-line no-restricted-syntax -- composition root owns normalized auth runtime construction
+    getUserAuthRuntime: () => getUserAuthRuntime(env, env.DB),
     executionCtx,
   };
 
@@ -410,7 +425,7 @@ export async function handleRequest(
     return new Response(null, {
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Max-Age": "86400",
         "x-request-id": ctx.request_id,
@@ -444,7 +459,7 @@ export async function handleRequest(
         : error("Unauthorized: Invalid session path", 401);
     } else {
       const authResult = await authenticate(request, env, ctx, {
-        webService: isBrowserAuthProxyRoute(method, path) ? "service" : "user",
+        webService: isWebServiceAuthRoute(method, path) ? "service" : "user",
       });
 
       if (isAuthError(authResult)) {
