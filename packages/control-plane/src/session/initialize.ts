@@ -6,6 +6,7 @@ import type { SandboxSettings } from "@open-inspect/shared/types/integrations";
 import { SessionIndexStore } from "../db/session-index";
 import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { createLogger } from "../logger";
+import { assertEnabledSandboxServicePorts } from "../sandbox/settings";
 
 const logger = createLogger("session-init");
 
@@ -83,6 +84,11 @@ export async function initializeSession(
   input: SessionInitInput,
   ctx: RequestContext
 ): Promise<{ sessionId: string; status: string }> {
+  assertEnabledSandboxServicePorts(input.sandboxSettings, {
+    codeServerEnabled: input.codeServerEnabled === true,
+    vncEnabled: input.vncEnabled === true,
+  });
+
   const hasRepoOwner = input.repoOwner !== null;
   const hasRepoName = input.repoName !== null;
   const hasRepoId = input.repoId != null;

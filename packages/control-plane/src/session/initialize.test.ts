@@ -89,6 +89,24 @@ describe("initializeSession", () => {
     expect(stubFetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects effective service-port collisions before writing D1", async () => {
+    await expect(
+      initializeSession(
+        createEnv(),
+        {
+          ...baseInput,
+          codeServerEnabled: true,
+          vncEnabled: true,
+          sandboxSettings: { codeServerPort: 6080 },
+        },
+        ctx as never
+      )
+    ).rejects.toThrow("Port 6080 is used more than once");
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(stubFetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["repoId without repository context", { repoOwner: null, repoName: null, repoId: 42 }],
     ["repository context without repoId", { repoOwner: "acme", repoName: "web-app", repoId: null }],

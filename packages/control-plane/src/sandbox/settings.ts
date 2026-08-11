@@ -1,4 +1,7 @@
 import {
+  DEFAULT_CODE_SERVER_PORT,
+  DEFAULT_TERMINAL_PORT,
+  DEFAULT_VNC_PORT,
   findSandboxPortConflict,
   isValidSandboxTimeoutMs,
   MAX_TUNNEL_PORTS,
@@ -18,6 +21,50 @@ export class SandboxSettingsValidationError extends Error {
     super(message);
     this.name = "SandboxSettingsValidationError";
   }
+}
+
+export interface EnabledSandboxServices {
+  codeServerEnabled: boolean;
+  vncEnabled: boolean;
+}
+
+/**
+ * Validate the ports a session will actually bind after service enablement and
+ * defaults have been resolved. Settings normalization cannot do this because
+ * code-server and VNC enablement live in separate integration records.
+ */
+export function assertEnabledSandboxServicePorts(
+  settings: SandboxSettings | undefined,
+  services: EnabledSandboxServices
+): void {
+  const ports: ConfiguredSandboxPort[] = [];
+  if (services.codeServerEnabled) {
+    ports.push({
+      port: settings?.codeServerPort ?? DEFAULT_CODE_SERVER_PORT,
+      label: "codeServerPort",
+    });
+  }
+  if (services.vncEnabled) {
+    ports.push({ port: settings?.vncPort ?? DEFAULT_VNC_PORT, label: "vncPort" });
+  }
+  if (settings?.terminalEnabled) {
+    ports.push({
+      port: settings.terminalPort ?? DEFAULT_TERMINAL_PORT,
+      label: "terminalPort",
+    });
+  }
+  for (const port of settings?.tunnelPorts ?? []) {
+    ports.push({ port, label: "tunnelPorts" });
+  }
+
+  const conflict = findSandboxPortConflict(ports);
+  if (!conflict) return;
+
+  throw new SandboxSettingsValidationError(
+    conflict.kind === "reserved"
+      ? `Port ${conflict.port} is reserved for an internal service (used by ${conflict.label})`
+      : `Port ${conflict.port} is used more than once across enabled code-server, VNC, terminal, and tunnel ports`
+  );
 }
 
 /** Decode and normalize a session's persisted sandbox settings snapshot. */

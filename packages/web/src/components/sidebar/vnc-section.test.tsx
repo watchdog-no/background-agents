@@ -18,7 +18,7 @@ describe("VncSection", () => {
 
     expect(screen.getByRole("link", { name: "Open Desktop" })).toHaveAttribute(
       "href",
-      "https://desktop.example/tunnel/vnc.html?autoconnect=true&resize=scale#password=p%26a+ss"
+      "https://desktop.example/tunnel/vnc.html?autoconnect=true&resize=scale&password=p%26a+ss"
     );
   });
 

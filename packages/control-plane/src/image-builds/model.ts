@@ -87,6 +87,9 @@ export interface ImageBuildCallbackBuild {
  */
 export const MIN_COMPATIBLE_RUNTIME_VERSION = 56;
 
+/** First runtime image containing the VNC/noVNC packages and supervisor. */
+export const MIN_VNC_RUNTIME_VERSION = 57;
+
 /**
  * Parse the numeric prefix of a SANDBOX_VERSION ("v53-list-native-runtime"
  * → 53). Returns null when unparseable — callers fail closed: registration

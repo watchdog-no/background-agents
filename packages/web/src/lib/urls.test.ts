@@ -54,9 +54,9 @@ describe("getSafeExternalUrl", () => {
 });
 
 describe("buildVncUrl", () => {
-  it("keeps the password out of the HTTP request by encoding it in the fragment", () => {
+  it("passes the password through the query configuration consumed by noVNC", () => {
     expect(buildVncUrl("https://desktop.example/prefix?quality=6", "p&a ss#word")).toBe(
-      "https://desktop.example/prefix/vnc.html?quality=6&autoconnect=true&resize=scale#password=p%26a+ss%23word"
+      "https://desktop.example/prefix/vnc.html?quality=6&autoconnect=true&resize=scale&password=p%26a+ss%23word"
     );
   });
 
@@ -68,9 +68,9 @@ describe("buildVncUrl", () => {
     expect(buildVncUrl("http://desktop.example", "secret")).toBeNull();
   });
 
-  it("strips a password query parameter from the base URL", () => {
+  it("replaces a password query parameter from the base URL", () => {
     expect(buildVncUrl("https://desktop.example/?password=leaked", "secret")).toBe(
-      "https://desktop.example/vnc.html?autoconnect=true&resize=scale#password=secret"
+      "https://desktop.example/vnc.html?autoconnect=true&resize=scale&password=secret"
     );
   });
 });

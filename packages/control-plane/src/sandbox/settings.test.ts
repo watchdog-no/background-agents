@@ -6,6 +6,7 @@ import {
   INTERNAL_TTYD_PORT,
 } from "@open-inspect/shared/types/integrations";
 import {
+  assertEnabledSandboxServicePorts,
   normalizeSandboxSettings,
   parsePersistedSandboxSettings,
   SandboxSettingsValidationError,
@@ -218,5 +219,34 @@ describe("normalizeSandboxSettings", () => {
     ).toEqual({
       tunnelPorts: [3000],
     });
+  });
+});
+
+describe("assertEnabledSandboxServicePorts", () => {
+  it("rejects explicit ports that collide with an enabled service default", () => {
+    expect(() =>
+      assertEnabledSandboxServicePorts(
+        { codeServerPort: DEFAULT_VNC_PORT },
+        { codeServerEnabled: true, vncEnabled: true }
+      )
+    ).toThrow(`Port ${DEFAULT_VNC_PORT} is used more than once`);
+  });
+
+  it("rejects tunnels that collide with enabled service defaults", () => {
+    expect(() =>
+      assertEnabledSandboxServicePorts(
+        { terminalEnabled: true, tunnelPorts: [DEFAULT_TERMINAL_PORT] },
+        { codeServerEnabled: false, vncEnabled: false }
+      )
+    ).toThrow(`Port ${DEFAULT_TERMINAL_PORT} is used more than once`);
+  });
+
+  it("allows default ports when their services are disabled", () => {
+    expect(() =>
+      assertEnabledSandboxServicePorts(
+        { tunnelPorts: [DEFAULT_CODE_SERVER_PORT, DEFAULT_VNC_PORT, DEFAULT_TERMINAL_PORT] },
+        { codeServerEnabled: false, vncEnabled: false }
+      )
+    ).not.toThrow();
   });
 });

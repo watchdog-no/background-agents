@@ -84,7 +84,8 @@ export type ImageBuildSelectionResult =
  */
 export async function evaluateImageBuildForSpawn(
   image: ImageBuildSpawnRow | null,
-  sessionRepositories: FingerprintRepositoryInput[]
+  sessionRepositories: FingerprintRepositoryInput[],
+  minimumRuntimeVersion: number = MIN_COMPATIBLE_RUNTIME_VERSION
 ): Promise<ImageBuildSelectionResult> {
   if (!image) {
     return { outcome: "miss", reason: "no_ready_image" };
@@ -96,7 +97,7 @@ export async function evaluateImageBuildForSpawn(
   }
 
   const runtimeVersion = parseRuntimeVersionNumber(image.runtime_version);
-  if (runtimeVersion === null || runtimeVersion < MIN_COMPATIBLE_RUNTIME_VERSION) {
+  if (runtimeVersion === null || runtimeVersion < minimumRuntimeVersion) {
     return { outcome: "miss", reason: "runtime_below_floor", imageBuildId: image.id };
   }
 

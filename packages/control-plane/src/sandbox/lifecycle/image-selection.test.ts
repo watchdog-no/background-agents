@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateImageBuildForSpawn, type ImageBuildSpawnRow } from "./image-selection";
 import { computeRepositoriesFingerprint } from "../../image-builds/fingerprint";
+import { MIN_VNC_RUNTIME_VERSION } from "../../image-builds/model";
 
 const SESSION_REPOSITORIES = [
   { repoOwner: "acme", repoName: "web", baseBranch: "main" },
@@ -102,6 +103,27 @@ describe("evaluateImageBuildForSpawn", () => {
         imageBuildId: "imgb-1",
       });
     }
+  });
+
+  it("requires a v57 image when the session needs VNC support", async () => {
+    const v56Image = await readyImage({ runtime_version: "v56-managed-provider-runtime" });
+    expect(
+      await evaluateImageBuildForSpawn(v56Image, SESSION_REPOSITORIES, MIN_VNC_RUNTIME_VERSION)
+    ).toEqual({
+      outcome: "miss",
+      reason: "runtime_below_floor",
+      imageBuildId: "imgb-1",
+    });
+
+    expect(
+      (
+        await evaluateImageBuildForSpawn(
+          await readyImage({ runtime_version: "v57-vnc-runtime" }),
+          SESSION_REPOSITORIES,
+          MIN_VNC_RUNTIME_VERSION
+        )
+      ).outcome
+    ).toBe("selected");
   });
 
   it("misses when the environment was edited after the session was created", async () => {

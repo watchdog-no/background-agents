@@ -32,7 +32,10 @@ export function buildVncUrl(
   parsed.searchParams.set("autoconnect", "true");
   parsed.searchParams.set("resize", "scale");
   parsed.searchParams.delete("password");
-  parsed.hash = password ? new URLSearchParams({ password }).toString() : "";
+  // The stock noVNC application reads connection settings from the query
+  // string. It does not consume credentials from the URL fragment.
+  if (password) parsed.searchParams.set("password", password);
+  parsed.hash = "";
   return parsed.toString();
 }
 

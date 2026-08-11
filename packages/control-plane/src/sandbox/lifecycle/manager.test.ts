@@ -2257,7 +2257,7 @@ describe("SandboxLifecycleManager", () => {
       );
     });
 
-    it("boots a VNC-enabled session from a spawn-compatible v56 repo image", async () => {
+    it("falls back to the base image when a VNC session finds a pre-v57 repo image", async () => {
       const imageBuildLookup: ImageBuildLookup = {
         getLatestReady: vi.fn(async () => repoImageRow()),
         markRestoreFailed: vi.fn(async () => true),
@@ -2271,8 +2271,8 @@ describe("SandboxLifecycleManager", () => {
 
       expect(provider.createSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
-          prebuiltImageId: "img-abc123",
-          prebuiltImageSha: "sha-def456",
+          prebuiltImageId: null,
+          prebuiltImageSha: null,
           vncEnabled: true,
         })
       );
