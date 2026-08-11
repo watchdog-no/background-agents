@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateImageBuildForSpawn, type ImageBuildSpawnRow } from "./image-selection";
 import { computeRepositoriesFingerprint } from "../../image-builds/fingerprint";
+import { MIN_VNC_RUNTIME_VERSION } from "../../image-builds/model";
 
 const SESSION_REPOSITORIES = [
   { repoOwner: "acme", repoName: "web", baseBranch: "main" },
@@ -22,7 +23,7 @@ async function readyImage(
       { repoOwner: "acme", repoName: "web", baseSha: "sha-web" },
       { repoOwner: "acme", repoName: "api", baseSha: "sha-api" },
     ]),
-    runtime_version: "v56-managed-provider-runtime",
+    runtime_version: "v57-vnc-runtime",
     ...overrides,
   };
 }
@@ -37,7 +38,7 @@ describe("evaluateImageBuildForSpawn", () => {
         imageBuildId: "imgb-1",
         providerImageId: "im-abc123",
         primaryBaseSha: "sha-web",
-        runtimeVersion: "v56-managed-provider-runtime",
+        runtimeVersion: "v57-vnc-runtime",
       },
     });
   });
@@ -83,8 +84,17 @@ describe("evaluateImageBuildForSpawn", () => {
     });
   });
 
-  it("misses below the runtime floor and fails closed on an unparseable version", async () => {
-    for (const runtimeVersion of ["v55-pre-managed-provider-runtime", "dev", ""]) {
+  it("preserves the v56 compatibility floor", async () => {
+    expect(
+      (
+        await evaluateImageBuildForSpawn(
+          await readyImage({ runtime_version: "v56-managed-provider-runtime" }),
+          SESSION_REPOSITORIES
+        )
+      ).outcome
+    ).toBe("selected");
+
+    for (const runtimeVersion of ["v55-legacy-runtime", "dev", ""]) {
       const image = await readyImage({ runtime_version: runtimeVersion });
 
       expect(await evaluateImageBuildForSpawn(image, SESSION_REPOSITORIES)).toEqual({
@@ -93,6 +103,27 @@ describe("evaluateImageBuildForSpawn", () => {
         imageBuildId: "imgb-1",
       });
     }
+  });
+
+  it("requires a v57 image when the session needs VNC support", async () => {
+    const v56Image = await readyImage({ runtime_version: "v56-managed-provider-runtime" });
+    expect(
+      await evaluateImageBuildForSpawn(v56Image, SESSION_REPOSITORIES, MIN_VNC_RUNTIME_VERSION)
+    ).toEqual({
+      outcome: "miss",
+      reason: "runtime_below_floor",
+      imageBuildId: "imgb-1",
+    });
+
+    expect(
+      (
+        await evaluateImageBuildForSpawn(
+          await readyImage({ runtime_version: "v57-vnc-runtime" }),
+          SESSION_REPOSITORIES,
+          MIN_VNC_RUNTIME_VERSION
+        )
+      ).outcome
+    ).toBe("selected");
   });
 
   it("misses when the environment was edited after the session was created", async () => {

@@ -15,17 +15,17 @@ import type {
   SandboxRow,
   SessionRepositoryRow,
 } from "./types";
+import { toolCallIdentityKey } from "@open-inspect/shared/types/sandbox-events";
+import type { GitSyncStatus, SandboxEvent } from "@open-inspect/shared/types/sandbox-events";
 import type {
   SessionStatus,
   SandboxStatus,
-  GitSyncStatus,
   MessageStatus,
   MessageSource,
   ParticipantRole,
   SpawnSource,
-  ArtifactType,
-  SandboxEvent,
-} from "../types";
+} from "@open-inspect/shared/types/sessions";
+import type { ArtifactType } from "@open-inspect/shared/types/artifacts";
 import {
   eventTimelineCursorFromRow,
   type EventListCursor,
@@ -37,11 +37,13 @@ import type { SqlResult, SqlStorage, TransactionSync } from "./sql-storage";
 
 type TokenEvent = Extract<SandboxEvent, { type: "token" }>;
 type ReasoningEvent = Extract<SandboxEvent, { type: "reasoning" }>;
+type ToolCallEvent = Extract<SandboxEvent, { type: "tool_call" }>;
 type ExecutionCompleteEvent = Extract<SandboxEvent, { type: "execution_complete" }>;
 type UpsertableEventType =
   | TokenEvent["type"]
   | ReasoningEvent["type"]
   | ExecutionCompleteEvent["type"];
+const NEXT_TIMELINE_SEQUENCE_SQL = "(SELECT COALESCE(MAX(timeline_sequence), 0) + 1 FROM events)";
 
 /**
  * WS client mapping result for hibernation recovery.
@@ -88,6 +90,7 @@ export interface UpsertSessionData {
   spawnSource?: SpawnSource;
   spawnDepth?: number;
   codeServerEnabled?: boolean;
+  vncEnabled?: boolean;
   sandboxSettings?: string | null;
   /** Launch environment provenance; null for repo-launched/ad-hoc sessions. */
   environmentId?: string | null;
@@ -292,8 +295,8 @@ export class SessionRepository {
     }
 
     this.sql.exec(
-      `INSERT OR REPLACE INTO session (id, session_name, title, repo_owner, repo_name, repo_id, base_branch, model, reasoning_effort, status, parent_session_id, spawn_source, spawn_depth, code_server_enabled, sandbox_settings, environment_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO session (id, session_name, title, repo_owner, repo_name, repo_id, base_branch, model, reasoning_effort, status, parent_session_id, spawn_source, spawn_depth, code_server_enabled, vnc_enabled, sandbox_settings, environment_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.id,
       data.sessionName,
       data.title,
@@ -308,6 +311,7 @@ export class SessionRepository {
       data.spawnSource ?? "user",
       data.spawnDepth ?? 0,
       data.codeServerEnabled ? 1 : 0,
+      data.vncEnabled ? 1 : 0,
       data.sandboxSettings ?? null,
       data.environmentId ?? null,
       data.createdAt,
@@ -532,7 +536,14 @@ export class SessionRepository {
          auth_token_hash = ?,
          auth_token = NULL,
          modal_sandbox_id = ?,
-         modal_object_id = NULL
+         modal_object_id = NULL,
+         code_server_url = NULL,
+         code_server_password = NULL,
+         vnc_url = NULL,
+         vnc_password = NULL,
+         tunnel_urls = NULL,
+         ttyd_url = NULL,
+         ttyd_token = NULL
        WHERE id = (SELECT id FROM sandbox LIMIT 1)`,
       data.status,
       data.createdAt,
@@ -611,6 +622,24 @@ export class SessionRepository {
     this.sql.exec(
       `UPDATE sandbox SET code_server_url = NULL WHERE id = (SELECT id FROM sandbox LIMIT 1)`
     );
+  }
+
+  updateSandboxVnc(url: string, password: string): void {
+    this.sql.exec(
+      `UPDATE sandbox SET vnc_url = ?, vnc_password = ? WHERE id = (SELECT id FROM sandbox LIMIT 1)`,
+      url,
+      password
+    );
+  }
+
+  clearSandboxVnc(): void {
+    this.sql.exec(
+      `UPDATE sandbox SET vnc_url = NULL, vnc_password = NULL WHERE id = (SELECT id FROM sandbox LIMIT 1)`
+    );
+  }
+
+  clearSandboxVncUrl(): void {
+    this.sql.exec(`UPDATE sandbox SET vnc_url = NULL WHERE id = (SELECT id FROM sandbox LIMIT 1)`);
   }
 
   updateSandboxTunnelUrls(urls: Record<string, string>): void {
@@ -801,7 +830,7 @@ export class SessionRepository {
 
   getNextPendingMessage(): MessageRow | null {
     const result = this.sql.exec(
-      `SELECT * FROM messages WHERE status = 'pending' ORDER BY created_at ASC, id ASC LIMIT 1`
+      `SELECT * FROM messages WHERE status = 'pending' ORDER BY created_at ASC, rowid ASC LIMIT 1`
     );
     const rows = this.rows<MessageRow>(result);
     return rows[0] ?? null;
@@ -863,6 +892,13 @@ export class SessionRepository {
     );
   }
 
+  listPendingMessagesWithCreatedAt(): Array<{ id: string; created_at: number }> {
+    const result = this.sql.exec(
+      `SELECT id, created_at FROM messages WHERE status = 'pending' ORDER BY created_at ASC, rowid ASC`
+    );
+    return result.toArray() as Array<{ id: string; created_at: number }>;
+  }
+
   getMessageTimestamps(
     messageId: string
   ): { created_at: number; started_at: number | null } | null {
@@ -911,14 +947,25 @@ export class SessionRepository {
 
   createEvent(data: CreateEventData): void {
     this.sql.exec(
-      `INSERT INTO events (id, type, data, message_id, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO events (id, type, data, message_id, created_at, timeline_sequence)
+       VALUES (?, ?, ?, ?, ?, ${NEXT_TIMELINE_SEQUENCE_SQL})`,
       data.id,
       data.type,
       data.data,
       data.messageId,
       data.createdAt
     );
+  }
+
+  createContextCompactionEvent(data: CreateEventData & { messageId: string }): void {
+    this.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE events SET id = ? WHERE id = ?`,
+        `token:${data.messageId}:${data.id}`,
+        `token:${data.messageId}`
+      );
+      this.createEvent(data);
+    });
   }
 
   private upsertEventByMessageId<TType extends UpsertableEventType>(
@@ -929,8 +976,8 @@ export class SessionRepository {
   ): void {
     const id = `${type}:${messageId}`;
     this.sql.exec(
-      `INSERT INTO events (id, type, data, message_id, created_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO events (id, type, data, message_id, created_at, timeline_sequence)
+       VALUES (?, ?, ?, ?, ?, ${NEXT_TIMELINE_SEQUENCE_SQL})
        ON CONFLICT(id) DO UPDATE SET
          data = excluded.data,
          message_id = excluded.message_id,
@@ -952,14 +999,29 @@ export class SessionRepository {
     // message are stored separately and all survive history replay.
     const id = `reasoning:${messageId}:${event.blockId ?? "0"}`;
     this.sql.exec(
-      `INSERT INTO events (id, type, data, message_id, created_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO events (id, type, data, message_id, created_at, timeline_sequence)
+       VALUES (?, ?, ?, ?, ?, ${NEXT_TIMELINE_SEQUENCE_SQL})
        ON CONFLICT(id) DO UPDATE SET
          data = excluded.data,
-         message_id = excluded.message_id,
-         created_at = excluded.created_at`,
+         message_id = excluded.message_id`,
       id,
       "reasoning",
+      JSON.stringify(event),
+      messageId,
+      createdAt
+    );
+  }
+
+  upsertToolCallEvent(messageId: string, event: ToolCallEvent, createdAt: number): void {
+    const id = `tool_call:${toolCallIdentityKey(event)}`;
+    this.sql.exec(
+      `INSERT INTO events (id, type, data, message_id, created_at, timeline_sequence)
+       VALUES (?, ?, ?, ?, ?, ${NEXT_TIMELINE_SEQUENCE_SQL})
+       ON CONFLICT(id) DO UPDATE SET
+         data = excluded.data,
+         message_id = excluded.message_id`,
+      id,
+      event.type,
       JSON.stringify(event),
       messageId,
       createdAt
@@ -1008,8 +1070,13 @@ export class SessionRepository {
 
     const cursor = options.cursor;
     if (cursor?.kind === "timeline") {
-      conditions.push(`((created_at < ?) OR (created_at = ? AND id < ?))`);
-      params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+      if (cursor.sequence !== undefined) {
+        conditions.push(`((created_at < ?) OR (created_at = ? AND timeline_sequence < ?))`);
+        params.push(cursor.createdAt, cursor.createdAt, cursor.sequence);
+      } else {
+        conditions.push(`((created_at < ?) OR (created_at = ? AND id < ?))`);
+        params.push(cursor.createdAt, cursor.createdAt, cursor.id);
+      }
     } else if (cursor?.kind === "legacy") {
       conditions.push(`created_at < ?`);
       params.push(cursor.createdAt);
@@ -1019,7 +1086,9 @@ export class SessionRepository {
       query += ` WHERE ${conditions.join(" AND ")}`;
     }
 
-    query += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
+    const tieBreaker =
+      cursor?.kind === "timeline" && cursor.sequence === undefined ? "id" : "timeline_sequence";
+    query += ` ORDER BY created_at DESC, ${tieBreaker} DESC LIMIT ?`;
     params.push(options.limit + 1);
 
     const result = this.sql.exec(query, ...params);
@@ -1029,17 +1098,6 @@ export class SessionRepository {
     const nextCursor =
       pageEvents.length > 0 ? eventTimelineCursorFromRow(pageEvents[pageEvents.length - 1]) : null;
     return { events: pageEvents, hasMore, nextCursor };
-  }
-
-  getEventsForReplay(limit: number): EventRow[] {
-    const result = this.sql.exec(
-      `SELECT * FROM (
-         SELECT * FROM events WHERE type != 'heartbeat'
-         ORDER BY created_at DESC, id DESC LIMIT ?
-       ) sub ORDER BY created_at ASC, id ASC`,
-      limit
-    );
-    return this.rows<EventRow>(result);
   }
 
   // === ARTIFACTS ===

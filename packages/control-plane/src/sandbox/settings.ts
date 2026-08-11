@@ -1,6 +1,7 @@
 import {
   DEFAULT_CODE_SERVER_PORT,
   DEFAULT_TERMINAL_PORT,
+  DEFAULT_VNC_PORT,
   findSandboxPortConflict,
   isValidSandboxTimeoutMs,
   MAX_TUNNEL_PORTS,
@@ -20,6 +21,50 @@ export class SandboxSettingsValidationError extends Error {
     super(message);
     this.name = "SandboxSettingsValidationError";
   }
+}
+
+export interface EnabledSandboxServices {
+  codeServerEnabled: boolean;
+  vncEnabled: boolean;
+}
+
+/**
+ * Validate the ports a session will actually bind after service enablement and
+ * defaults have been resolved. Settings normalization cannot do this because
+ * code-server and VNC enablement live in separate integration records.
+ */
+export function assertEnabledSandboxServicePorts(
+  settings: SandboxSettings | undefined,
+  services: EnabledSandboxServices
+): void {
+  const ports: ConfiguredSandboxPort[] = [];
+  if (services.codeServerEnabled) {
+    ports.push({
+      port: settings?.codeServerPort ?? DEFAULT_CODE_SERVER_PORT,
+      label: "codeServerPort",
+    });
+  }
+  if (services.vncEnabled) {
+    ports.push({ port: settings?.vncPort ?? DEFAULT_VNC_PORT, label: "vncPort" });
+  }
+  if (settings?.terminalEnabled) {
+    ports.push({
+      port: settings.terminalPort ?? DEFAULT_TERMINAL_PORT,
+      label: "terminalPort",
+    });
+  }
+  for (const port of settings?.tunnelPorts ?? []) {
+    ports.push({ port, label: "tunnelPorts" });
+  }
+
+  const conflict = findSandboxPortConflict(ports);
+  if (!conflict) return;
+
+  throw new SandboxSettingsValidationError(
+    conflict.kind === "reserved"
+      ? `Port ${conflict.port} is reserved for an internal service (used by ${conflict.label})`
+      : `Port ${conflict.port} is used more than once across enabled code-server, VNC, terminal, and tunnel ports`
+  );
 }
 
 /** Decode and normalize a session's persisted sandbox settings snapshot. */
@@ -72,6 +117,9 @@ export function normalizeSandboxSettings(
 
   const codeServerPort = normalizePort(settings.codeServerPort, "codeServerPort", reject);
   if (codeServerPort !== undefined) result.codeServerPort = codeServerPort;
+
+  const vncPort = normalizePort(settings.vncPort, "vncPort", reject);
+  if (vncPort !== undefined) result.vncPort = vncPort;
 
   const terminalPort = normalizePort(settings.terminalPort, "terminalPort", reject);
   if (terminalPort !== undefined) result.terminalPort = terminalPort;
@@ -172,10 +220,10 @@ function normalizePort(
 }
 
 /**
- * Reject reserved-port use and any port shared across code-server, terminal, and
- * tunnel ports. Enablement-independent: every effective service/tunnel port must
- * be unique so a port is never silently dropped at sandbox spawn. The conflict
- * rule itself lives in `findSandboxPortConflict` (shared with the web settings UI).
+ * Reject reserved-port use and any port shared across explicitly configured
+ * code-server, VNC, terminal, and tunnel ports. Integration defaults are omitted
+ * here because enablement is resolved separately; providers reserve those ports
+ * only when the corresponding service is enabled.
  *
  * In `invalid: "omit"` mode `reject` returns instead of throwing, so we actively
  * drop the offending port and re-check until the result is collision-free. This
@@ -186,11 +234,15 @@ function normalizePort(
 function checkPortCollisions(result: SandboxSettings, reject: (message: string) => false): void {
   for (;;) {
     const ports: ConfiguredSandboxPort[] = [];
-    ports.push({
-      port: result.codeServerPort ?? DEFAULT_CODE_SERVER_PORT,
-      label: "codeServerPort",
-    });
-    ports.push({ port: result.terminalPort ?? DEFAULT_TERMINAL_PORT, label: "terminalPort" });
+    if (result.codeServerPort !== undefined) {
+      ports.push({ port: result.codeServerPort, label: "codeServerPort" });
+    }
+    if (result.vncPort !== undefined) {
+      ports.push({ port: result.vncPort, label: "vncPort" });
+    }
+    if (result.terminalPort !== undefined) {
+      ports.push({ port: result.terminalPort, label: "terminalPort" });
+    }
     for (const port of result.tunnelPorts ?? []) {
       ports.push({ port, label: "tunnelPorts" });
     }
@@ -200,8 +252,8 @@ function checkPortCollisions(result: SandboxSettings, reject: (message: string) 
 
     reject(
       conflict.kind === "reserved"
-        ? `Port ${conflict.port} is reserved for the internal terminal (used by ${conflict.label})`
-        : `Port ${conflict.port} is used more than once across code-server, terminal, and tunnel ports`
+        ? `Port ${conflict.port} is reserved for an internal service (used by ${conflict.label})`
+        : `Port ${conflict.port} is used more than once across code-server, VNC, terminal, and tunnel ports`
     );
 
     // Reached only in omit mode (throw mode already threw). Drop the offending
@@ -209,6 +261,8 @@ function checkPortCollisions(result: SandboxSettings, reject: (message: string) 
     // terminates. Service ports listed first win; conflicting tunnels are dropped.
     if (conflict.label === "codeServerPort") {
       delete result.codeServerPort;
+    } else if (conflict.label === "vncPort") {
+      delete result.vncPort;
     } else if (conflict.label === "terminalPort") {
       delete result.terminalPort;
     } else {

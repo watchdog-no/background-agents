@@ -19,6 +19,26 @@ export function buildAuthenticatedUrl(
   return parsed.toString();
 }
 
+/** Build a noVNC client URL from a validated tunnel base URL. */
+export function buildVncUrl(
+  url: string | null | undefined,
+  password: string | null | undefined
+): string | null {
+  const safeUrl = getSafeExternalUrl(url);
+  if (!safeUrl) return null;
+
+  const parsed = new URL(safeUrl);
+  parsed.pathname = `${parsed.pathname.replace(/\/?$/, "/")}vnc.html`;
+  parsed.searchParams.set("autoconnect", "true");
+  parsed.searchParams.set("resize", "scale");
+  parsed.searchParams.delete("password");
+  // The stock noVNC application reads connection settings from the query
+  // string. It does not consume credentials from the URL fragment.
+  if (password) parsed.searchParams.set("password", password);
+  parsed.hash = "";
+  return parsed.toString();
+}
+
 export function getSafeExternalUrl(url: string | null | undefined): string | null {
   if (!url) {
     return null;

@@ -68,6 +68,11 @@ base_image = (
         "jq",
         "unzip",  # Required for Bun installation
         "ffmpeg",
+        "xvfb",
+        "fluxbox",
+        "x11vnc",
+        "websockify",
+        "novnc",
         # Shared libraries required by headless Chromium
         "libnss3",
         "libnspr4",

@@ -8,13 +8,7 @@ import {
   type AutomationTriggerType,
 } from "@open-inspect/shared/triggers";
 import { DEFAULT_MODEL, isValidModel, isValidReasoningEffort } from "@open-inspect/shared/models";
-import {
-  automationTemplates,
-  TEMPLATE_CATEGORIES,
-  getTemplateById,
-  getTemplatesForCategory,
-  getVisibleCategories,
-} from "./automation-templates";
+import { automationTemplates, TEMPLATE_CATEGORIES } from "./automation-templates";
 
 // Keep in sync with INSTRUCTIONS_MAX_LENGTH in automation-form.tsx /
 // MAX_INSTRUCTIONS_LENGTH in control-plane routes/automations.ts.
@@ -44,7 +38,9 @@ describe("automation templates catalog", () => {
   });
 
   it("uses GPT 5.6 Sol with xhigh reasoning for vulnerability scans", () => {
-    expect(getTemplateById("scan-vulnerabilities")?.prefill).toMatchObject({
+    expect(
+      automationTemplates.find((template) => template.id === "scan-vulnerabilities")?.prefill
+    ).toMatchObject({
       model: "openai/gpt-5.6-sol",
       reasoningEffort: "xhigh",
     });
@@ -135,50 +131,5 @@ describe("automation templates catalog", () => {
         expect(errors).toEqual([]);
       });
     }
-  });
-});
-
-describe("getTemplateById", () => {
-  it("finds a template by id", () => {
-    const first = automationTemplates[0];
-    expect(getTemplateById(first.id)).toBe(first);
-  });
-
-  it("returns undefined for an unknown id", () => {
-    expect(getTemplateById("does-not-exist")).toBeUndefined();
-  });
-});
-
-describe("getTemplatesForCategory", () => {
-  it("returns only templates in that category, preserving catalog order", () => {
-    const popular = getTemplatesForCategory("popular");
-    expect(popular.length).toBeGreaterThan(0);
-    expect(popular.every((t) => t.categories.includes("popular"))).toBe(true);
-    const catalogIndices = popular.map((t) => automationTemplates.indexOf(t));
-    expect(catalogIndices).toEqual([...catalogIndices].sort((a, b) => a - b));
-  });
-});
-
-describe("getVisibleCategories", () => {
-  it("includes only categories that have at least one template", () => {
-    const visible = getVisibleCategories();
-    expect(visible.length).toBeGreaterThan(0);
-    for (const category of visible) {
-      expect(getTemplatesForCategory(category.id).length).toBeGreaterThan(0);
-    }
-  });
-
-  it("preserves the curated category order (a subsequence of TEMPLATE_CATEGORIES)", () => {
-    const curated = TEMPLATE_CATEGORIES.map((c) => c.id);
-    const visible = getVisibleCategories().map((c) => c.id);
-    let cursor = 0;
-    for (const id of curated) {
-      if (visible[cursor] === id) cursor++;
-    }
-    expect(cursor).toBe(visible.length);
-  });
-
-  it("starts with Popular", () => {
-    expect(getVisibleCategories()[0].id).toBe("popular");
   });
 });

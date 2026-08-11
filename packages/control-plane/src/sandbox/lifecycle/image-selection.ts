@@ -80,12 +80,12 @@ export type ImageBuildSelectionResult =
 /**
  * Evaluate the latest ready image (or its absence) against the session's own
  * repository snapshot. Checks run cheapest-first; the floor fails closed on an
- * unparseable runtime version (an unversioned image must never boot a
- * multi-repo workspace).
+ * unparseable runtime version.
  */
 export async function evaluateImageBuildForSpawn(
   image: ImageBuildSpawnRow | null,
-  sessionRepositories: FingerprintRepositoryInput[]
+  sessionRepositories: FingerprintRepositoryInput[],
+  minimumRuntimeVersion: number = MIN_COMPATIBLE_RUNTIME_VERSION
 ): Promise<ImageBuildSelectionResult> {
   if (!image) {
     return { outcome: "miss", reason: "no_ready_image" };
@@ -97,7 +97,7 @@ export async function evaluateImageBuildForSpawn(
   }
 
   const runtimeVersion = parseRuntimeVersionNumber(image.runtime_version);
-  if (runtimeVersion === null || runtimeVersion < MIN_COMPATIBLE_RUNTIME_VERSION) {
+  if (runtimeVersion === null || runtimeVersion < minimumRuntimeVersion) {
     return { outcome: "miss", reason: "runtime_below_floor", imageBuildId: image.id };
   }
 

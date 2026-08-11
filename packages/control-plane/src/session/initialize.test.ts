@@ -31,6 +31,7 @@ describe("initializeSession", () => {
     spawnSource: "user",
     spawnDepth: 0,
     codeServerEnabled: false,
+    vncEnabled: true,
     sandboxSettings: {},
     automationId: null,
     automationRunId: null,
@@ -85,6 +86,24 @@ describe("initializeSession", () => {
       "D1 unavailable"
     );
     expect(createMock).toHaveBeenCalledOnce();
+    expect(stubFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects effective service-port collisions before writing D1", async () => {
+    await expect(
+      initializeSession(
+        createEnv(),
+        {
+          ...baseInput,
+          codeServerEnabled: true,
+          vncEnabled: true,
+          sandboxSettings: { codeServerPort: 6080 },
+        },
+        ctx as never
+      )
+    ).rejects.toThrow("Port 6080 is used more than once");
+
+    expect(createMock).not.toHaveBeenCalled();
     expect(stubFetchMock).not.toHaveBeenCalled();
   });
 
@@ -239,6 +258,7 @@ describe("initializeSession", () => {
     expect(body.scmTokenExpiresAt).toBe(1700000000000);
     expect(body.scmUserId).toBe("scm-1");
     expect(body.codeServerEnabled).toBe(false);
+    expect(body.vncEnabled).toBe(true);
     expect(body.sandboxSettings).toEqual({});
     expect(body.parentSessionId).toBeNull();
     expect(body.spawnSource).toBe("user");

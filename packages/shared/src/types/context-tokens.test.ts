@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextTokensFromUsage } from "./index";
+import { contextTokensFromUsage } from "./sandbox-events";
 
 describe("contextTokensFromUsage", () => {
   it("sums prompt and generated tokens when there is no explicit total", () => {

@@ -22,11 +22,16 @@ from sandbox_runtime.constants import (
     CODE_SERVER_PORT_ENV_VAR,
     DEFAULT_SANDBOX_TIMEOUT_SECONDS,
     EXPECTED_TUNNEL_PORTS_ENV_VAR,
+    NOVNC_PORT,
+    NOVNC_PORT_ENV_VAR,
     SANDBOX_TIMEOUT_ENV_VAR,
     TTYD_PROXY_PORT,
     TTYD_PROXY_PORT_ENV_VAR,
     TUNNEL_ENV_FILE_PATH,
     TUNNEL_ENV_SANDBOX_ID_KEY,
+    VNC_PASSWORD_ENV_VAR,
+    VNC_PASSWORD_MAX_BYTES,
+    VNC_PORT,
 )
 from sandbox_runtime.log_config import get_logger
 from sandbox_runtime.types import SandboxStatus, SessionConfig
@@ -60,6 +65,9 @@ def _filter_sandbox_user_env_vars(user_env_vars: dict[str, str] | None) -> dict[
         for key, value in user_env_vars.items()
         if key.upper() not in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS
     }
+
+
+DEFAULT_VNC_ENABLED = False
 
 
 def _has_repository(repo_owner: str | None, repo_name: str | None) -> bool:
@@ -100,17 +108,16 @@ class SandboxConfig:
     repo_owner: str | None
     repo_name: str | None
     sandbox_id: str | None = None  # Expected sandbox ID from control plane
-    snapshot_id: str | None = None
     session_config: SessionConfig | None = None
     control_plane_url: str = ""
     sandbox_auth_token: str = ""
     timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS
-    fallback_clone_token: str | None = None  # VCS token for legacy snapshot fallback paths
     user_env_vars: dict[str, str] | None = None  # User-provided env vars (repo secrets)
     anthropic_oauth_enabled: bool = False  # Non-secret Anthropic OAuth setup signal
     repo_image_id: str | None = None  # Pre-built repo image ID from provider
     repo_image_sha: str | None = None  # Git SHA the repo image was built from
     code_server_enabled: bool = False  # Whether to start code-server in the sandbox
+    vnc_enabled: bool = DEFAULT_VNC_ENABLED  # Whether to start the browser-accessible VNC desktop
     agent_slack_notify_enabled: bool = (
         False  # Whether to install the agent-initiated slack-notify tool
     )
@@ -131,6 +138,8 @@ class SandboxHandle:
     modal_object_id: str | None = None  # Modal's internal sandbox ID for API calls
     code_server_url: str | None = None
     code_server_password: str | None = None
+    vnc_url: str | None = None
+    vnc_password: str | None = None
     ttyd_url: str | None = None  # proxy tunnel URL (not ttyd directly)
     tunnel_urls: dict[int, str] | None = None  # port -> tunnel URL mapping for extra ports
 
@@ -156,6 +165,11 @@ class SandboxManager:
     def _generate_code_server_password() -> str:
         """Generate a random code-server password."""
         return secrets.token_urlsafe(16)
+
+    @staticmethod
+    def _generate_vnc_password() -> str:
+        """Generate a random VNC password."""
+        return secrets.token_urlsafe(VNC_PASSWORD_MAX_BYTES)[:VNC_PASSWORD_MAX_BYTES]
 
     @staticmethod
     async def _resolve_tunnels(
@@ -207,11 +221,11 @@ class SandboxManager:
         return ports
 
     @staticmethod
-    def _resolve_service_ports(settings: dict[str, Any] | None) -> tuple[int, int]:
-        """Return effective (code_server_port, ttyd_proxy_port) from settings.
+    def _resolve_service_ports(settings: dict[str, Any] | None) -> tuple[int, int, int]:
+        """Return effective (code_server_port, novnc_port, ttyd_proxy_port) from settings.
 
-        Falls back to the CODE_SERVER_PORT / TTYD_PROXY_PORT defaults when unset
-        or invalid. The control plane validates these before they reach here.
+        Falls back to the service defaults when unset or invalid. The control
+        plane validates these before they reach here.
         """
         s = settings or {}
 
@@ -222,23 +236,31 @@ class SandboxManager:
 
         return (
             coerce(s.get("codeServerPort"), CODE_SERVER_PORT),
+            coerce(s.get("vncPort"), NOVNC_PORT),
             coerce(s.get("terminalPort"), TTYD_PROXY_PORT),
         )
 
     @staticmethod
     def _collect_exposed_ports(
         code_server_enabled: bool,
+        vnc_enabled: bool,
         terminal_enabled: bool,
         settings: dict[str, Any] | None,
         code_server_port: int,
+        novnc_port: int,
         ttyd_proxy_port: int,
     ) -> tuple[list[int], list[int]]:
         """Return (all_exposed_ports, extra_tunnel_ports) from settings and feature flags."""
-        reserved: set[int] = set()
+        # Raw VNC is localhost-only and must never be exposed, including as a
+        # user-configured extra tunnel.
+        reserved: set[int] = {VNC_PORT}
         exposed: list[int] = []
         if code_server_enabled:
             exposed.append(code_server_port)
             reserved.add(code_server_port)
+        if vnc_enabled:
+            exposed.append(novnc_port)
+            reserved.add(novnc_port)
         if terminal_enabled:
             exposed.append(ttyd_proxy_port)
             reserved.add(ttyd_proxy_port)
@@ -255,21 +277,25 @@ class SandboxManager:
         sandbox: modal.Sandbox,
         sandbox_id: str,
         code_server_enabled: bool,
+        vnc_enabled: bool,
         terminal_enabled: bool,
         extra_ports: list[int],
         code_server_port: int,
+        novnc_port: int,
         ttyd_proxy_port: int,
-    ) -> tuple[str | None, str | None, dict[int, str] | None]:
-        """Resolve all tunnels in a single pass. Returns (code_server_url, ttyd_url, extra_urls)."""
+    ) -> tuple[str | None, str | None, str | None, dict[int, str] | None]:
+        """Return (code_server_url, vnc_url, ttyd_url, extra_urls)."""
         all_ports: list[int] = []
         if code_server_enabled:
             all_ports.append(code_server_port)
+        if vnc_enabled:
+            all_ports.append(novnc_port)
         if terminal_enabled:
             all_ports.append(ttyd_proxy_port)
         all_ports.extend(extra_ports)
 
         if not all_ports:
-            return None, None, None
+            return None, None, None, None
 
         resolved = await SandboxManager._resolve_tunnels(sandbox, sandbox_id, all_ports)
 
@@ -277,13 +303,14 @@ class SandboxManager:
         # it. Otherwise a user's own port (e.g. 8080 with code-server disabled)
         # would be misrouted to code_server_url and dropped from the tunnel map.
         code_server_url = resolved.pop(code_server_port, None) if code_server_enabled else None
+        vnc_url = resolved.pop(novnc_port, None) if vnc_enabled else None
         ttyd_url = resolved.pop(ttyd_proxy_port, None) if terminal_enabled else None
         extra_urls = resolved if resolved else None
 
         if extra_urls:
             await SandboxManager._write_tunnel_env_file(sandbox, sandbox_id, extra_urls)
 
-        return code_server_url, ttyd_url, extra_urls
+        return code_server_url, vnc_url, ttyd_url, extra_urls
 
     @staticmethod
     async def _write_tunnel_env_file(
@@ -326,8 +353,9 @@ class SandboxManager:
         """
         Create a new sandbox for a session.
 
-        If a snapshot_id is provided, restores from that snapshot.
-        Otherwise, creates from the latest image for the repo.
+        Creates from the pre-built repo image when one is provided,
+        otherwise from the base image. Snapshot restores go through
+        restore_sandbox, not this path.
 
         Args:
             config: Sandbox configuration including repo info and session config
@@ -351,6 +379,8 @@ class SandboxManager:
         env_vars: dict[str, str] = {}
 
         env_vars.update(_filter_sandbox_user_env_vars(config.user_env_vars))
+        env_vars.pop(VNC_PASSWORD_ENV_VAR, None)
+        env_vars.pop(NOVNC_PORT_ENV_VAR, None)
 
         env_vars.update(
             {
@@ -364,20 +394,19 @@ class SandboxManager:
             }
         )
 
-        # Host scoping (VCS_HOST / VCS_CLONE_USERNAME) is injected even without a
-        # repository so GitLab/Bitbucket deployments don't fall back to github.com
-        # credential-helper behavior; clone tokens stay repository-gated.
-        fallback_clone_token = config.fallback_clone_token if has_repository else None
-        inject_vcs_env_vars(
-            env_vars,
-            clone_token=fallback_clone_token,
-            include_github_cli_aliases=bool(fallback_clone_token),
-        )
+        # Host scoping is injected even without a repository so non-GitHub
+        # deployments do not fall back to github.com credential behavior.
+        inject_vcs_env_vars(env_vars, clone_token=None)
 
         code_server_password: str | None = None
         if config.code_server_enabled:
             code_server_password = self._generate_code_server_password()
             env_vars["CODE_SERVER_PASSWORD"] = code_server_password
+
+        vnc_password: str | None = None
+        if config.vnc_enabled:
+            vnc_password = self._generate_vnc_password()
+            env_vars[VNC_PASSWORD_ENV_VAR] = vnc_password
 
         terminal_enabled = bool((config.settings or {}).get("terminalEnabled", False))
         if terminal_enabled:
@@ -392,27 +421,30 @@ class SandboxManager:
         if config.anthropic_oauth_enabled:
             env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
-        # Determine image to use (priority: session snapshot > repo image > base image)
-        if config.snapshot_id:
-            image = modal.Image.from_registry(f"open-inspect-snapshot:{config.snapshot_id}")
-        elif config.repo_image_id:
+        # Snapshot restores use restore_from_snapshot; fresh sessions prefer a
+        # repository image and otherwise use the base image.
+        if config.repo_image_id:
             image = modal.Image.from_id(config.repo_image_id)
             env_vars["FROM_REPO_IMAGE"] = "true"
             env_vars["REPO_IMAGE_SHA"] = config.repo_image_sha or ""
         else:
             image = base_image
 
-        code_server_port, ttyd_proxy_port = self._resolve_service_ports(config.settings)
+        code_server_port, novnc_port, ttyd_proxy_port = self._resolve_service_ports(config.settings)
         if config.code_server_enabled:
             env_vars[CODE_SERVER_PORT_ENV_VAR] = str(code_server_port)
+        if config.vnc_enabled:
+            env_vars[NOVNC_PORT_ENV_VAR] = str(novnc_port)
         if terminal_enabled:
             env_vars[TTYD_PROXY_PORT_ENV_VAR] = str(ttyd_proxy_port)
 
         exposed_ports, tunnel_ports = self._collect_exposed_ports(
             config.code_server_enabled,
+            config.vnc_enabled,
             terminal_enabled,
             config.settings,
             code_server_port,
+            novnc_port,
             ttyd_proxy_port,
         )
         if tunnel_ports:
@@ -438,13 +470,20 @@ class SandboxManager:
         )
 
         modal_object_id = sandbox.object_id
-        code_server_url, ttyd_url, extra_tunnel_urls = await self._resolve_and_setup_tunnels(
+        (
+            code_server_url,
+            vnc_url,
+            ttyd_url,
+            extra_tunnel_urls,
+        ) = await self._resolve_and_setup_tunnels(
             sandbox,
             sandbox_id,
             config.code_server_enabled,
+            config.vnc_enabled,
             terminal_enabled,
             tunnel_ports,
             code_server_port,
+            novnc_port,
             ttyd_proxy_port,
         )
 
@@ -464,10 +503,11 @@ class SandboxManager:
             modal_sandbox=sandbox,
             status=SandboxStatus.WARMING,
             created_at=time.time(),
-            snapshot_id=config.snapshot_id,
             modal_object_id=modal_object_id,
             code_server_url=code_server_url,
             code_server_password=code_server_password,
+            vnc_url=vnc_url,
+            vnc_password=vnc_password,
             ttyd_url=ttyd_url,
             tunnel_urls=extra_tunnel_urls,
         )
@@ -554,6 +594,7 @@ class SandboxManager:
         user_env_vars: dict[str, str] | None = None,
         timeout_seconds: int = DEFAULT_SANDBOX_TIMEOUT_SECONDS,
         code_server_enabled: bool = False,
+        vnc_enabled: bool = DEFAULT_VNC_ENABLED,
         agent_slack_notify_enabled: bool = False,
         anthropic_oauth_enabled: bool = False,
         settings: dict[str, Any] | None = None,
@@ -566,7 +607,7 @@ class SandboxManager:
 
         Args:
             snapshot_image_id: Modal Image ID from snapshot_filesystem()
-            session_config: Session configuration (SessionConfig or dict)
+            session_config: Session configuration
             sandbox_id: Optional sandbox ID (generated if not provided)
             control_plane_url: URL for the control plane
             sandbox_auth_token: Auth token for the sandbox
@@ -577,7 +618,6 @@ class SandboxManager:
         """
         start_time = time.time()
 
-        # Handle both SessionConfig and dict
         if isinstance(session_config, dict):
             repo_owner = session_config.get("repo_owner")
             repo_name = session_config.get("repo_name")
@@ -600,6 +640,8 @@ class SandboxManager:
         env_vars: dict[str, str] = {}
 
         env_vars.update(_filter_sandbox_user_env_vars(user_env_vars))
+        env_vars.pop(VNC_PASSWORD_ENV_VAR, None)
+        env_vars.pop(NOVNC_PORT_ENV_VAR, None)
 
         env_vars.update(
             {
@@ -633,6 +675,11 @@ class SandboxManager:
             code_server_password = self._generate_code_server_password()
             env_vars["CODE_SERVER_PASSWORD"] = code_server_password
 
+        vnc_password: str | None = None
+        if vnc_enabled:
+            vnc_password = self._generate_vnc_password()
+            env_vars[VNC_PASSWORD_ENV_VAR] = vnc_password
+
         terminal_enabled = bool((settings or {}).get("terminalEnabled", False))
         if terminal_enabled:
             env_vars["TERMINAL_ENABLED"] = "true"
@@ -643,17 +690,21 @@ class SandboxManager:
         if anthropic_oauth_enabled:
             env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
-        code_server_port, ttyd_proxy_port = self._resolve_service_ports(settings)
+        code_server_port, novnc_port, ttyd_proxy_port = self._resolve_service_ports(settings)
         if code_server_enabled:
             env_vars[CODE_SERVER_PORT_ENV_VAR] = str(code_server_port)
+        if vnc_enabled:
+            env_vars[NOVNC_PORT_ENV_VAR] = str(novnc_port)
         if terminal_enabled:
             env_vars[TTYD_PROXY_PORT_ENV_VAR] = str(ttyd_proxy_port)
 
         exposed_ports, tunnel_ports = self._collect_exposed_ports(
             code_server_enabled,
+            vnc_enabled,
             terminal_enabled,
             settings,
             code_server_port,
+            novnc_port,
             ttyd_proxy_port,
         )
         if tunnel_ports:
@@ -679,13 +730,20 @@ class SandboxManager:
         )
 
         modal_object_id = sandbox.object_id
-        code_server_url, ttyd_url, extra_tunnel_urls = await self._resolve_and_setup_tunnels(
+        (
+            code_server_url,
+            vnc_url,
+            ttyd_url,
+            extra_tunnel_urls,
+        ) = await self._resolve_and_setup_tunnels(
             sandbox,
             sandbox_id,
             code_server_enabled,
+            vnc_enabled,
             terminal_enabled,
             tunnel_ports,
             code_server_port,
+            novnc_port,
             ttyd_proxy_port,
         )
 
@@ -710,6 +768,8 @@ class SandboxManager:
             modal_object_id=modal_object_id,
             code_server_url=code_server_url,
             code_server_password=code_server_password,
+            vnc_url=vnc_url,
+            vnc_password=vnc_password,
             ttyd_url=ttyd_url,
             tunnel_urls=extra_tunnel_urls,
         )
