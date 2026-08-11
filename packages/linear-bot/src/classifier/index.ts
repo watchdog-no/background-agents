@@ -6,7 +6,11 @@
  * builds the prompt and matches the returned repo id against its own repo list.
  */
 
-import type { Env, RepoConfig, ClassificationResult } from "../types";
+import type {
+  ClassificationResult,
+  RepoConfig,
+} from "@open-inspect/shared/types/repository-catalog";
+import type { Env } from "../types";
 import { z } from "zod";
 import { getAvailableRepos, buildRepoDescriptions } from "./repos";
 import { signedControlPlaneFetch } from "../internal-auth";

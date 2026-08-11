@@ -482,6 +482,8 @@ describe("ModalSandboxProvider", () => {
         modalObjectId: "modal-obj-xyz",
         status: "created",
         createdAt: 1234567890,
+        vncUrl: "https://vnc.test",
+        vncPassword: "vnc-pw",
       };
 
       const client = createMockModalClient({
@@ -489,12 +491,19 @@ describe("ModalSandboxProvider", () => {
       });
       const provider = new ModalSandboxProvider(client);
 
-      const result = await provider.createSandbox(testConfig);
+      const result = await provider.createSandbox({ ...testConfig, vncEnabled: true });
 
       expect(result.sandboxId).toBe("sandbox-abc");
       expect(result.providerObjectId).toBe("modal-obj-xyz");
       expect(result.status).toBe("created");
       expect(result.createdAt).toBe(1234567890);
+      expect(result).toMatchObject({
+        vncAccess: { url: "https://vnc.test", password: "vnc-pw" },
+      });
+      expect(client.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ vncEnabled: true }),
+        undefined
+      );
     });
 
     it("passes Anthropic OAuth flag through to the Modal client", async () => {
@@ -536,7 +545,7 @@ describe("ModalSandboxProvider", () => {
       const correlation = { request_id: "request-1", trace_id: "trace-1" };
       const onProviderSessionCreated = vi.fn(async () => undefined);
 
-      const result = await provider.triggerEnvironmentImageBuild({
+      await provider.triggerImageBuild({
         buildId: "build-123",
         scopeKind: "repo",
         scopeId: "acme/repo",
@@ -544,7 +553,7 @@ describe("ModalSandboxProvider", () => {
         cloneToken: "clone-token",
         userEnvVars: { FOO: "bar" },
         buildExecutionTimeoutSeconds: 1800,
-        providerSessionTimeoutMs: 2_400_000,
+        providerSessionTimeoutSeconds: 2400,
         callbackUrl: "https://worker.test/image-builds/build-complete",
         failureCallbackUrl: "https://worker.test/image-builds/build-failed",
         callbackToken: "callback-token",
@@ -552,7 +561,6 @@ describe("ModalSandboxProvider", () => {
         correlation,
       });
 
-      expect(result).toEqual({ buildId: "build-123", status: "building" });
       expect(client.createImageBuildSandbox).toHaveBeenCalledWith(
         {
           scopeKind: "repo",
@@ -573,8 +581,6 @@ describe("ModalSandboxProvider", () => {
         {
           buildId: "build-123",
           providerSessionId: "modal-session-123",
-          callbackUrl: "https://worker.test/image-builds/build-complete",
-          failureCallbackUrl: "https://worker.test/image-builds/build-failed",
           callbackToken: "callback-token",
           correlation,
         },
@@ -748,6 +754,8 @@ describe("ModalSandboxProvider", () => {
           success: true,
           sandboxId: "restored-sandbox-123",
           modalObjectId: "new-modal-obj-456",
+          vncUrl: "https://vnc.test",
+          vncPassword: "vnc-pw",
         })),
       });
       const provider = new ModalSandboxProvider(client);
@@ -762,11 +770,19 @@ describe("ModalSandboxProvider", () => {
         repoName: "repo",
         provider: "anthropic",
         model: "anthropic/claude-sonnet-4-5",
+        vncEnabled: true,
       });
 
       expect(result.success).toBe(true);
       expect(result.sandboxId).toBe("restored-sandbox-123");
       expect(result.providerObjectId).toBe("new-modal-obj-456");
+      expect(result).toMatchObject({
+        vncAccess: { url: "https://vnc.test", password: "vnc-pw" },
+      });
+      expect(client.restoreSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ vncEnabled: true }),
+        undefined
+      );
     });
   });
 });

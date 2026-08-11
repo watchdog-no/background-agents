@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Env, RepoConfig } from "../types";
+import type { RepoConfig } from "@open-inspect/shared/types/repository-catalog";
+import type { Env } from "../types";
 
 const { mockFetch, mockGetAvailableRepos, mockBuildRepoDescriptions } = vi.hoisted(() => ({
   mockFetch: vi.fn(),

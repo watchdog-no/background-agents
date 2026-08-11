@@ -23,7 +23,8 @@ CTX7_VERSION = "0.4.4"
 # daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
 # daytona-v6: upgrade OpenCode after upstream SSE fixes.
 # daytona-v7: upgrade to OpenCode 1.18.11.
-SANDBOX_VERSION = "daytona-v7-opencode-1-18-11"
+# daytona-v8: add the VNC/noVNC desktop toolchain.
+SANDBOX_VERSION = "daytona-v8-vnc-opencode-1-18-11"
 
 
 def build_base_image(repo_root: Path) -> Image:
@@ -40,7 +41,8 @@ def build_base_image(repo_root: Path) -> Image:
             "openssh-client jq unzip libnss3 libnspr4 libatk1.0-0 "
             "libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 "
             "libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 "
-            "libpango-1.0-0 libcairo2 ffmpeg",
+            "libpango-1.0-0 libcairo2 ffmpeg xvfb fluxbox x11vnc "
+            "websockify novnc",
             "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg "
             "| dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
             "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] "

@@ -21,13 +21,6 @@ import { verifyInternalToken } from "@open-inspect/shared/auth";
 import { handleAgentSessionEvent, escapeHtml } from "./webhook-handler";
 import { isDuplicateEvent } from "./kv-store";
 
-// Re-export pure functions for existing test imports
-export {
-  resolveStaticTarget,
-  extractModelFromLabels,
-  resolveSessionModelSettings,
-} from "./model-resolution";
-
 const log = createLogger("handler");
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

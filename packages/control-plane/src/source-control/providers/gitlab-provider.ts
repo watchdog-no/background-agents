@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 import type { InstallationRepository } from "@open-inspect/shared/types/repository-catalog";
-import type { PullRequestStatus } from "@open-inspect/shared";
+import type { PullRequestStatus } from "@open-inspect/shared/types/artifacts";
 import type {
   SourceControlProvider,
   SourceControlAuthContext,
@@ -141,6 +141,11 @@ const gitlabRepositoryListSchema = z.array(
     visibility: z.enum(["private", "internal", "public"]),
   })
 );
+
+/** Wire shape of a GitLab branch response, limited to the head commit ID. */
+const gitlabBranchHeadSchema = z.object({
+  commit: z.object({ id: z.string().min(1) }),
+});
 
 /** Parse a GitLab ISO-8601 timestamp into epoch ms; undefined when absent/invalid. */
 function parseProviderTimestamp(value: string | null | undefined): number | undefined {
@@ -544,13 +549,11 @@ export class GitLabSourceControlProvider implements SourceControlProvider {
           response.status
         );
       }
-      const data = (await response.json()) as { commit?: { id?: unknown } };
-      if (typeof data.commit?.id !== "string" || !data.commit.id) {
-        throw new SourceControlProviderError(
-          "Failed to resolve branch head: malformed response",
-          "transient"
-        );
-      }
+      const data = await parseProviderResponse(
+        response,
+        gitlabBranchHeadSchema,
+        "Failed to resolve branch head"
+      );
       return data.commit.id;
     } catch (error) {
       if (error instanceof SourceControlProviderError) throw error;

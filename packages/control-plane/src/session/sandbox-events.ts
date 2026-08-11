@@ -1,10 +1,11 @@
-import type { SessionArtifact } from "@open-inspect/shared";
-import { contextTokensFromUsage } from "@open-inspect/shared";
+import type { SessionArtifact } from "@open-inspect/shared/types/artifacts";
 import { generateId } from "../auth/crypto";
 import type { Logger } from "../logger";
 import type { GitPushSpec } from "../source-control";
-import type { SandboxEvent } from "../types";
-import { shouldPersistToolCallEvent } from "./event-persistence";
+import {
+  contextTokensFromUsage,
+  type SandboxEvent,
+} from "@open-inspect/shared/types/sandbox-events";
 import { assertArtifactType } from "./artifacts";
 import type { SessionRepository } from "./repository";
 import type { CallbackNotificationService } from "./callback-notification-service";
@@ -142,8 +143,8 @@ export class SessionSandboxEventProcessor {
     }
 
     if (event.type === "compaction") {
-      // Persist each compaction marker (distinct events, not upserted) so it
-      // replays in the timeline on reload, then broadcast it live.
+      // Persist legacy compaction markers so sessions produced by older fork
+      // runtimes continue to hydrate correctly.
       this.repository.createEvent({
         id: generateId(),
         type: event.type,
@@ -163,6 +164,20 @@ export class SessionSandboxEventProcessor {
       if (messageId) {
         this.repository.upsertReasoningEvent(messageId, event, now);
       }
+      this.messenger.broadcast({ type: "sandbox_event", event });
+      return;
+    }
+
+    if (event.type === "context_compacted") {
+      const eventId = generateId();
+      this.repository.createContextCompactionEvent({
+        id: eventId,
+        type: event.type,
+        data: JSON.stringify(event),
+        messageId: event.messageId,
+        createdAt: now,
+      });
+      this.repository.setSessionContextUsage(0, null, now);
       this.messenger.broadcast({ type: "sandbox_event", event });
       return;
     }
@@ -194,14 +209,8 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "tool_call") {
       this.updateLastActivity(now);
-      if (shouldPersistToolCallEvent(event.status)) {
-        this.repository.createEvent({
-          id: generateId(),
-          type: event.type,
-          data: JSON.stringify(event),
-          messageId,
-          createdAt: now,
-        });
+      if (messageId) {
+        this.repository.upsertToolCallEvent(messageId, event, now);
       }
       this.messenger.broadcast({ type: "sandbox_event", event });
 
@@ -284,7 +293,14 @@ export class SessionSandboxEventProcessor {
         });
       }
 
-      this.ctx.waitUntil(this.triggerSnapshot("execution_complete"));
+      this.ctx.waitUntil(
+        this.triggerSnapshot("execution_complete").catch((error) => {
+          this.log.error("snapshot.trigger.background_error", {
+            reason: "execution_complete",
+            error,
+          });
+        })
+      );
       this.updateLastActivity(now);
       await this.scheduleInactivityCheck();
       await this.processMessageQueue();
