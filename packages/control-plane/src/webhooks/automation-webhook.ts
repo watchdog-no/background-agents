@@ -6,11 +6,25 @@ import { normalizeWebhookEvent } from "@open-inspect/shared/triggers";
 import { AutomationStore } from "../db/automation-store";
 import { verifyWebhookApiKey } from "../auth/webhook-key";
 import type { Route, RequestContext } from "../routes/shared";
-import { parsePattern, json, error } from "../routes/shared";
+import {
+  defineRoute,
+  error,
+  json,
+  parsePattern,
+  SCM_AGNOSTIC_HANDLER_AUTHENTICATED_ROUTE,
+} from "../routes/shared";
 import type { Env } from "../types";
 
 /** Maximum webhook payload size (64KB). */
 const MAX_PAYLOAD_SIZE = 64 * 1024;
+
+export function parseWebhookIdempotencyKey(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body) || !("idempotencyKey" in body)) {
+    return undefined;
+  }
+
+  return typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+}
 
 async function handleAutomationWebhook(
   request: Request,
@@ -64,10 +78,7 @@ async function handleAutomationWebhook(
     return error("Invalid JSON body", 400);
   }
 
-  const idempotencyKey =
-    body && typeof body === "object"
-      ? ((body as Record<string, unknown>).idempotencyKey as string | undefined)
-      : undefined;
+  const idempotencyKey = parseWebhookIdempotencyKey(body);
 
   // 6. Normalize and forward to SchedulerDO
   const event = normalizeWebhookEvent(automationId, body, idempotencyKey);
@@ -89,8 +100,8 @@ async function handleAutomationWebhook(
   return json({ ok: true, ...result }, response.status === 200 ? 200 : response.status);
 }
 
-export const automationWebhookRoute: Route = {
+export const automationWebhookRoute: Route = defineRoute(SCM_AGNOSTIC_HANDLER_AUTHENTICATED_ROUTE, {
   method: "POST",
   pattern: parsePattern("/webhooks/automation/:id"),
   handler: handleAutomationWebhook,
-};
+});

@@ -34,7 +34,7 @@ const NOISY_RECENT_EVENT_TYPES = new Set([
 ]);
 const CHILD_SUMMARY_INCLUDE_VALUES = new Set<string>(CHILD_SESSION_DETAIL_INCLUDES);
 
-export interface ChildSummaryOptions {
+interface ChildSummaryOptions {
   includeFinalResponse: boolean;
   includeTrajectory: boolean;
   trajectoryLimit: number;

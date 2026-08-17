@@ -1,15 +1,16 @@
-"""Tests for anthropic auth proxy plugin deployment in SandboxSupervisor."""
+"""Tests for anthropic auth proxy plugin deployment in OpenCodeServer."""
 
 import json
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from sandbox_runtime.entrypoint import SandboxSupervisor
+from sandbox_runtime.opencode_server import OpenCodeServer
+from tests.runtime_helpers import make_opencode_server
 
 
-def _make_supervisor() -> SandboxSupervisor:
-    """Create a SandboxSupervisor with default test config."""
+def _make_opencode_server() -> OpenCodeServer:
+    """Create an OpenCodeServer with default test config."""
     with patch.dict(
         "os.environ",
         {
@@ -20,7 +21,7 @@ def _make_supervisor() -> SandboxSupervisor:
             "REPO_NAME": "app",
         },
     ):
-        return SandboxSupervisor()
+        return make_opencode_server()
 
 
 def _auth_file(tmp_path: Path) -> Path:
@@ -33,7 +34,7 @@ class TestAnthropicAuthPluginSetup:
 
     def test_auth_json_uses_sentinel_token(self, tmp_path):
         """auth.json should contain the sentinel, not the real refresh token."""
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict(
@@ -55,9 +56,10 @@ class TestAnthropicAuthPluginSetup:
 
     async def test_start_opencode_copies_js_plugin(self, tmp_path):
         """start_opencode() should deploy the precompiled JS plugin into .opencode/plugins."""
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
         sup.workspace_path = tmp_path / "workspace"
         sup.workspace_path.mkdir()
+        (sup.workspace_path / ".git").mkdir()
         sup.repo_path = sup.workspace_path / "app"
 
         plugin_source = (
@@ -73,14 +75,15 @@ class TestAnthropicAuthPluginSetup:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
-            patch("sandbox_runtime.entrypoint.Path") as mock_path,
-            patch("sandbox_runtime.entrypoint.shutil.copy") as mock_copy,
+            patch("sandbox_runtime.opencode_server.Path") as mock_path,
+            patch("sandbox_runtime.opencode_server.shutil.copy") as mock_copy,
+            patch("sandbox_runtime.opencode_server.install_runtime_git_excludes"),
             patch(
-                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+                "sandbox_runtime.opencode_server.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=fake_proc),
             ),
             patch(
-                "sandbox_runtime.entrypoint.asyncio.create_task",
+                "sandbox_runtime.opencode_server.asyncio.create_task",
                 side_effect=lambda coro: coro.close(),
             ),
         ):
@@ -98,7 +101,7 @@ class TestAnthropicAuthPluginSetup:
             sup._install_bin_scripts = MagicMock()
             sup._wait_for_health = AsyncMock()
 
-            await sup.start_opencode()
+            await sup.start((), sup.workspace_path)
 
         mock_copy.assert_called_once_with(
             plugin_source,
@@ -107,7 +110,7 @@ class TestAnthropicAuthPluginSetup:
 
     async def test_start_opencode_skips_plugin_without_oauth_enabled(self, tmp_path):
         """Without the non-secret OAuth flag, the anthropic plugin must not be copied."""
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
         sup.workspace_path = tmp_path / "workspace"
         sup.workspace_path.mkdir()
         sup.repo_path = sup.workspace_path / "app"
@@ -125,14 +128,14 @@ class TestAnthropicAuthPluginSetup:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": ""}, clear=False),
-            patch("sandbox_runtime.entrypoint.Path") as mock_path,
-            patch("sandbox_runtime.entrypoint.shutil.copy") as mock_copy,
+            patch("sandbox_runtime.opencode_server.Path") as mock_path,
+            patch("sandbox_runtime.opencode_server.shutil.copy") as mock_copy,
             patch(
-                "sandbox_runtime.entrypoint.asyncio.create_subprocess_exec",
+                "sandbox_runtime.opencode_server.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=fake_proc),
             ),
             patch(
-                "sandbox_runtime.entrypoint.asyncio.create_task",
+                "sandbox_runtime.opencode_server.asyncio.create_task",
                 side_effect=lambda coro: coro.close(),
             ),
         ):
@@ -147,7 +150,7 @@ class TestAnthropicAuthPluginSetup:
             sup._install_bin_scripts = MagicMock()
             sup._wait_for_health = AsyncMock()
 
-            await sup.start_opencode()
+            await sup.start((), sup.workspace_path)
 
         for call in mock_copy.call_args_list:
             dest = call.args[1]

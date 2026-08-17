@@ -22,6 +22,7 @@ const ANTHROPIC_MODELS = [
   "anthropic/claude-haiku-4-5",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-4-5",
   "anthropic/claude-opus-4-6",
   "anthropic/claude-opus-4-7",
@@ -41,11 +42,12 @@ const OPENAI_MODELS = [
   "openai/gpt-5.3-codex-spark",
 ] as const;
 
-const XAI_MODELS = ["xai/grok-4.5", "xai/grok-build-0.1"] as const;
+const XAI_MODELS = ["xai/grok-4.5", "xai/grok-4.6", "xai/grok-build-0.1"] as const;
 
 const ZEN_MODELS = [
   "opencode/kimi-k2.5",
   "opencode/kimi-k2.6",
+  "opencode/kimi-k3",
   "opencode/minimax-m2.5",
   "opencode/qwen3.7-max",
   "opencode/glm-5",
@@ -53,7 +55,7 @@ const ZEN_MODELS = [
 ] as const;
 
 const DEEPSEEK_MODELS = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"] as const;
-const ZAI_CODING_PLAN_MODELS = ["zai-coding-plan/glm-5.2"] as const;
+const ZAI_CODING_PLAN_MODELS = ["zai-coding-plan/glm-5.2", "zai-coding-plan/glm-5.3"] as const;
 
 describe("model utilities", () => {
   it("derives every public model view from the authoritative catalog", () => {
@@ -252,6 +254,7 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("anthropic/claude-haiku-4-5")).toBe("max");
     expect(getDefaultReasoningEffort("anthropic/claude-sonnet-4-6")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-opus-4-8")).toBe("high");
+    expect(getDefaultReasoningEffort("anthropic/claude-sonnet-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-opus-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-fable-5")).toBe("xhigh");
     expect(getDefaultReasoningEffort("openai/gpt-5.3-codex")).toBe("high");
@@ -269,6 +272,10 @@ describe("model utilities", () => {
     });
     expect(getReasoningConfig("anthropic/claude-sonnet-4-6")).toEqual({
       efforts: ["low", "medium", "high", "max"],
+      default: "high",
+    });
+    expect(getReasoningConfig("anthropic/claude-sonnet-5")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
       default: "high",
     });
     expect(getReasoningConfig("anthropic/claude-opus-4-8")).toEqual({
@@ -295,6 +302,10 @@ describe("model utilities", () => {
       efforts: ["low", "medium", "high", "xhigh"],
       default: "high",
     });
+    expect(getReasoningConfig("xai/grok-4.6")).toEqual({
+      efforts: ["low", "medium", "high"],
+      default: "high",
+    });
     expect(getReasoningConfig("xai/grok-build-0.1")).toBeUndefined();
     expect(getReasoningConfig("deepseek/deepseek-v4-flash")).toBeUndefined();
   });
@@ -304,6 +315,7 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("anthropic/claude-sonnet-4-5", "low")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-opus-4-8", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-4-8", "none")).toBe(false);
+    expect(isValidReasoningEffort("anthropic/claude-sonnet-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "none")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-fable-5", "max")).toBe(true);
@@ -312,6 +324,8 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "max")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-5.6-luna", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.3-codex", "max")).toBe(false);
+    expect(isValidReasoningEffort("xai/grok-4.6", "high")).toBe(true);
+    expect(isValidReasoningEffort("xai/grok-4.6", "xhigh")).toBe(false);
     expect(isValidReasoningEffort("xai/grok-build-0.1", "high")).toBe(false);
     expect(isValidReasoningEffort("xai/grok-build-0.1", "xhigh")).toBe(false);
     expect(isValidReasoningEffort("deepseek/deepseek-v4-pro", "high")).toBe(false);

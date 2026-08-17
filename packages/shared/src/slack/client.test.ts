@@ -160,7 +160,7 @@ describe("postMessage", () => {
   it("posts text to a channel and returns the Slack envelope", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ ok: true, ts: "1700000000.000100" }));
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1700000000.000100" }));
 
     const result = await postMessage("xoxb-token", "C123", "hello");
 
@@ -181,7 +181,7 @@ describe("postMessage", () => {
   it("threads via thread_ts when provided", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ ok: true, ts: "1700000000.000200" }));
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1700000000.000200" }));
 
     await postMessage("xoxb-token", "C123", "reply text", {
       thread_ts: "1699999999.000100",
@@ -239,6 +239,42 @@ describe("postMessage", () => {
     expect(result.error).toBe("invalid_response");
   });
 
+  it("on a partial Slack envelope returns invalid_response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse({ error: "missing_ok" }));
+
+    const result = await postMessage("xoxb-token", "C123", "hi");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_response");
+  });
+
+  it("rejects malformed Slack error envelopes", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse({ ok: false, error: null }));
+
+    const result = await postMessage("xoxb-token", "C123", "hi");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_response");
+  });
+
+  it("rejects a bare ok:true success that carries no message identity", async () => {
+    // A caller that trusted this arm would thread its replies off an undefined
+    // ts; the endpoint's schema is what makes the success arm mean something.
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const result = await postMessage("xoxb-token", "C123", "hi");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_response");
+  });
+
+  it("rejects a success whose message identity has the wrong type", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ ok: true, channel: "C123", ts: 1700000000 })
+    );
+
+    const result = await postMessage("xoxb-token", "C123", "hi");
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_response");
+  });
+
   it("on fetch network error returns a typed error rather than throwing", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new TypeError("fetch failed"));
 
@@ -256,7 +292,7 @@ describe("postBlocks", () => {
   it("posts blocks without a top-level text field", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ ok: true, ts: "1700000000.000300" }));
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1700000000.000300" }));
     const blocks = [{ type: "section", text: { type: "mrkdwn", text: "hello" } }];
 
     const result = await postBlocks("xoxb-token", "C123", blocks, {
@@ -553,6 +589,16 @@ describe("getThreadMessages", () => {
     }
   });
 
+  it("rejects a success page with no messages array", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const result = await getThreadMessages("xoxb-token", "C123", "1.0");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("invalid_response");
+    }
+  });
+
   it("returns the failure arm when a later page errors", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -752,6 +798,28 @@ describe("listChannels", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBe("missing_scope");
+    }
+  });
+
+  it("rejects a success page with no channels array instead of iterating undefined", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const result = await listChannels("xoxb-token");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("invalid_response");
+    }
+  });
+
+  it("rejects a channel entry that is missing its name", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ ok: true, channels: [{ id: "C1", name: "general" }, { id: "C2" }] })
+    );
+
+    const result = await listChannels("xoxb-token");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("invalid_response");
     }
   });
 });

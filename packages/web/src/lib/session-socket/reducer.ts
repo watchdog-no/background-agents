@@ -2,6 +2,7 @@ import type { Artifact, SandboxEvent } from "@/types/session";
 import { contextTokensFromUsage } from "@open-inspect/shared/types/sandbox-events";
 import type {
   ParticipantPresence,
+  PromptQueueItem,
   ServerMessage,
   SessionSnapshot,
   SessionState,
@@ -10,7 +11,7 @@ import type {
 import { toUiArtifact } from "./artifact-metadata";
 import { collapseReplayTokenEvents, toUiSandboxEvent } from "./event-log";
 
-export interface HistoryCursor {
+interface HistoryCursor {
   timestamp: number;
   id: string;
   sequence?: number;
@@ -32,6 +33,7 @@ export interface SessionSocketState {
   hasMoreHistory: boolean;
   loadingHistory: boolean;
   cursor: HistoryCursor | null;
+  promptQueue: PromptQueueItem[];
 }
 
 export const initialSessionSocketState: SessionSocketState = {
@@ -45,6 +47,7 @@ export const initialSessionSocketState: SessionSocketState = {
   hasMoreHistory: false,
   loadingHistory: false,
   cursor: null,
+  promptQueue: [],
 };
 
 export type SessionSocketAction =
@@ -54,8 +57,6 @@ export type SessionSocketAction =
   | { type: "events_appended"; events: SandboxEvent[] }
   /** A fetch_history request was sent. */
   | { type: "history_requested" }
-  /** A prompt was sent; optimistically mark the session as processing. */
-  | { type: "prompt_sent" }
   /** The socket closed (clean or not). */
   | { type: "socket_closed" };
 
@@ -92,6 +93,7 @@ export function createSessionSocketState(snapshot: SessionSnapshot): SessionSock
     events: renderTimelineEvents(timelineEvents),
     hasMoreHistory: snapshot.timeline.hasMore,
     cursor: snapshot.timeline.cursor,
+    promptQueue: snapshot.promptQueue,
   };
 }
 
@@ -222,6 +224,7 @@ function reduceServerMessage(
         // A fetch_history dropped by a disconnect would otherwise leave this
         // stuck true and block loadOlderEvents after the reconnect.
         loadingHistory: false,
+        promptQueue: message.promptQueue,
       };
     }
 
@@ -316,11 +319,14 @@ function reduceServerMessage(
         isProcessing: message.isProcessing,
       }));
 
+    case "prompt_queue_updated":
+      return { ...state, promptQueue: message.promptQueue };
+
     case "error":
       // Reset loading state if a fetch_history request was rejected.
       return { ...state, loadingHistory: false };
 
-    // pong, prompt_queued, child_session_update, snapshot_saved,
+    // pong, prompt_queued, prompt_cancelled, child_session_update, snapshot_saved,
     // sandbox_restored, sandbox_warning: no view-state change.
     default:
       return state;
@@ -377,10 +383,6 @@ export function sessionSocketReducer(
 
     case "history_requested":
       return { ...state, loadingHistory: true };
-
-    case "prompt_sent":
-      // Optimistic: the server confirms with a processing_status message.
-      return updateSessionState(state, (prev) => ({ ...prev, isProcessing: true }));
 
     case "socket_closed":
       return {

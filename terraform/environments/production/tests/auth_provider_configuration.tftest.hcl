@@ -20,7 +20,6 @@ variables {
   github_app_id               = "1"
   github_app_private_key      = "test-private-key"
   github_app_installation_id  = "1"
-  anthropic_api_key           = "test-anthropic-key"
   token_encryption_key        = "test-token-key"
   repo_secrets_encryption_key = "test-repo-key"
   nextauth_secret             = "test-browser-auth-secret-with-32-characters"
@@ -37,9 +36,13 @@ variables {
   enable_slack_bot  = false
   enable_linear_bot = false
 
-  github_client_id     = "github-id"
-  github_client_secret = "github-secret"
-  allowed_users        = "octocat"
+  github_client_id       = "github-id"
+  github_client_secret   = "github-secret"
+  allowed_users          = "octocat"
+  allowed_email_domains  = ""
+  allowed_emails         = ""
+  allowed_github_orgs    = ""
+  unsafe_allow_all_users = false
 }
 
 run "github_only" {

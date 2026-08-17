@@ -3,6 +3,7 @@ import { secretsRoutes } from "./secrets";
 import type { RequestContext } from "./shared";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
+import { TEST_BACKGROUND_TASK_CONTEXT } from "../router.test-support";
 
 const mockRepoStore = vi.hoisted(() => ({
   setSecrets: vi.fn(),
@@ -63,6 +64,7 @@ function createCtx(): RequestContext {
     trace_id: "trace-1",
     request_id: "req-1",
     db: {} as SqlDatabase,
+    executionCtx: TEST_BACKGROUND_TASK_CONTEXT,
     metrics: {
       d1Queries: [],
       spans: {},

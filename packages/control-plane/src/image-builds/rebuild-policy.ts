@@ -1,12 +1,14 @@
 import type { ImageBuildRecordView } from "@open-inspect/shared/types/image-builds";
-import {
-  MIN_VNC_RUNTIME_VERSION,
-  parseRuntimeVersionNumber,
-  type ImageBuildProvider,
-} from "./model";
+import { parseRuntimeVersionNumber, type ImageBuildProvider } from "./model";
 import { parseRepositoryShasJson, repositoryIdentityKey } from "./provenance";
 import type { EnabledScopeUnit } from "./scope";
 
+// Runtime generations are one sequence shared by every image-build provider.
+// v59 carries OpenCode past its message-ID wraparound (see
+// packages/modal-infra/src/images/base.py); v57 added the VNC/noVNC toolchain.
+// MIN_COMPATIBLE_RUNTIME_VERSION remains safe to boot while the scheduler
+// converges prebuilt images in the background.
+export const MIN_REBUILD_RUNTIME_VERSION = 59;
 export type ImageBuildRebuildDecision =
   | { type: "skip"; reason: "building" }
   | {
@@ -33,7 +35,7 @@ export function evaluateImageBuildRebuildPolicy(
   const runtimeVersion = parseRuntimeVersionNumber(ready.runtime_version);
   // Rebuild old images to the current toolchain without invalidating images
   // that remain safe to boot during the rollout gap.
-  if (runtimeVersion === null || runtimeVersion < MIN_VNC_RUNTIME_VERSION) {
+  if (runtimeVersion === null || runtimeVersion < MIN_REBUILD_RUNTIME_VERSION) {
     return { type: "rebuild", reason: "runtime_incompatible" };
   }
 
