@@ -3,6 +3,11 @@
  */
 
 import type { SlackCompletionJob } from "../completion/job";
+import type { ControlPlaneFetcher } from "@open-inspect/shared/service-auth";
+
+export interface SlackCompletionQueue {
+  send(message: SlackCompletionJob, options?: { contentType?: "json" }): Promise<unknown>;
+}
 
 /**
  * Cloudflare Worker environment bindings.
@@ -12,10 +17,10 @@ export interface Env {
   SLACK_KV: KVNamespace;
 
   // Service binding to control plane
-  CONTROL_PLANE: Fetcher;
+  CONTROL_PLANE: ControlPlaneFetcher;
 
   // Durable completion handoff. All Slack completion callbacks enqueue here.
-  SLACK_COMPLETION_QUEUE: Queue<SlackCompletionJob>;
+  SLACK_COMPLETION_QUEUE: SlackCompletionQueue;
 
   // Environment variables
   DEPLOYMENT_NAME: string;
@@ -76,53 +81,7 @@ export interface ClassificationResult {
 
 export type { SlackSessionTarget } from "../targets";
 
-/**
- * Slack event types.
- */
-export interface SlackEvent {
-  type: string;
-  event: {
-    type: string;
-    text?: string;
-    user?: string;
-    channel?: string;
-    ts?: string;
-    thread_ts?: string;
-    bot_id?: string;
-  };
-  event_id: string;
-  event_time: number;
-  team_id: string;
-}
-
-/**
- * Slack message event.
- */
-export interface SlackMessageEvent {
-  type: "message";
-  text: string;
-  user: string;
-  channel: string;
-  ts: string;
-  thread_ts?: string;
-  bot_id?: string;
-}
-
-/**
- * Slack app_mention event.
- */
-export interface SlackAppMentionEvent {
-  type: "app_mention";
-  text: string;
-  user: string;
-  channel: string;
-  ts: string;
-  thread_ts?: string;
-}
-
 export type { SlackInteractionPayload } from "../interaction-payload";
-
-import type { SlackCallbackContext } from "@open-inspect/shared/types/session-api";
 
 /**
  * Thread-to-session mapping stored in KV for conversation continuity.
@@ -143,30 +102,4 @@ export interface ThreadSession {
    * sees discussion that happened between invocations.
    */
   lastPromptTs?: string;
-}
-
-/**
- * Completion callback payload from control-plane.
- */
-export interface CompletionCallback {
-  sessionId: string;
-  messageId: string;
-  success: boolean;
-  error?: string;
-  timestamp: number;
-  signature: string;
-  context: SlackCallbackContext;
-}
-
-/**
- * Tool-call callback payload from control-plane.
- */
-export interface ToolCallCallback {
-  sessionId: string;
-  tool: string;
-  args: Record<string, unknown>;
-  callId: string;
-  timestamp: number;
-  signature: string;
-  context: SlackCallbackContext;
 }

@@ -5,6 +5,7 @@ import {
   type SandboxSettings,
 } from "@open-inspect/shared/types/integrations";
 import {
+  getReasoningConfig,
   getValidModelOrDefault,
   isValidModel,
   isValidReasoningEffort,
@@ -26,7 +27,14 @@ import {
 } from "../session/integration-settings-resolution";
 import { spawnContextSchema } from "../session/spawn-context";
 import type { Env } from "../types";
-import { error, json, parsePattern, type Route } from "./shared";
+import {
+  defineRoutes,
+  error,
+  GITHUB_SANDBOX_FALLBACK_ROUTE,
+  json,
+  parsePattern,
+  type Route,
+} from "./shared";
 import { sessionRoute, type SessionRouteContext } from "./session-route";
 
 const logger = createLogger("router:session-child-spawn");
@@ -54,7 +62,6 @@ async function handleSpawnChild(
   const sessionStore = new SessionIndexStore(ctx.db);
 
   const parentSession = await sessionStore.get(parentId);
-  const parentUserId = parentSession?.userId ?? null;
   const parentEnvironmentId = parentSession?.environmentId ?? null;
   // Children inherit the parent's settings scope: its primary repo plus, for
   // environment-launched parents, that environment's overrides (design §13.5).
@@ -152,6 +159,16 @@ async function handleSpawnChild(
     return error(`Model "${body.model}" is not enabled`, 400);
   }
   const model = resolveEnabledModel({ model: requestedModel, enabledModels });
+  if (body.reasoningEffort !== undefined && !isValidReasoningEffort(model, body.reasoningEffort)) {
+    const validEfforts = getReasoningConfig(model)?.efforts;
+    const suffix = validEfforts?.length
+      ? ` Valid efforts: ${validEfforts.join(", ")}`
+      : " This model does not support reasoning effort overrides.";
+    return error(
+      `Invalid reasoning effort "${body.reasoningEffort}" for model "${model}".${suffix}`,
+      400
+    );
+  }
   const requestedReasoningEffort = body.reasoningEffort ?? spawnContext.reasoningEffort;
   const reasoningEffort =
     requestedReasoningEffort && isValidReasoningEffort(model, requestedReasoningEffort)
@@ -193,15 +210,15 @@ async function handleSpawnChild(
     title: body.title,
     model,
     reasoningEffort,
-    participantUserId: spawnContext.owner.userId,
-    platformUserId: parentUserId,
-    scmLogin: spawnContext.owner.scmLogin,
-    scmName: spawnContext.owner.scmName,
-    scmEmail: spawnContext.owner.scmEmail,
-    scmUserId: spawnContext.owner.scmUserId,
-    scmTokenEncrypted: spawnContext.owner.scmAccessTokenEncrypted,
-    scmRefreshTokenEncrypted: spawnContext.owner.scmRefreshTokenEncrypted,
-    scmTokenExpiresAt: spawnContext.owner.scmTokenExpiresAt,
+    participantUserId: spawnContext.promptAuthor.userId,
+    platformUserId: spawnContext.promptAuthor.canonicalUserId ?? null,
+    scmLogin: spawnContext.promptAuthor.scmLogin,
+    scmName: spawnContext.promptAuthor.scmName,
+    scmEmail: spawnContext.promptAuthor.scmEmail,
+    scmUserId: spawnContext.promptAuthor.scmUserId,
+    scmTokenEncrypted: spawnContext.promptAuthor.scmAccessTokenEncrypted,
+    scmRefreshTokenEncrypted: spawnContext.promptAuthor.scmRefreshTokenEncrypted,
+    scmTokenExpiresAt: spawnContext.promptAuthor.scmTokenExpiresAt,
     codeServerEnabled: childCodeServerEnabled,
     vncEnabled: childVncEnabled,
     sandboxSettings: childSandboxSettings,
@@ -210,6 +227,7 @@ async function handleSpawnChild(
     spawnDepth: childDepth,
     automationId: parentSession?.automationId ?? null,
     automationRunId: parentSession?.automationRunId ?? null,
+    managedSkillsSourceSessionId: parentId,
   };
 
   const admissionLease = await sessionStore.acquireChildAdmissionLease(
@@ -239,8 +257,8 @@ async function handleSpawnChild(
   try {
     const promptRequest = {
       content: body.prompt,
-      authorId: spawnContext.owner.userId,
-      canonicalUserId: spawnContext.owner.canonicalUserId ?? parentUserId ?? undefined,
+      authorId: spawnContext.promptAuthor.userId,
+      canonicalUserId: spawnContext.promptAuthor.canonicalUserId ?? undefined,
       source: "agent",
     } satisfies EnqueuePromptRequest;
 
@@ -275,7 +293,7 @@ async function handleSpawnChild(
     return error("Failed to enqueue child session prompt", 500);
   }
 
-  ctx.executionCtx?.waitUntil(
+  ctx.executionCtx.submit(
     ctx.sessionRuntime
       .fetch(parentId, SessionInternalPaths.childSessionUpdate, {
         method: "POST",
@@ -294,10 +312,10 @@ async function handleSpawnChild(
   return json({ sessionId: childId, status: "created" }, 201);
 }
 
-export const sessionChildSpawnRoutes: Route[] = [
+export const sessionChildSpawnRoutes: Route[] = defineRoutes(GITHUB_SANDBOX_FALLBACK_ROUTE, [
   sessionRoute({
     method: "POST",
     pattern: parsePattern("/sessions/:id/children"),
     handler: handleSpawnChild,
   }),
-];
+]);

@@ -7,14 +7,18 @@ import {
   type SandboxEvent,
 } from "@open-inspect/shared/types/sandbox-events";
 import { assertArtifactType } from "./artifacts";
-import type { SessionRepository } from "./repository";
+import type { SessionCoreRepository } from "./session-core-repository";
+import type { SandboxRepository } from "./sandbox-repository";
+import type { MessageRepository } from "./message-repository";
+import type { ArtifactRepository } from "./artifact-repository";
+import type { EventRepository } from "./event-repository";
 import type { CallbackNotificationService } from "./callback-notification-service";
 import type { SessionDiffService } from "./diffs/service";
 import type { SessionMessenger } from "./messenger";
 import type { SessionStatusService } from "./session-status-service";
 import type { SessionWebSocketManager } from "./websocket-manager";
 import type { SessionTitleUpdateOptions, SessionTitleUpdateResult } from "./title";
-import type { TerminalMessageProjectionInput } from "./terminal-message-projection";
+import type { BackgroundJobDispatcher } from "../platform-ports";
 
 type PushResolver = { resolve: () => void; reject: (err: Error) => void };
 type SandboxEventWithAck = SandboxEvent & { ackId?: string };
@@ -36,12 +40,16 @@ export class SessionSandboxEventProcessor {
   private pendingPushResolvers = new Map<string, PushResolver>();
 
   constructor(
-    private readonly ctx: DurableObjectState,
+    private readonly backgroundJobs: BackgroundJobDispatcher,
     // The DO swaps its logger for a request-scoped child during fetch();
     // a getter keeps this singleton reading the current logger instead of
     // capturing one by value at construction time.
     private readonly getLog: () => Logger,
-    private readonly repository: SessionRepository,
+    private readonly repository: SessionCoreRepository,
+    private readonly sandboxRepository: SandboxRepository,
+    private readonly messageRepository: MessageRepository,
+    private readonly eventRepository: EventRepository,
+    private readonly artifactRepository: ArtifactRepository,
     private readonly callbackService: CallbackNotificationService,
     private readonly wsManager: SessionWebSocketManager,
     private readonly messenger: SessionMessenger,
@@ -51,11 +59,16 @@ export class SessionSandboxEventProcessor {
       options?: SessionTitleUpdateOptions
     ) => SessionTitleUpdateResult,
     private readonly triggerSnapshot: (reason: string) => Promise<void>,
+    private readonly projectTerminalMessage: (
+      messageId: string,
+      messageCreatedAt: number,
+      completedAt: number
+    ) => Promise<void>,
     private readonly statusService: SessionStatusService,
     private readonly updateLastActivity: (timestamp: number) => void,
     private readonly scheduleInactivityCheck: () => Promise<void>,
     private readonly processMessageQueue: () => Promise<void>,
-    private readonly recordTerminalMessage: (input: TerminalMessageProjectionInput) => Promise<void>
+    private readonly broadcastPromptQueue: () => void
   ) {}
 
   private get log(): Logger {
@@ -74,7 +87,7 @@ export class SessionSandboxEventProcessor {
     const ackId = event.ackId;
 
     if (event.type === "heartbeat") {
-      this.repository.updateSandboxHeartbeat(now);
+      this.sandboxRepository.updateSandboxHeartbeat(now);
       return;
     }
 
@@ -88,7 +101,7 @@ export class SessionSandboxEventProcessor {
     }
 
     const eventMessageId = "messageId" in event ? event.messageId : null;
-    const processingMessage = this.repository.getProcessingMessage();
+    const processingMessage = this.messageRepository.getProcessingMessage();
     const messageId = eventMessageId ?? processingMessage?.id ?? null;
 
     if (event.type === "artifact") {
@@ -114,14 +127,14 @@ export class SessionSandboxEventProcessor {
         updatedAt: now,
       };
 
-      this.repository.createArtifact({
+      this.artifactRepository.createArtifact({
         id: artifact.id,
         type: artifact.type,
         url: artifact.url,
         metadata: artifact.metadata ? JSON.stringify(artifact.metadata) : null,
         createdAt: now,
       });
-      this.repository.createEvent({
+      this.eventRepository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(augmentedEvent),
@@ -136,7 +149,7 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "token") {
       if (messageId) {
-        this.repository.upsertTokenEvent(messageId, event, now);
+        this.eventRepository.upsertTokenEvent(messageId, event, now);
       }
       this.messenger.broadcast({ type: "sandbox_event", event });
       return;
@@ -145,7 +158,7 @@ export class SessionSandboxEventProcessor {
     if (event.type === "compaction") {
       // Persist legacy compaction markers so sessions produced by older fork
       // runtimes continue to hydrate correctly.
-      this.repository.createEvent({
+      this.eventRepository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(event),
@@ -162,7 +175,7 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "reasoning") {
       if (messageId) {
-        this.repository.upsertReasoningEvent(messageId, event, now);
+        this.eventRepository.upsertReasoningEvent(messageId, event, now);
       }
       this.messenger.broadcast({ type: "sandbox_event", event });
       return;
@@ -170,7 +183,7 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "context_compacted") {
       const eventId = generateId();
-      this.repository.createContextCompactionEvent({
+      this.eventRepository.createContextCompactionEvent({
         id: eventId,
         type: event.type,
         data: JSON.stringify(event),
@@ -210,12 +223,12 @@ export class SessionSandboxEventProcessor {
     if (event.type === "tool_call") {
       this.updateLastActivity(now);
       if (messageId) {
-        this.repository.upsertToolCallEvent(messageId, event, now);
+        this.eventRepository.upsertToolCallEvent(messageId, event, now);
       }
       this.messenger.broadcast({ type: "sandbox_event", event });
 
       if (messageId) {
-        this.ctx.waitUntil(
+        this.backgroundJobs.submit(
           this.callbackService.notifyToolCall(messageId, event).catch((error) => {
             this.log.error("callback.tool_call.background_error", {
               message_id: messageId,
@@ -228,7 +241,7 @@ export class SessionSandboxEventProcessor {
     }
 
     if (event.type === "tool_result") {
-      this.repository.createEvent({
+      this.eventRepository.createEvent({
         id: generateId(),
         type: event.type,
         data: JSON.stringify(event),
@@ -240,60 +253,52 @@ export class SessionSandboxEventProcessor {
     }
 
     if (event.type === "execution_complete") {
-      const completionMessageId = messageId;
-      const isStillProcessing =
-        completionMessageId != null && processingMessage?.id === completionMessageId;
-
-      if (isStillProcessing) {
-        this.repository.upsertExecutionCompleteEvent(completionMessageId, event, now);
-        const status = event.success ? "completed" : "failed";
-        this.repository.updateMessageCompletion(completionMessageId, status, now);
-
-        const timestamps = this.repository.getMessageTimestamps(completionMessageId);
-        if (timestamps) {
-          await this.recordTerminalMessage({
-            messageId: completionMessageId,
-            messageCreatedAt: timestamps.created_at,
-            terminalMessageCompletedAt: now,
-          });
-        }
-        const totalDurationMs = timestamps ? now - timestamps.created_at : undefined;
+      const completion =
+        processingMessage?.id === event.messageId
+          ? this.messageRepository.recordMessageCompletion(event, now, "processing")
+          : null;
+      if (completion) {
+        await this.projectTerminalMessage(
+          completion.messageId,
+          completion.messageCreatedAt,
+          completion.completedAt
+        );
+        const totalDurationMs = now - completion.messageCreatedAt;
         const processingDurationMs =
-          timestamps?.started_at != null ? now - timestamps.started_at : undefined;
+          completion.messageStartedAt != null ? now - completion.messageStartedAt : undefined;
         const queueDurationMs =
-          timestamps?.started_at != null
-            ? timestamps.started_at - timestamps.created_at
+          completion.messageStartedAt != null
+            ? completion.messageStartedAt - completion.messageCreatedAt
             : undefined;
-
         this.log.info("prompt.complete", {
           event: "prompt.complete",
-          message_id: completionMessageId,
+          message_id: event.messageId,
           outcome: event.success ? "success" : "failure",
-          message_status: status,
+          message_status: completion.status,
           total_duration_ms: totalDurationMs,
           processing_duration_ms: processingDurationMs,
           queue_duration_ms: queueDurationMs,
         });
-
         this.messenger.broadcast({ type: "sandbox_event", event });
         this.messenger.broadcast({
           type: "processing_status",
-          isProcessing: this.repository.getProcessingMessage() !== null,
+          isProcessing: this.messageRepository.getProcessingMessage() !== null,
         });
-        this.ctx.waitUntil(
-          this.callbackService.notifyComplete(completionMessageId, event.success, event.error)
+        this.broadcastPromptQueue();
+        this.backgroundJobs.submit(
+          this.callbackService.notifyComplete(event.messageId, event.success, event.error)
         );
-
         await this.statusService.reconcileAfterExecution(event.success);
       } else {
+        this.messageRepository.clearMessageAwaitingStopConfirmation(event.messageId);
         this.log.info("prompt.complete", {
           event: "prompt.complete",
-          message_id: completionMessageId,
+          message_id: event.messageId,
           outcome: "already_stopped",
         });
       }
 
-      this.ctx.waitUntil(
+      this.backgroundJobs.submit(
         this.triggerSnapshot("execution_complete").catch((error) => {
           this.log.error("snapshot.trigger.background_error", {
             reason: "execution_complete",
@@ -308,7 +313,7 @@ export class SessionSandboxEventProcessor {
       return;
     }
 
-    this.repository.createEvent({
+    this.eventRepository.createEvent({
       id: generateId(),
       type: event.type,
       data: JSON.stringify(event),
@@ -317,7 +322,7 @@ export class SessionSandboxEventProcessor {
     });
 
     if (event.type === "git_sync") {
-      this.repository.updateSandboxGitSyncStatus(event.status);
+      this.sandboxRepository.updateSandboxGitSyncStatus(event.status);
 
       if (event.sha) {
         this.repository.updateSessionCurrentSha(event.sha);

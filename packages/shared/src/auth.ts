@@ -91,6 +91,15 @@ export async function verifyCallbackSignature<T extends { signature: string }>(
   return timingSafeEqual(signature, expectedHex);
 }
 
+export function isSignedCallbackPayload(payload: unknown): payload is { signature: string } {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "signature" in payload &&
+    typeof payload.signature === "string"
+  );
+}
+
 /**
  * Verify a CP→bot callback against the bot's own per-service secret
  * (the CP signs callbacks with the destination bot's key).
@@ -107,9 +116,8 @@ export async function verifyCallbackFromControlPlane<T extends { signature: stri
 /**
  * Verify an internal API token from the Authorization header.
  *
- * @param authHeader - The Authorization header value (e.g., "Bearer timestamp.signature")
- * @param secret - The shared secret for HMAC verification
- * @returns true if the token is valid, false otherwise
+ * This compatibility mechanism is retained for CP-to-Modal calls and the
+ * fork-only Linear app-token endpoint. New service routes use sig1 auth.
  */
 export async function verifyInternalToken(
   authHeader: string | null,
@@ -121,19 +129,15 @@ export async function verifyInternalToken(
 
   const token = authHeader.slice(7);
   const [timestamp, signature] = token.split(".");
-
   if (!timestamp || !signature) {
     return false;
   }
 
-  // Reject tokens outside the validity window
   const tokenTime = parseInt(timestamp, 10);
-  const now = Date.now();
-  if (isNaN(tokenTime) || Math.abs(now - tokenTime) > TOKEN_VALIDITY_MS) {
+  if (isNaN(tokenTime) || Math.abs(Date.now() - tokenTime) > TOKEN_VALIDITY_MS) {
     return false;
   }
 
-  // Verify HMAC signature
   const expectedHex = await computeHmacHex(timestamp, secret);
   return timingSafeEqual(signature, expectedHex);
 }

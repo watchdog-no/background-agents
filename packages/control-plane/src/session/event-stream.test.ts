@@ -1,16 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_REPLAY_LIMIT,
-  SessionEventStream,
-  type SessionEventStreamRepository,
-} from "./event-stream";
+import { DEFAULT_REPLAY_LIMIT, SessionEventStream } from "./event-stream";
+import type { EventRepository } from "./event-repository";
 import type { EventRow } from "./types";
 
 function createStream() {
   const repository = {
     getEventTimelinePage: vi.fn(),
     listEventPage: vi.fn(),
-  } as unknown as SessionEventStreamRepository;
+  } as unknown as EventRepository;
 
   return {
     stream: new SessionEventStream(repository),
@@ -118,6 +115,28 @@ describe("SessionEventStream", () => {
         }),
       ]);
       expect(replay.cursor).toEqual({ timestamp: 1000, id: "bad" });
+    });
+
+    it("skips persisted events that parse as JSON but violate the event schema", () => {
+      const { stream, repository } = createStream();
+      vi.mocked(repository.getEventTimelinePage).mockReturnValue({
+        events: [
+          eventRow(
+            "invalid",
+            "git_sync",
+            { type: "git_sync", status: "not-a-git-sync-status", sandboxId: "sandbox-1" },
+            1000,
+            41
+          ),
+          eventRow("good", "git_sync", gitSyncEvent("completed", 2), 2000, 42),
+        ],
+        hasMore: false,
+        nextCursor: null,
+      });
+
+      const replay = stream.getReplay();
+
+      expect(replay.events).toEqual([expect.objectContaining({ eventId: "good" })]);
     });
   });
 

@@ -8,8 +8,18 @@ import { SessionIndexStore, type ChildAdmissionLease } from "../db/session-index
 import { createLogger } from "../logger";
 import { SessionInternalPaths } from "../session/contracts";
 import { resolveSandboxSettings } from "../session/integration-settings-resolution";
+import { activePromptAuthorSchema } from "../session/active-prompt-author";
 import type { Env } from "../types";
-import { error, json, parsePattern, type RequestContext, type Route } from "./shared";
+import {
+  defineRoute,
+  error,
+  GITHUB_SANDBOX_FALLBACK_ROUTE,
+  json,
+  parsePattern,
+  SCM_AGNOSTIC_SANDBOX_ROUTE,
+  type RequestContext,
+  type Route,
+} from "./shared";
 import { sessionRoute, type SessionRouteContext } from "./session-route";
 
 const logger = createLogger("router:session-children");
@@ -79,6 +89,14 @@ export async function handlePromptChild(
     return error("Child session not found", 404);
   }
 
+  const authorResponse = await ctx.sessionRuntime.fetch(
+    parentId,
+    SessionInternalPaths.activePromptAuthor
+  );
+  if (!authorResponse.ok) return authorResponse;
+  const author = activePromptAuthorSchema.safeParse(await authorResponse.json());
+  if (!author.success) return error("Failed to get active prompt author", 500);
+
   let admissionLease: ChildAdmissionLease | null = null;
   if (childSession.status === "completed" || childSession.status === "failed") {
     const parentSession = await sessionStore.get(parentId);
@@ -106,7 +124,11 @@ export async function handlePromptChild(
   const response = await ctx.sessionRuntime.fetch(childId, SessionInternalPaths.parentPrompt, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parentSessionId: parentId, content: parsed.data.content }),
+    body: JSON.stringify({
+      parentSessionId: parentId,
+      content: parsed.data.content,
+      author: author.data,
+    }),
   });
   if (response.ok) {
     let messageId: string | undefined;
@@ -125,7 +147,7 @@ export async function handlePromptChild(
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });
-    ctx.executionCtx?.waitUntil(
+    ctx.executionCtx.submit(
       sessionStore.touchUpdatedAt(childId).catch((error) => {
         logger.error("session_index.touch_updated_at.background_error", {
           parent_id: parentId,
@@ -227,24 +249,33 @@ export async function handleCancelChild(
 }
 
 export const sessionChildRoutes: Route[] = [
-  {
+  defineRoute(GITHUB_SANDBOX_FALLBACK_ROUTE, {
     method: "GET",
     pattern: parsePattern("/sessions/:id/children"),
     handler: handleListChildren,
-  },
-  sessionRoute({
-    method: "GET",
-    pattern: parsePattern("/sessions/:id/children/:childId"),
-    handler: handleGetChild,
   }),
-  sessionRoute({
-    method: "POST",
-    pattern: parsePattern("/sessions/:id/children/:childId/cancel"),
-    handler: handleCancelChild,
-  }),
-  sessionRoute({
-    method: "POST",
-    pattern: parsePattern("/sessions/:id/children/:childId/prompt"),
-    handler: handlePromptChild,
-  }),
+  defineRoute(
+    GITHUB_SANDBOX_FALLBACK_ROUTE,
+    sessionRoute({
+      method: "GET",
+      pattern: parsePattern("/sessions/:id/children/:childId"),
+      handler: handleGetChild,
+    })
+  ),
+  defineRoute(
+    GITHUB_SANDBOX_FALLBACK_ROUTE,
+    sessionRoute({
+      method: "POST",
+      pattern: parsePattern("/sessions/:id/children/:childId/cancel"),
+      handler: handleCancelChild,
+    })
+  ),
+  defineRoute(
+    SCM_AGNOSTIC_SANDBOX_ROUTE,
+    sessionRoute({
+      method: "POST",
+      pattern: parsePattern("/sessions/:id/children/:childId/prompt"),
+      handler: handlePromptChild,
+    })
+  ),
 ];

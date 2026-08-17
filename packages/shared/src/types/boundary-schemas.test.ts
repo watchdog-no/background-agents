@@ -7,6 +7,7 @@ import {
   normalizeOptionalRepositoryPair,
   RepositoryPairValidationError,
   serverMessageSchema,
+  sessionAttachmentUploadResponseSchema,
 } from ".";
 import { sessionParticipantProfilesResponseSchema } from "./sessions";
 import { listArtifactsResponseSchema } from "./artifacts";
@@ -17,10 +18,13 @@ import {
   createSessionRequestSchema,
   createSessionResponseSchema,
   MAX_CHILD_FOLLOW_UP_PROMPT_CHARS,
+  linearCompletionCallbackSchema,
+  linearToolCallCallbackSchema,
   sendPromptRequestSchema,
   sendPromptResponseSchema,
   spawnChildSessionRequestSchema,
 } from "./session-api";
+import { MAX_WEB_PROMPT_CHARS } from "./websocket";
 import {
   listEventsResponseSchema,
   sandboxEventSchema,
@@ -135,6 +139,51 @@ describe("boundary schemas", () => {
         createSessionResponseSchema.safeParse({ sessionId: "", status: "created" }).success
       ).toBe(false);
       expect(sendPromptResponseSchema.safeParse({ messageId: "" }).success).toBe(false);
+    });
+  });
+
+  describe("sessionAttachmentUploadResponseSchema", () => {
+    it("parses an upload response and ignores unknown fields", () => {
+      const result = sessionAttachmentUploadResponseSchema.safeParse({
+        attachmentId: "att-1",
+        mimeType: "image/png",
+        sizeBytes: 1024,
+      });
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ attachmentId: "att-1", mimeType: "image/png" });
+    });
+
+    it("rejects ids the prompt schema would reject", () => {
+      // Non-empty but not a canonical id: accepting these lets a bad id reach
+      // client state and fail later, at prompt validation.
+      expect(
+        sessionAttachmentUploadResponseSchema.safeParse({
+          attachmentId: "bad id",
+          mimeType: "image/png",
+        }).success
+      ).toBe(false);
+      expect(
+        sessionAttachmentUploadResponseSchema.safeParse({
+          attachmentId: "a".repeat(129),
+          mimeType: "image/png",
+        }).success
+      ).toBe(false);
+      expect(
+        sessionAttachmentUploadResponseSchema.safeParse({ attachmentId: "", mimeType: "image/png" })
+          .success
+      ).toBe(false);
+    });
+
+    it("rejects unsupported or missing mime types", () => {
+      expect(
+        sessionAttachmentUploadResponseSchema.safeParse({
+          attachmentId: "att-1",
+          mimeType: "application/pdf",
+        }).success
+      ).toBe(false);
+      expect(
+        sessionAttachmentUploadResponseSchema.safeParse({ attachmentId: "att-1" }).success
+      ).toBe(false);
     });
   });
 
@@ -371,6 +420,55 @@ describe("boundary schemas", () => {
     });
   });
 
+  describe("Linear callback schemas", () => {
+    const context = {
+      source: "linear",
+      issueId: "issue-1",
+      issueIdentifier: "OI-123",
+      issueUrl: "https://linear.app/open-inspect/issue/OI-123/test",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+
+    it("requires a complete completion callback and valid Linear context", () => {
+      const callback = {
+        sessionId: "session-1",
+        messageId: "message-1",
+        success: true,
+        timestamp: 123,
+        context,
+        signature: "signature",
+      };
+
+      expect(linearCompletionCallbackSchema.safeParse(callback).success).toBe(true);
+      expect(
+        linearCompletionCallbackSchema.safeParse({
+          ...callback,
+          context: { source: "linear", issueId: "issue-1" },
+        }).success
+      ).toBe(false);
+    });
+
+    it("requires tool args and callId", () => {
+      const callback = {
+        sessionId: "session-1",
+        tool: "bash",
+        args: { command: "npm test" },
+        callId: "call-1",
+        timestamp: 123,
+        context,
+        signature: "signature",
+      };
+
+      expect(linearToolCallCallbackSchema.safeParse(callback).success).toBe(true);
+      const { args: _args, ...withoutArgs } = callback;
+      expect(linearToolCallCallbackSchema.safeParse(withoutArgs).success).toBe(false);
+      expect(linearToolCallCallbackSchema.safeParse({ ...callback, callId: "" }).success).toBe(
+        false
+      );
+      expect(linearToolCallCallbackSchema.safeParse({ ...callback, tool: "" }).success).toBe(false);
+    });
+  });
+
   describe("sandboxEventSchema", () => {
     it("parses a valid tool call event", () => {
       const result = sandboxEventSchema.safeParse({
@@ -549,9 +647,10 @@ describe("boundary schemas", () => {
   });
 
   describe("clientMessageSchema", () => {
-    it("parses a valid prompt with attachments", () => {
+    it("parses a valid prompt with attachments and request correlation", () => {
       const result = clientMessageSchema.safeParse({
         type: "prompt",
+        clientRequestId: "0190cc3e-95ca-7dd8-b0a7-55ca8456ee31",
         content: "Investigate the failing build",
         model: "anthropic/claude-sonnet-4-6",
         reasoningEffort: "high",
@@ -566,6 +665,64 @@ describe("boundary schemas", () => {
       expect(result.success).toBe(true);
     });
 
+    it("requires clientRequestId for prompt correlation", () => {
+      expect(clientMessageSchema.safeParse({ type: "prompt", content: "Continue" }).success).toBe(
+        false
+      );
+    });
+
+    it("parses correlated queued prompt cancellation", () => {
+      expect(
+        clientMessageSchema.parse({
+          type: "cancel_prompt",
+          messageId: "message-1",
+          clientRequestId: "request-1",
+        })
+      ).toMatchObject({ messageId: "message-1", clientRequestId: "request-1" });
+      expect(
+        clientMessageSchema.safeParse({
+          type: "cancel_prompt",
+          messageId: "",
+          clientRequestId: "request-1",
+        }).success
+      ).toBe(false);
+    });
+
+    it("rejects invalid prompt request correlation identifiers", () => {
+      expect(
+        clientMessageSchema.safeParse({ type: "prompt", content: "Continue", clientRequestId: "" })
+          .success
+      ).toBe(false);
+      expect(
+        clientMessageSchema.safeParse({
+          type: "prompt",
+          content: "Continue",
+          clientRequestId: "x".repeat(129),
+        }).success
+      ).toBe(false);
+    });
+
+    it("rejects blank and oversized prompts but accepts attachment-only prompts", () => {
+      expect(clientMessageSchema.safeParse({ type: "prompt", content: "  \n" }).success).toBe(
+        false
+      );
+      expect(
+        clientMessageSchema.safeParse({
+          type: "prompt",
+          clientRequestId: "request-oversized",
+          content: "x".repeat(MAX_WEB_PROMPT_CHARS + 1),
+        }).success
+      ).toBe(false);
+      expect(
+        clientMessageSchema.safeParse({
+          type: "prompt",
+          clientRequestId: "request-attachment-only",
+          content: " \n",
+          attachments: [{ name: "evidence.png", attachmentId: "attachment-1" }],
+        }).success
+      ).toBe(true);
+    });
+
     it("rejects inline and remote attachment sources", () => {
       for (const attachment of [
         { name: "inline.png", content: "aGVsbG8=" },
@@ -573,6 +730,7 @@ describe("boundary schemas", () => {
       ]) {
         const result = clientMessageSchema.safeParse({
           type: "prompt",
+          clientRequestId: "request-source",
           content: "Look",
           attachments: [attachment],
         });
@@ -583,6 +741,7 @@ describe("boundary schemas", () => {
     it("rejects prompts with more than six attachments", () => {
       const result = clientMessageSchema.safeParse({
         type: "prompt",
+        clientRequestId: "request-attachments",
         content: "Compare these",
         attachments: Array.from({ length: 7 }, (_, index) => ({
           name: `${index}.png`,
@@ -601,6 +760,7 @@ describe("boundary schemas", () => {
         expect(
           clientMessageSchema.safeParse({
             type: "prompt",
+            clientRequestId: "request-attachment-bounds",
             content: "Look",
             attachments: [attachment],
           }).success
@@ -663,6 +823,7 @@ describe("boundary schemas", () => {
           },
         ],
         participantId: "participant-1",
+        promptQueue: [],
         timeline: {
           events: [],
           hasMore: false,
@@ -695,6 +856,7 @@ describe("boundary schemas", () => {
         },
         artifacts: [],
         participantId: "participant-1",
+        promptQueue: [],
         timeline: { events: [], hasMore: false, cursor: null },
         spawnError: null,
       });
@@ -725,6 +887,7 @@ describe("boundary schemas", () => {
         },
         artifacts: [],
         participantId: "participant-1",
+        promptQueue: [],
         timeline: {
           events: [
             {
@@ -837,6 +1000,7 @@ describe("boundary schemas", () => {
         },
         artifacts: [],
         participantId: "participant-1",
+        promptQueue: [],
         timeline: {
           events: [{ eventId: "event-1", timelineSequence: 1, event }],
           hasMore: false,

@@ -112,6 +112,8 @@ describe("RepoClassifier", () => {
     mockGetAvailableRepos.mockResolvedValue(TEST_REPOS);
     mockGetRoutingRules.mockResolvedValue([]);
     mockGetAvailableEnvironments.mockResolvedValue([]);
+    // buildRepoDescriptions is synchronous — a resolved-value mock would interpolate
+    // "[object Promise]" into the prompt instead of the repository list.
     mockBuildRepoDescriptions.mockReturnValue("- acme/prod\n- acme/web");
   });
 
@@ -139,6 +141,8 @@ describe("RepoClassifier", () => {
     expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
       "slack-bot"
     );
+    const prompt = sentPrompt();
+    expect(prompt).toContain("## Available Repositories\n- acme/prod\n- acme/web");
   });
 
   it("flags an infra failure with the endpoint reason when the endpoint errors", async () => {

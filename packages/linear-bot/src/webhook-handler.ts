@@ -125,12 +125,13 @@ export function selectSessionPrompt(
   webhook: AgentSessionWebhook,
   issue: { identifier: string; title: string; description?: string | null; url: string },
   issueDetails: LinearIssueDetails | null,
-  comment?: { body: string } | null
+  instructionComment?: { body: string } | null,
+  clarificationReply?: { body: string } | null
 ): string {
   const promptContext = webhook.promptContext ?? webhook.agentSession.promptContext;
   return promptContext
     ? buildPromptContextPrompt(promptContext)
-    : buildPrompt(issue, issueDetails, comment);
+    : buildPrompt(issue, issueDetails, instructionComment, clarificationReply);
 }
 
 export function buildFollowUpPrompt(params: {
@@ -306,31 +307,42 @@ async function handleStop(webhook: AgentSessionWebhook, env: Env, traceId: strin
 }
 
 /**
- * The comment and actor driving a new session. A "prompted" event that
+ * The comments and actor driving a new session. A "prompted" event that
  * reaches new-session handling is a reply to an elicitation — no
  * issue→session mapping existed, so no session was ever created. The reply
- * text lives on the agent activity, not on the session's original trigger
- * comment, and its author is the replier — not necessarily the user whose
- * comment created the elicitation — so both must come from the activity.
+ * text lives on the agent activity and drives target resolution, while the
+ * session comment remains the original instruction. Its author is the replier
+ * — not necessarily the user whose comment created the elicitation.
  */
 function getNewSessionInput(webhook: AgentSessionWebhook): {
-  comment: { body: string } | undefined;
+  resolutionComment: { body: string } | undefined;
+  instructionComment: { body: string } | undefined;
+  clarificationReply: { body: string } | undefined;
   actorUserId: string | undefined;
 } {
+  const instructionComment = webhook.agentSession.comment;
   const sessionActor =
-    webhook.agentSession.comment?.userId?.trim() ||
+    instructionComment?.userId?.trim() ||
     webhook.agentSession.creatorId?.trim() ||
     webhook.appUserId?.trim() ||
     undefined;
   const replyBody =
     webhook.action === "prompted" ? webhook.agentActivity?.content?.body?.trim() : undefined;
   if (replyBody) {
+    const clarificationReply = { body: replyBody };
     return {
-      comment: { body: replyBody },
+      resolutionComment: clarificationReply,
+      instructionComment,
+      clarificationReply,
       actorUserId: webhook.agentActivity?.userId?.trim() || sessionActor,
     };
   }
-  return { comment: webhook.agentSession.comment, actorUserId: sessionActor };
+  return {
+    resolutionComment: instructionComment,
+    instructionComment,
+    clarificationReply: undefined,
+    actorUserId: sessionActor,
+  };
 }
 
 function shouldTransitionIssueOnStart(webhook: AgentSessionWebhook): boolean {
@@ -516,7 +528,12 @@ async function handleNewSession(
 ): Promise<void> {
   const startTime = Date.now();
   const agentSessionId = webhook.agentSession.id;
-  const { comment, actorUserId: sessionActorUserId } = getNewSessionInput(webhook);
+  const {
+    resolutionComment,
+    instructionComment,
+    clarificationReply,
+    actorUserId: sessionActorUserId,
+  } = getNewSessionInput(webhook);
   const orgId = webhook.organizationId;
 
   const client = await getAgentSessionLinearClient({
@@ -556,7 +573,7 @@ async function handleNewSession(
     issue,
     labelNames,
     projectInfo,
-    comment,
+    comment: resolutionComment,
     traceId,
   });
   if (!resolved) return;
@@ -683,7 +700,13 @@ async function handleNewSession(
 
   // ─── Build and send prompt ────────────────────────────────────────────
 
-  let prompt = selectSessionPrompt(webhook, issue, issueDetails, comment);
+  let prompt = selectSessionPrompt(
+    webhook,
+    issue,
+    issueDetails,
+    instructionComment,
+    clarificationReply
+  );
 
   if (integrationConfig.issueSessionInstructions) {
     prompt += `\n\n## Additional Instructions\n\n${integrationConfig.issueSessionInstructions}`;
@@ -791,7 +814,8 @@ export async function handleAgentSessionEvent(
 export function buildPrompt(
   issue: { identifier: string; title: string; description?: string | null; url: string },
   issueDetails: LinearIssueDetails | null,
-  comment?: { body: string } | null
+  comment?: { body: string } | null,
+  clarificationReply?: { body: string } | null
 ): string {
   const parts: string[] = [
     `Linear Issue: ${issue.identifier}`,
@@ -843,7 +867,26 @@ export function buildPrompt(
       "",
       "---",
       "**Agent instruction:**",
-      wrapUntrusted("linear_agent_instruction", comment.body)
+      buildUntrustedUserContentBlock({
+        tag: "linear_agent_instruction",
+        source: "linear_agent_instruction",
+        author: "unknown",
+        content: comment.body,
+      })
+    );
+  }
+
+  if (clarificationReply?.body) {
+    parts.push(
+      "",
+      "---",
+      "**Repository clarification:**",
+      buildUntrustedUserContentBlock({
+        tag: "linear_repository_clarification",
+        source: "linear_repository_clarification",
+        author: "unknown",
+        content: clarificationReply.body,
+      })
     );
   }
 

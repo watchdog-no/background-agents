@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { sessionSkillSelectionSchema } from "./skills";
 import type { AgentResponse } from "./artifacts";
 import { sessionRepositoriesInputSchema } from "./repositories";
 import type { EventResponse } from "./sandbox-events";
+import { MAX_WEB_PROMPT_CHARS, promptContentSchema } from "./prompts";
 import {
   messageSourceSchema,
   sessionStatusSchema,
@@ -20,7 +22,7 @@ export interface UserPreferences {
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-export const MAX_CHILD_FOLLOW_UP_PROMPT_CHARS = 64_000;
+export const MAX_CHILD_FOLLOW_UP_PROMPT_CHARS = MAX_WEB_PROMPT_CHARS;
 
 export const slackCallbackContextSchema = z.object({
   source: z.literal("slack"),
@@ -80,6 +82,37 @@ export const linearStartCallbackSchema = z.strictObject({
 
 export type LinearStartCallback = z.infer<typeof linearStartCallbackSchema>;
 
+export const linearCompletionCallbackPayloadSchema = z.strictObject({
+  sessionId: nonEmptyStringSchema,
+  messageId: nonEmptyStringSchema,
+  success: z.boolean(),
+  error: z.string().optional(),
+  timestamp: z.number().refine(Number.isFinite),
+  context: linearCallbackContextSchema,
+});
+
+export const linearCompletionCallbackSchema = linearCompletionCallbackPayloadSchema.extend({
+  signature: nonEmptyStringSchema,
+});
+
+export type LinearCompletionCallback = z.infer<typeof linearCompletionCallbackSchema>;
+
+export const linearToolCallCallbackPayloadSchema = z.strictObject({
+  sessionId: nonEmptyStringSchema,
+  tool: nonEmptyStringSchema,
+  args: z.record(z.string(), z.unknown()),
+  callId: nonEmptyStringSchema,
+  status: z.string().optional(),
+  timestamp: z.number().refine(Number.isFinite),
+  context: linearCallbackContextSchema,
+});
+
+export const linearToolCallCallbackSchema = linearToolCallCallbackPayloadSchema.extend({
+  signature: nonEmptyStringSchema,
+});
+
+export type LinearToolCallCallback = z.infer<typeof linearToolCallCallbackSchema>;
+
 export const automationCallbackContextSchema = z.object({
   source: z.literal("automation"),
   automationId: z.string(),
@@ -97,14 +130,24 @@ export const callbackContextSchema = z.union([
 
 export type CallbackContext = z.infer<typeof callbackContextSchema>;
 
-export const sendPromptRequestSchema = z.object({
-  content: z.string().min(1),
-  source: messageSourceSchema.optional(),
-  model: z.string().optional(),
-  reasoningEffort: z.string().optional(),
-  attachments: z.unknown().optional(),
-  callbackContext: z.unknown().optional(),
-});
+export const sendPromptRequestSchema = z
+  .object({
+    content: promptContentSchema,
+    source: messageSourceSchema.optional(),
+    model: z.string().optional(),
+    reasoningEffort: z.string().optional(),
+    attachments: z.unknown().optional(),
+    callbackContext: z.unknown().optional(),
+  })
+  .refine(
+    (prompt) =>
+      prompt.content.trim().length > 0 ||
+      (Array.isArray(prompt.attachments) && prompt.attachments.length > 0),
+    {
+      message: "Prompt content must not be blank without attachments",
+      path: ["content"],
+    }
+  );
 
 export type SendPromptRequest = z.infer<typeof sendPromptRequestSchema>;
 
@@ -184,6 +227,8 @@ const createSessionRequestBaseSchema = z.object({
    * fields.
    */
   environmentId: z.string().trim().min(1).nullish(),
+  /** Managed skills are resolved and pinned when the session is created. */
+  skillSelection: sessionSkillSelectionSchema.optional(),
 });
 
 export const createSessionRequestSchema = createSessionRequestBaseSchema

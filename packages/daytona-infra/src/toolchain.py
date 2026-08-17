@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from daytona import CreateSnapshotParams, Daytona, Image
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # OpenCode version to install.
 #
 # OpenCode restored `/event` stream context in 1.14.50 and fixed the remaining
 # eager-subscription race in 1.15.5. Keep the CLI and plugin on the same pin.
-OPENCODE_VERSION = "1.18.11"
+#
+# Never pin below 1.18.15 — see packages/modal-infra/src/images/base.py for why
+# (OpenCode's message-ID counter wraps and earlier releases order by ID string).
+OPENCODE_VERSION = "1.18.18"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.21.2"
 LINEAR_CLI_VERSION = "2.0.0"
@@ -24,14 +30,13 @@ CTX7_VERSION = "0.4.4"
 # daytona-v6: upgrade OpenCode after upstream SSE fixes.
 # daytona-v7: upgrade to OpenCode 1.18.11.
 # daytona-v8: add the VNC/noVNC desktop toolchain.
-SANDBOX_VERSION = "daytona-v8-vnc-opencode-1-18-11"
+# daytona-v9: upgrade past the OpenCode message-ID wraparound bug.
+SANDBOX_VERSION = "daytona-v9-vnc-opencode-1-18-18"
 
 
 def build_base_image(repo_root: Path) -> Image:
     """Build the Open-Inspect Daytona base image."""
-    sandbox_runtime_dir = (
-        repo_root / "packages" / "sandbox-runtime" / "src" / "sandbox_runtime"
-    )
+    sandbox_runtime_dir = repo_root / "packages" / "sandbox-runtime" / "src" / "sandbox_runtime"
 
     return (
         Image.base("python:3.12-slim-bookworm")

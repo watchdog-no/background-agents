@@ -265,7 +265,7 @@ export class OpenComputerSandboxProvider implements SandboxProvider {
       let wokeSandbox = false;
       if (state !== "running" && state !== "started" && state !== "ready") {
         const wakeResult = await this.client.wakeSandbox(config.providerObjectId);
-        if (wakeResult && typeof wakeResult === "object") sandbox = wakeResult;
+        if (wakeResult) sandbox = wakeResult;
         wokeSandbox = true;
       }
 
@@ -318,7 +318,15 @@ export class OpenComputerSandboxProvider implements SandboxProvider {
   async stopSandbox(config: StopConfig): Promise<StopResult> {
     try {
       try {
-        await this.client.hibernateSandbox(config.providerObjectId);
+        if (config.reason === "respawn") {
+          await this.client.deleteSandbox(
+            config.providerObjectId,
+            { deleteSecretStore: true },
+            ...(config.signal ? [config.signal] : [])
+          );
+        } else {
+          await this.client.hibernateSandbox(config.providerObjectId);
+        }
       } catch (error) {
         if (error instanceof OpenComputerNotFoundError) return { success: true };
         throw error;
@@ -326,7 +334,10 @@ export class OpenComputerSandboxProvider implements SandboxProvider {
       return { success: true };
     } catch (error) {
       if (error instanceof SandboxProviderError) throw error;
-      throw this.classifyError("Failed to hibernate OpenComputer sandbox", error);
+      throw this.classifyError(
+        `Failed to ${config.reason === "respawn" ? "delete" : "hibernate"} OpenComputer sandbox`,
+        error
+      );
     }
   }
 

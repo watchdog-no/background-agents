@@ -1,4 +1,4 @@
-"""Tests for Anthropic support in SandboxSupervisor._setup_managed_oauth()."""
+"""Tests for Anthropic support in OpenCodeServer._setup_managed_oauth()."""
 
 import json
 import os
@@ -6,11 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from sandbox_runtime.entrypoint import SandboxSupervisor
+from sandbox_runtime.opencode_server import OpenCodeServer
+from tests.runtime_helpers import make_opencode_server
 
 
-def _make_supervisor() -> SandboxSupervisor:
-    """Create a SandboxSupervisor with default test config."""
+def _make_opencode_server() -> OpenCodeServer:
+    """Create an OpenCodeServer with default test config."""
     with patch.dict(
         "os.environ",
         {
@@ -21,7 +22,7 @@ def _make_supervisor() -> SandboxSupervisor:
             "REPO_NAME": "app",
         },
     ):
-        return SandboxSupervisor()
+        return make_opencode_server()
 
 
 def _auth_file(tmp_path):
@@ -33,7 +34,7 @@ class TestAnthropicOauthSetup:
     """Cases for Anthropic managed OAuth setup."""
 
     def test_writes_auth_json_when_oauth_enabled(self, tmp_path):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
@@ -54,7 +55,7 @@ class TestAnthropicOauthSetup:
         assert "accountId" not in data["anthropic"]
 
     def test_skips_when_oauth_not_enabled(self, tmp_path, monkeypatch):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         # Explicitly remove the key so it is absent regardless of test ordering
         monkeypatch.delenv("ANTHROPIC_OAUTH_ENABLED", raising=False)
@@ -65,7 +66,7 @@ class TestAnthropicOauthSetup:
         assert not _auth_file(tmp_path).exists()
 
     def test_refresh_token_env_alone_does_not_enable_oauth(self, tmp_path):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_REFRESH_TOKEN": "rt_abc123"}, clear=False),
@@ -76,7 +77,7 @@ class TestAnthropicOauthSetup:
         assert not _auth_file(tmp_path).exists()
 
     def test_sets_secure_permissions(self, tmp_path):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
@@ -88,7 +89,7 @@ class TestAnthropicOauthSetup:
         assert mode == 0o600
 
     def test_raises_on_write_failure(self, tmp_path):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_OAUTH_ENABLED": "true"}, clear=False),
@@ -99,7 +100,7 @@ class TestAnthropicOauthSetup:
             sup._setup_managed_oauth()
 
     def test_no_temp_file_left_on_write_failure(self, tmp_path):
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
         original_open = os.open
 
         def fail_on_tmp(path, *args, **kwargs):
@@ -121,7 +122,7 @@ class TestAnthropicOauthSetup:
 
     def test_does_not_clobber_existing_openai_entry(self, tmp_path):
         """Writing anthropic must merge with, not overwrite, an existing openai entry."""
-        sup = _make_supervisor()
+        sup = _make_opencode_server()
 
         with (
             patch.dict(

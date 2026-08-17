@@ -25,7 +25,7 @@ export function buildVncUrl(
   password: string | null | undefined
 ): string | null {
   const safeUrl = getSafeExternalUrl(url);
-  if (!safeUrl) return null;
+  if (!safeUrl || !password) return null;
 
   const parsed = new URL(safeUrl);
   parsed.pathname = `${parsed.pathname.replace(/\/?$/, "/")}vnc.html`;
@@ -34,7 +34,7 @@ export function buildVncUrl(
   parsed.searchParams.delete("password");
   // The stock noVNC application reads connection settings from the query
   // string. It does not consume credentials from the URL fragment.
-  if (password) parsed.searchParams.set("password", password);
+  parsed.searchParams.set("password", password);
   parsed.hash = "";
   return parsed.toString();
 }

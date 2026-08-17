@@ -8,7 +8,7 @@ import { PullRequestStateIcon } from "@/components/pr-state-icon";
 import { pullRequestSummaryDisplay } from "@/lib/pr-summary";
 import { formatRelativeTime } from "@/lib/time";
 import { formatRepoLabel } from "@/lib/repo-label";
-import type { SessionItem } from "@/components/session-sidebar";
+import type { Session } from "@open-inspect/shared/types/sessions";
 
 interface ChildSessionsSectionProps {
   sessionId: string;
@@ -32,7 +32,7 @@ function statusBadgeVariant(status: string) {
 }
 
 export function ChildSessionsSection({ sessionId }: ChildSessionsSectionProps) {
-  const { data } = useSWR<{ children: SessionItem[] }>(`/api/sessions/${sessionId}/children`, {
+  const { data } = useSWR<{ children: Session[] }>(`/api/sessions/${sessionId}/children`, {
     // Primary refresh is event-driven via WebSocket child_session_update → SWR mutate().
     // This is a safety-net fallback for missed WS messages during reconnections.
     refreshInterval: (latestData) => {
@@ -46,7 +46,7 @@ export function ChildSessionsSection({ sessionId }: ChildSessionsSectionProps) {
   if (!children?.length) return null;
 
   return (
-    <CollapsibleSection title="Sub-tasks" defaultOpen={true}>
+    <CollapsibleSection key={sessionId} title="Child sessions">
       <div className="space-y-2">
         {children.map((child) => {
           const prDisplay = pullRequestSummaryDisplay(child.pullRequestSummary);

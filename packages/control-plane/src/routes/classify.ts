@@ -27,7 +27,14 @@ import { GlobalSecretsStore } from "../db/global-secrets";
 import type { SqlDatabase } from "../db/sql-database";
 import { OpenAITokenRefreshService } from "../session/openai-token-refresh-service";
 import { AnthropicTokenRefreshService } from "../session/anthropic-token-refresh-service";
-import { type Route, type RequestContext, parsePattern, json } from "./shared";
+import {
+  type Route,
+  type RequestContext,
+  SCM_AGNOSTIC_USER_OR_SERVICE_ROUTE,
+  defineRoutes,
+  parsePattern,
+  json,
+} from "./shared";
 
 const log = createLogger("router:classify");
 
@@ -440,10 +447,10 @@ function classifyErrorResponse(e: ClassifyError): Response {
   return json({ reason: e.reason, message: e.message }, e.status);
 }
 
-export const classifyRoutes: Route[] = [
+export const classifyRoutes: Route[] = defineRoutes(SCM_AGNOSTIC_USER_OR_SERVICE_ROUTE, [
   {
     method: "POST",
     pattern: parsePattern("/classify"),
     handler: handleClassify,
   },
-];
+]);

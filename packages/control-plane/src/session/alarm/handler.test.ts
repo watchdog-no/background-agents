@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../logger";
 import { createAlarmHandler } from "./handler";
+import type { MessageRepository } from "../message-repository";
 import { createEarliestAlarmScheduler } from "./scheduler";
 
 function createHandler() {
@@ -9,6 +10,7 @@ function createHandler() {
   };
   const messageQueue = {
     failStuckProcessingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    recoverStopConfirmationTimeout: vi.fn<() => Promise<void>>().mockResolvedValue(),
   };
   const lifecycleManager = {
     handleAlarm: vi.fn<() => Promise<void>>().mockResolvedValue(),
@@ -26,7 +28,7 @@ function createHandler() {
   } as unknown as Logger;
 
   const handler = createAlarmHandler({
-    repository,
+    repository: repository as unknown as MessageRepository,
     messageQueue,
     lifecycleManager,
     alarmScheduler,
@@ -57,6 +59,7 @@ describe("createAlarmHandler", () => {
     expect(now).not.toHaveBeenCalled();
     expect(alarmScheduler.scheduleAlarm).not.toHaveBeenCalled();
     expect(messageQueue.failStuckProcessingMessage).not.toHaveBeenCalled();
+    expect(messageQueue.recoverStopConfirmationTimeout).toHaveBeenCalledOnce();
     expect(lifecycleManager.handleAlarm).toHaveBeenCalledTimes(1);
   });
 
@@ -96,10 +99,11 @@ describe("createAlarmHandler", () => {
     };
     const messageQueue = {
       failStuckProcessingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(),
+      recoverStopConfirmationTimeout: vi.fn<() => Promise<void>>().mockResolvedValue(),
     };
 
     const handler = createAlarmHandler({
-      repository,
+      repository: repository as unknown as MessageRepository,
       messageQueue,
       lifecycleManager,
       alarmScheduler,
