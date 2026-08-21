@@ -22,6 +22,7 @@ const log = createLogger("classifier");
 // and OpenAI subscription OAuth routes to the chatgpt.com Codex backend, which
 // edge-blocks Worker egress (403). The Anthropic OAuth path uses api.anthropic.com.
 const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+export const CLASSIFIER_REQUEST_TIMEOUT_MS = 10_000;
 const classifyRawResultSchema = z.object({
   repoId: z.string().nullable(),
   confidence: z.enum(["high", "medium", "low"]),
@@ -113,12 +114,16 @@ async function callClassifyEndpoint(
 ): Promise<z.infer<typeof classifyRawResultSchema>> {
   const url = "https://internal/classify";
   const body = JSON.stringify({ prompt, model });
-  const response = await signedControlPlaneFetch(env, {
-    method: "POST",
-    url,
-    body,
-    traceId,
-  });
+  const response = await signedControlPlaneFetch(
+    env,
+    {
+      method: "POST",
+      url,
+      body,
+      traceId,
+    },
+    { signal: AbortSignal.timeout(CLASSIFIER_REQUEST_TIMEOUT_MS) }
+  );
 
   if (!response.ok) {
     let reason: ClassificationResult["failureReason"] = "provider_error";

@@ -55,6 +55,10 @@ import {
   type GitPushSpec,
 } from "../source-control";
 import type { SessionRepositoryState } from "@open-inspect/shared/types/repositories";
+import type {
+  SessionProviderAuthMode,
+  SubscriptionProviderId,
+} from "@open-inspect/shared/types/provider-accounts";
 import type { Env, ClientInfo } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
 import type { SessionRow, ArtifactRow, SandboxRow } from "./types";
@@ -94,9 +98,9 @@ import { ScmCredentialsService } from "./scm-credentials-service";
 import { ParticipantService, getAvatarUrl } from "./participant-service";
 import { UserScmTokenStore } from "../db/user-scm-tokens";
 import { CallbackNotificationService } from "./callback-notification-service";
-import { DOFetcherAdapter } from "../scheduler/do-fetcher-adapter";
-import { createCloudflareBackgroundJobDispatcher } from "../cloudflare/background-job-dispatcher";
-import type { AlarmScheduler, BackgroundJobDispatcher } from "../platform-ports";
+import { Scheduler } from "../scheduler/scheduler";
+import { createCloudflareBackgroundTasks } from "../cloudflare/background-tasks";
+import type { BackgroundTasks } from "../platform-ports";
 import { PresenceService } from "./presence-service";
 import { SessionMessageQueue } from "./message-queue";
 import { SessionSandboxEventProcessor } from "./sandbox-events";
@@ -130,7 +134,12 @@ import {
 } from "./http/handlers/participants.handler";
 import { MessageService } from "./services/message.service";
 import { createAlarmHandler, type AlarmHandler } from "./alarm/handler";
-import { createEarliestAlarmScheduler } from "./alarm/scheduler";
+import {
+  createEarliestAlarmScheduler,
+  handleAlarmDelivery,
+  PersistedAlarmDeadlineStore,
+  type RehydratableAlarmScheduler,
+} from "./alarm/scheduler";
 import { SessionDiffStore } from "./diffs/store";
 import { SessionDiffService } from "./diffs/service";
 import { SessionDiffsHandler } from "./http/handlers/session-diffs.handler";
@@ -173,7 +182,8 @@ export class SessionDO extends DurableObject<Env> {
    * binding at runtime. Distinct from `this.sql`, the DO-embedded SQLite.
    */
   private readonly db: SqlDatabase | null;
-  private readonly backgroundJobs: BackgroundJobDispatcher;
+  private readonly backgroundTasks: BackgroundTasks;
+  private readonly alarmDeadlines: PersistedAlarmDeadlineStore;
   private sessionCoreRepository: SessionCoreRepository;
   private sandboxRepository: SandboxRepository;
   private attachmentRepository: SessionAttachmentRepository;
@@ -230,7 +240,7 @@ export class SessionDO extends DurableObject<Env> {
   private _participantsHandler: ParticipantsHandler | null = null;
   // Alarm handler (lazily initialized)
   private _alarmHandler: AlarmHandler | null = null;
-  private _alarmScheduler: AlarmScheduler | null = null;
+  private _alarmScheduler: RehydratableAlarmScheduler | null = null;
   // Sandbox event processor (lazily initialized)
   private _sandboxEventProcessor: SessionSandboxEventProcessor | null = null;
   // Session status service (lazily initialized)
@@ -293,8 +303,9 @@ export class SessionDO extends DurableObject<Env> {
     super(ctx, env);
     // eslint-disable-next-line no-restricted-syntax -- composition root: the DO's one env.DB read
     this.db = env.DB ?? null;
-    this.backgroundJobs = createCloudflareBackgroundJobDispatcher(ctx);
+    this.backgroundTasks = createCloudflareBackgroundTasks(ctx, () => this.log);
     this.sql = ctx.storage.sql;
+    this.alarmDeadlines = new PersistedAlarmDeadlineStore(this.sql);
     this.attachmentRepository = new SessionAttachmentRepository(this.sql);
     this.artifactRepository = new ArtifactRepository(this.sql);
     this.eventRepository = new EventRepository(this.sql, (closure) =>
@@ -313,7 +324,7 @@ export class SessionDO extends DurableObject<Env> {
       ctx.storage.transactionSync(closure)
     );
     this.log = createLogger("session-do", {}, parseLogLevel(env.LOG_LEVEL));
-    const ensureInitialized = () => this.ensureInitialized();
+    const ensureInitialized = (rehydrateAlarm?: boolean) => this.ensureInitialized(rehydrateAlarm);
     const clock: Clock = {
       nowMs: () => Date.now(),
       monotonicNowMs: () => performance.now(),
@@ -371,7 +382,12 @@ export class SessionDO extends DurableObject<Env> {
         sandbox: sandboxDisconnects,
         broadcaster,
       }),
-      handleScheduledDeadline: () => this.alarmHandler.handle(),
+      handleScheduledDeadline: () =>
+        handleAlarmDelivery(
+          this.alarmDeadlines,
+          () => this.alarmHandler.handle(),
+          () => this.alarmScheduler.rearmPending()
+        ),
     });
     // Note: session_id context is set in ensureInitialized() once DB is ready
   }
@@ -423,18 +439,17 @@ export class SessionDO extends DurableObject<Env> {
    */
   private get callbackService(): CallbackNotificationService {
     if (!this._callbackService) {
-      // Wrap SchedulerDO namespace as a Fetcher for automation callbacks
-      const schedulerCallback = this.env.SCHEDULER
-        ? new DOFetcherAdapter(this.env.SCHEDULER, "global-scheduler")
+      const scheduler = this.db
+        ? new Scheduler(this.db, this.env, this.backgroundTasks)
         : undefined;
 
       this._callbackService = new CallbackNotificationService({
         repository: this.sessionCoreRepository,
         messageRepository: this.messageRepository,
-        env: {
-          ...this.env,
-          SCHEDULER_CALLBACK: schedulerCallback,
-        },
+        env: this.env,
+        completeAutomationRun: scheduler
+          ? (completion) => scheduler.runComplete(completion)
+          : undefined,
         log: this.log,
         getSessionId: () => {
           const session = this.getSession();
@@ -505,9 +520,9 @@ export class SessionDO extends DurableObject<Env> {
     );
   }
 
-  private get alarmScheduler(): AlarmScheduler {
+  private get alarmScheduler(): RehydratableAlarmScheduler {
     if (!this._alarmScheduler) {
-      this._alarmScheduler = createEarliestAlarmScheduler(this.ctx.storage);
+      this._alarmScheduler = createEarliestAlarmScheduler(this.ctx.storage, this.alarmDeadlines);
     }
     return this._alarmScheduler;
   }
@@ -515,7 +530,7 @@ export class SessionDO extends DurableObject<Env> {
   private get messageQueue(): SessionMessageQueue {
     if (!this._messageQueue) {
       this._messageQueue = new SessionMessageQueue(
-        this.backgroundJobs,
+        this.backgroundTasks,
         this.log,
         this.sessionCoreRepository,
         this.messageRepository,
@@ -704,13 +719,7 @@ export class SessionDO extends DurableObject<Env> {
         generateId: (bytes) => generateId(bytes),
         now: () => Date.now(),
         scheduleWarmSandbox: () =>
-          this.backgroundJobs.submit(
-            this.warmSandbox().catch((error) => {
-              this.log.error("sandbox.warm.background_error", {
-                error: error instanceof Error ? error : String(error),
-              });
-            })
-          ),
+          this.backgroundTasks.submit(this.warmSandbox(), { name: "sandbox.warm" }),
         getSession: () => this.getSession(),
         getSandbox: () => this.getSandbox(),
         getPublicSessionId: (session) => this.getPublicSessionId(session),
@@ -770,37 +779,34 @@ export class SessionDO extends DurableObject<Env> {
     return this._pullRequestHandler;
   }
 
-  /** Fire a background read-through refresh; failures only log. */
+  /** Fire a background read-through refresh. */
   private schedulePullRequestRefresh(trigger: "open" | "manual"): void {
-    this.backgroundJobs.submit(
+    this.backgroundTasks.submit(
       refreshSessionPullRequests(
         this.sessionCoreRepository,
         this.artifactRepository,
         this.sourceControlProvider,
         this.db ? new SessionPullRequestStore(this.db) : null
-      )
-        .then(({ updated, failures }) => {
-          for (const artifact of updated) {
-            this.broadcast({ type: "artifact_updated", artifact });
-          }
-          for (const failure of failures) {
-            this.log.error("Pull request refresh failed for artifact", {
-              trigger,
-              reason: failure.reason,
-              artifact_id: failure.artifactId,
-              pr_number: failure.prNumber,
-              repo_owner: failure.repoOwner,
-              repo_name: failure.repoName,
-              error: failure.error instanceof Error ? failure.error : String(failure.error),
-            });
-          }
-        })
-        .catch((error) => {
-          this.log.error("Pull request refresh failed", {
+      ).then(({ updated, failures }) => {
+        for (const artifact of updated) {
+          this.broadcast({ type: "artifact_updated", artifact });
+        }
+        for (const failure of failures) {
+          this.log.error("Pull request refresh failed for artifact", {
             trigger,
-            error: error instanceof Error ? error : String(error),
+            reason: failure.reason,
+            artifact_id: failure.artifactId,
+            pr_number: failure.prNumber,
+            repo_owner: failure.repoOwner,
+            repo_name: failure.repoName,
+            error: failure.error instanceof Error ? failure.error : String(failure.error),
           });
-        })
+        }
+      }),
+      {
+        name: "pull_request.refresh",
+        context: { trigger },
+      }
     );
   }
 
@@ -845,7 +851,7 @@ export class SessionDO extends DurableObject<Env> {
   private get sandboxEventProcessor(): SessionSandboxEventProcessor {
     if (!this._sandboxEventProcessor) {
       this._sandboxEventProcessor = new SessionSandboxEventProcessor(
-        this.backgroundJobs,
+        this.backgroundTasks,
         () => this.log,
         this.sessionCoreRepository,
         this.sandboxRepository,
@@ -883,7 +889,7 @@ export class SessionDO extends DurableObject<Env> {
   private get statusService(): SessionStatusService {
     if (!this._statusService) {
       this._statusService = new SessionStatusService(
-        this.backgroundJobs,
+        this.backgroundTasks,
         this.log,
         this.sessionCoreRepository,
         this.messageRepository,
@@ -929,8 +935,10 @@ export class SessionDO extends DurableObject<Env> {
       updateSandboxForSpawn: (data) => this.sandboxRepository.updateSandboxForSpawn(data),
       updateSandboxForResume: (data) => this.sandboxRepository.updateSandboxForResume(data),
       updateSandboxModalObjectId: (id) => this.sandboxRepository.updateSandboxModalObjectId(id),
-      updateSandboxSnapshotImageId: (sandboxId, imageId) =>
-        this.sandboxRepository.updateSandboxSnapshotImageId(sandboxId, imageId),
+      updateSandboxRuntimeVersion: (runtimeVersion) =>
+        this.sandboxRepository.updateSandboxRuntimeVersion(runtimeVersion),
+      updateSandboxSnapshotImageId: (sandboxId, imageId, runtimeVersion) =>
+        this.sandboxRepository.updateSandboxSnapshotImageId(sandboxId, imageId, runtimeVersion),
       updateSandboxLastActivity: (timestamp) =>
         this.sandboxRepository.updateSandboxLastActivity(timestamp),
       incrementCircuitBreakerFailure: (timestamp) =>
@@ -1078,7 +1086,7 @@ export class SessionDO extends DurableObject<Env> {
   /**
    * Initialize the session with required data.
    */
-  private ensureInitialized(): void {
+  private ensureInitialized(rehydrateAlarm = true): void {
     if (this.initialized) return;
     initSchema(this.sql);
     this.initialized = true;
@@ -1100,6 +1108,11 @@ export class SessionDO extends DurableObject<Env> {
       this.log
     );
     this.diffsHandler = new SessionDiffsHandler(this.diffService);
+    if (rehydrateAlarm) {
+      this.backgroundTasks.submit(this.alarmScheduler.rehydrate(), {
+        name: "alarm.rehydrate",
+      });
+    }
   }
 
   /**
@@ -1214,17 +1227,16 @@ export class SessionDO extends DurableObject<Env> {
         });
 
         // Process any pending messages now that sandbox is connected
-        this.backgroundJobs.submit(
-          this.processMessageQueue().catch((error) => {
-            log.error("message_queue.process.background_error", {
-              error: error instanceof Error ? error : String(error),
-            });
-          })
-        );
+        this.backgroundTasks.submit(this.processMessageQueue(), {
+          name: "message_queue.process",
+        });
       } else {
         const wsId = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         this.wsManager.acceptClientSocket(server, wsId);
-        this.backgroundJobs.submit(this.wsManager.enforceAuthTimeout(server, wsId));
+        this.backgroundTasks.submit(this.wsManager.enforceAuthTimeout(server, wsId), {
+          name: "websocket.enforce_auth_timeout",
+          context: { ws_id: wsId },
+        });
       }
 
       return new Response(null, { status: 101, webSocket: client });
@@ -1550,16 +1562,10 @@ export class SessionDO extends DurableObject<Env> {
   private syncSessionIndexTitle(sessionId: string, title: string, updatedAt: number): void {
     if (!this.db) return;
     const sessionStore = new SessionIndexStore(this.db);
-    this.backgroundJobs.submit(
-      sessionStore.updateTitleIfNewer(sessionId, title, updatedAt).catch((error) => {
-        this.log.error("session_index.update_title.background_error", {
-          session_id: sessionId,
-          title,
-          updated_at: updatedAt,
-          error,
-        });
-      })
-    );
+    this.backgroundTasks.submit(sessionStore.updateTitleIfNewer(sessionId, title, updatedAt), {
+      name: "session_index.update_title",
+      context: { session_id: sessionId, updated_at: updatedAt },
+    });
   }
 
   private applySessionTitleUpdate(
@@ -1853,84 +1859,82 @@ export class SessionDO extends DurableObject<Env> {
       return undefined;
     }
 
-    const merged = await this.loadUserSecrets(session);
+    const db = this.db;
+    if (!db) throw new Error("D1 is required to load session provider auth");
+    const providerAuth = await new SessionIndexStore(db).getCompleteProviderAuth(
+      this.getPublicSessionId(session)
+    );
+    const providerAuthModes = Object.fromEntries(
+      providerAuth.map(({ provider, authMode }) => [provider, authMode])
+    ) as Record<SubscriptionProviderId, SessionProviderAuthMode>;
 
-    // Inject a fresh Linear app-actor token so the agent can read/write Linear
-    // as the app. This comes from the linear-bot, not the user-secrets store, so
-    // it must run even when that store is unconfigured. A user-provided
-    // LINEAR_API_KEY secret (from the merge above) always wins.
-    await injectLinearAppToken(this.env, merged, this.log);
-
-    return Object.keys(merged).length === 0 ? undefined : merged;
-  }
-
-  /**
-   * Load and merge the user-provided secrets (global + per-repo) for a sandbox.
-   *
-   * Returns an empty object when the secrets store isn't configured (no `DB` or
-   * `REPO_SECRETS_ENCRYPTION_KEY`); callers may still add env vars sourced
-   * elsewhere (e.g. the Linear app-actor token). Fails hard on decryption
-   * errors — sandboxes must not silently lose secrets.
-   */
-  private async loadUserSecrets(session: SessionRow): Promise<Record<string, string>> {
-    if (!this.db || !this.env.REPO_SECRETS_ENCRYPTION_KEY) {
-      this.log.debug("Secrets not configured, skipping", {
-        has_db: !!this.db,
+    let sandboxEnv: Record<string, string>;
+    if (!this.env.REPO_SECRETS_ENCRYPTION_KEY) {
+      this.log.debug("Ordinary secrets not configured, skipping secret loading", {
         has_encryption_key: !!this.env.REPO_SECRETS_ENCRYPTION_KEY,
       });
-      return {};
-    }
+      sandboxEnv = prepareManagedProviderEnv({
+        exposedSecrets: {},
+        brokerSecrets: {},
+        providerAuthModes,
+      });
+    } else {
+      // Fail hard on secret loading — sandboxes must not silently lose secrets.
+      const encryptionKey = this.env.REPO_SECRETS_ENCRYPTION_KEY;
+      const globalStore = new GlobalSecretsStore(db, encryptionKey);
+      const globalSecrets = await globalStore.getDecryptedSecrets();
 
-    // Fail hard on secret loading — sandboxes must not silently lose secrets
-    const encryptionKey = this.env.REPO_SECRETS_ENCRYPTION_KEY;
-    const globalStore = new GlobalSecretsStore(this.db, encryptionKey);
-    const globalSecrets = await globalStore.getDecryptedSecrets();
+      const repoStore = new RepoSecretsStore(db, encryptionKey);
+      const environmentSecretsStore = new EnvironmentSecretsStore(db, encryptionKey);
+      const members = this.sessionCoreRepository.getSessionRepositories();
+      const sources = await buildSessionTargetSecretSources({
+        environmentId: session.environment_id,
+        globalSecrets,
+        members,
+        loadMemberSecrets: (member) => this.loadMemberRepoSecrets(session, member, repoStore),
+        loadEnvironmentSecrets: (environmentId) =>
+          environmentSecretsStore.getDecryptedSecrets(environmentId),
+      });
 
-    const repoStore = new RepoSecretsStore(this.db, encryptionKey);
-    const environmentSecretsStore = new EnvironmentSecretsStore(this.db, encryptionKey);
-    const members = this.sessionCoreRepository.getSessionRepositories();
-    const sources = await buildSessionTargetSecretSources({
-      environmentId: session.environment_id,
-      globalSecrets,
-      members,
-      loadMemberSecrets: (member) => this.loadMemberRepoSecrets(session, member, repoStore),
-      loadEnvironmentSecrets: (environmentId) =>
-        environmentSecretsStore.getDecryptedSecrets(environmentId),
-    });
+      const merge = mergeSecretSources(sources);
+      auditSecretsMerge({
+        merge,
+        mode: parseSecretsCapMode(this.env.SECRETS_CAP_ENFORCEMENT),
+        log: this.log,
+        context: { session_id: session.id },
+      });
 
-    const merge = mergeSecretSources(sources);
-    auditSecretsMerge({
-      merge,
-      mode: parseSecretsCapMode(this.env.SECRETS_CAP_ENFORCEMENT),
-      log: this.log,
-      context: { session_id: session.id },
-    });
+      const mergedCount = Object.keys(merge.merged).length;
+      if (mergedCount > 0) {
+        this.log.info("Secrets merged for sandbox", {
+          source_count: sources.length,
+          merged_count: mergedCount,
+          payload_bytes: merge.totalBytes,
+          exceeds_limit: merge.exceedsLimit,
+        });
+      }
 
-    const mergedCount = Object.keys(merge.merged).length;
-    if (mergedCount > 0) {
-      this.log.info("Secrets merged for sandbox", {
-        source_count: sources.length,
-        merged_count: mergedCount,
-        payload_bytes: merge.totalBytes,
-        exceeds_limit: merge.exceedsLimit,
+      const primary = members.find((member) => member.isPrimary);
+      const managedSources = session.environment_id
+        ? sources
+        : sources.filter(
+            (source) =>
+              source.label === "global" ||
+              (primary && source.label === `${primary.repoOwner}/${primary.repoName}`)
+          );
+      const managedSecrets = mergeSecretSources(managedSources).merged;
+      sandboxEnv = prepareManagedProviderEnv({
+        exposedSecrets: merge.merged,
+        brokerSecrets: managedSecrets,
+        providerAuthModes,
       });
     }
 
-    if (mergedCount === 0) return {};
-    const primary = members.find((member) => member.isPrimary);
-    const managedSources = session.environment_id
-      ? sources
-      : sources.filter(
-          (source) =>
-            source.label === "global" ||
-            (primary && source.label === `${primary.repoOwner}/${primary.repoName}`)
-        );
-    const managedSecrets = mergeSecretSources(managedSources).merged;
-    const sandboxEnv = prepareManagedProviderEnv({
-      exposedSecrets: merge.merged,
-      brokerSecrets: managedSecrets,
-    });
-    return sandboxEnv;
+    // Inject a fresh Linear app-actor token even when ordinary secrets are not
+    // configured. A user-provided LINEAR_API_KEY in sandboxEnv always wins.
+    await injectLinearAppToken(this.env, sandboxEnv, this.log);
+
+    return Object.keys(sandboxEnv).length === 0 ? undefined : sandboxEnv;
   }
 
   /**

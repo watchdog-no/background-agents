@@ -3,7 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from sandbox_runtime.opencode_server import OpenCodeServer
 from tests.runtime_helpers import make_opencode_server
@@ -87,9 +87,9 @@ class TestAnthropicAuthPluginSetup:
                 side_effect=lambda coro: coro.close(),
             ),
         ):
-            # Resolve only the anthropic plugin source to an existing file. The
-            # codex source must resolve to a non-existent path so that the codex
-            # deploy block is skipped and only the anthropic copy fires.
+            # Resolve only the Anthropic plugin source to an existing provider
+            # plugin. The shared broker client is deployed with every enabled
+            # managed provider, while the OpenAI and xAI blocks remain skipped.
             mock_path.side_effect = lambda p: (
                 plugin_source
                 if p == "/app/sandbox_runtime/plugins/anthropic-auth-plugin.js"
@@ -103,10 +103,14 @@ class TestAnthropicAuthPluginSetup:
 
             await sup.start((), sup.workspace_path)
 
-        mock_copy.assert_called_once_with(
-            plugin_source,
-            sup.workspace_path / ".opencode" / "plugins" / "anthropic-auth-plugin.js",
-        )
+        plugin_dir = sup.workspace_path / ".opencode" / "plugins"
+        assert mock_copy.call_args_list == [
+            call(
+                Path("/app/sandbox_runtime/plugins/provider-token-broker.js"),
+                plugin_dir / "provider-token-broker.js",
+            ),
+            call(plugin_source, plugin_dir / "anthropic-auth-plugin.js"),
+        ]
 
     async def test_start_opencode_skips_plugin_without_oauth_enabled(self, tmp_path):
         """Without the non-secret OAuth flag, the anthropic plugin must not be copied."""
@@ -152,8 +156,8 @@ class TestAnthropicAuthPluginSetup:
 
             await sup.start((), sup.workspace_path)
 
-        for call in mock_copy.call_args_list:
-            dest = call.args[1]
+        for copy_call in mock_copy.call_args_list:
+            dest = copy_call.args[1]
             assert dest.name != "anthropic-auth-plugin.js"
 
     def test_provider_models_hook_zeroes_oauth_costs(self):
