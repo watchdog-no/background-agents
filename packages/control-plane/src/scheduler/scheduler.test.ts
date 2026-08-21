@@ -1,5 +1,5 @@
 /**
- * Unit tests for SchedulerDO.
+ * Unit tests for Scheduler.
  *
  * Uses mocked D1 and SESSION namespace. For full integration tests
  * (with real D1 + workerd), see test/integration/scheduler.test.ts and
@@ -11,24 +11,22 @@ import type { Env } from "../types";
 import type { Logger } from "../logger";
 import type { InvocationRunAggregate } from "../db/automation-store";
 
-// Mock cloudflare:workers before importing SchedulerDO (extends DurableObject)
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {
-    ctx: unknown;
-    env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
 const mockCheckRepositoryAccess = vi.hoisted(() => vi.fn());
+const mockResolveSessionProviderAuth = vi.hoisted(() =>
+  vi.fn().mockResolvedValue([
+    { provider: "openai", authMode: "api_key", selectionSource: "unattended_policy" },
+    { provider: "xai", authMode: "api_key", selectionSource: "unattended_policy" },
+  ])
+);
 
 vi.mock("../source-control", () => ({
   createSourceControlProviderFromEnv: vi.fn(() => ({
     checkRepositoryAccess: mockCheckRepositoryAccess,
   })),
+}));
+
+vi.mock("../session/provider-account-resolution", () => ({
+  resolveSessionProviderAuth: mockResolveSessionProviderAuth,
 }));
 
 vi.mock("../session/skill-resolution", () => ({
@@ -41,8 +39,7 @@ vi.mock("../session/skill-resolution", () => ({
   })),
 }));
 
-// Must import AFTER vi.mock so the hoisted mock is in place
-const { SchedulerDO } = await import("./durable-object");
+const { Scheduler } = await import("./scheduler");
 
 // ─── Mock factories ──────────────────────────────────────────────────────────
 
@@ -116,6 +113,17 @@ vi.mock("../db/automation-store", async (importOriginal) => {
   };
 });
 
+const mockProviderAuthList = vi.fn().mockResolvedValue([]);
+vi.mock("../db/automation-model-provider-auth", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    AutomationModelProviderAuthStore: vi.fn().mockImplementation(function () {
+      return { list: mockProviderAuthList };
+    }),
+  };
+});
+
 const mockSessionStoreCreate = vi.fn().mockResolvedValue(undefined);
 const mockSessionStoreUpdateStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock("../db/session-index", () => ({
@@ -133,6 +141,18 @@ vi.mock("../db/user-store", () => ({
     return {
       getIdentity: mockUserStoreGetIdentity,
     };
+  }),
+}));
+
+vi.mock("../db/provider-account-defaults", () => ({
+  ProviderDefaultStore: vi.fn().mockImplementation(function () {
+    return { get: vi.fn().mockResolvedValue(null) };
+  }),
+}));
+
+vi.mock("../db/model-provider-accounts", () => ({
+  ModelProviderAccountStore: vi.fn().mockImplementation(function () {
+    return { getById: vi.fn().mockResolvedValue(null) };
   }),
 }));
 
@@ -300,9 +320,9 @@ function createEnv(overrides?: Partial<Env>): Env {
   } as Env;
 }
 
-function createSchedulerDO(env?: Env): InstanceType<typeof SchedulerDO> {
-  const ctx = { storage: {} } as unknown as DurableObjectState;
-  return new SchedulerDO(ctx, env ?? createEnv());
+function createSchedulerDO(env = createEnv()) {
+  const scheduler = new Scheduler(env.DB, env, { submit: vi.fn() });
+  return Object.assign(scheduler, { fetch: (request: Request) => scheduler.dispatch(request) });
 }
 
 // ─── Sample data ─────────────────────────────────────────────────────────────
@@ -441,9 +461,14 @@ function lastInsertedChildren(): Array<Record<string, unknown>> {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe("SchedulerDO", () => {
+describe("Scheduler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveSessionProviderAuth.mockResolvedValue([
+      { provider: "openai", authMode: "api_key", selectionSource: "unattended_policy" },
+      { provider: "xai", authMode: "api_key", selectionSource: "unattended_policy" },
+    ]);
+    mockProviderAuthList.mockResolvedValue([]);
     capturedInvocationParams = [];
     mockStore = createMockStore();
     mockGetSlackAutomationsForChannel.mockResolvedValue([]);
@@ -506,12 +531,43 @@ describe("SchedulerDO", () => {
         scheduled_at: sampleAutomation.next_run_at,
       });
       expect(params.overlapScope).toEqual({ kind: "automation" });
-      expect(params.advanceSchedule).toEqual({ nextRunAt: expect.any(Number) });
+      expect(params.advanceSchedule).toEqual({
+        fromSlot: sampleAutomation.next_run_at,
+        nextRunAt: expect.any(Number),
+      });
       expect(params.children).toHaveLength(1);
 
       expect(mockStore.updateRun).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ status: "running" })
+      );
+    });
+
+    it("does not enqueue a prompt when recovery wins the launch transition", async () => {
+      mockStore.getOverdueAutomations.mockResolvedValue([sampleAutomation]);
+      selectRepositories("auto-1", [repositoryRow("auto-1")]);
+      mockStore.updateRun.mockResolvedValue(false);
+
+      const env = createEnv();
+      const stub = env.SESSION.get(env.SESSION.idFromName("any"));
+      const fetchMock = vi.mocked(stub.fetch);
+
+      const scheduler = createSchedulerDO(env);
+      const response = await scheduler.fetch(
+        new Request("http://internal/internal/tick", { method: "POST" })
+      );
+
+      expect(await response.json()).toMatchObject({ processed: 0, failed: 1 });
+      expect(promptCallCount(fetchMock)).toBe(0);
+      expect(mockStore.updateRun).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        expect.objectContaining({ status: "running" })
+      );
+      expect(mockStore.updateRun).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        expect.objectContaining({ status: "failed" })
       );
     });
 
@@ -556,6 +612,101 @@ describe("SchedulerDO", () => {
       expect(children[0].invocation_id).toBe(children[1].invocation_id);
       // Both launched.
       expect(mockStore.updateRun).toHaveBeenCalledTimes(2);
+    });
+
+    it("resolves one provider auth snapshot for every child in a fan-out invocation", async () => {
+      mockStore.getOverdueAutomations.mockResolvedValue([sampleAutomation]);
+      selectRepositories("auto-1", [
+        repositoryRow("auto-1", { repo_name: "web-app" }),
+        repositoryRow("auto-1", { repo_name: "api", base_branch: null }),
+      ]);
+      const invocationProviderAuth = [
+        {
+          provider: "openai" as const,
+          authMode: "provider_account" as const,
+          providerAccountId: "a".repeat(32),
+          selectionSource: "provider_default",
+        },
+        {
+          provider: "xai" as const,
+          authMode: "api_key" as const,
+          selectionSource: "unattended_policy",
+        },
+      ];
+      mockResolveSessionProviderAuth
+        .mockResolvedValueOnce(invocationProviderAuth)
+        .mockResolvedValueOnce([
+          {
+            provider: "openai",
+            authMode: "provider_account",
+            providerAccountId: "b".repeat(32),
+            selectionSource: "provider_default",
+          },
+          { provider: "xai", authMode: "api_key", selectionSource: "unattended_policy" },
+        ]);
+
+      const scheduler = createSchedulerDO();
+      const response = await scheduler.fetch(
+        new Request("http://internal/internal/tick", { method: "POST" })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockResolveSessionProviderAuth).toHaveBeenCalledTimes(1);
+      expect(mockSessionStoreCreate).toHaveBeenCalledTimes(2);
+      expect(mockSessionStoreCreate.mock.calls.map(([session]) => session.providerAuth)).toEqual([
+        invocationProviderAuth,
+        invocationProviderAuth,
+      ]);
+    });
+
+    it("freezes provider routing before invocation admission", async () => {
+      mockStore.getOverdueAutomations.mockResolvedValue([sampleAutomation]);
+      const firstAccountId = "a".repeat(32);
+      const editedAccountId = "b".repeat(32);
+      let selectedAccountId = firstAccountId;
+      mockProviderAuthList.mockReset();
+      mockProviderAuthList.mockImplementation(async () => [
+        {
+          automation_id: "auto-1",
+          provider: "openai",
+          auth_mode: "provider_account",
+          provider_account_id: selectedAccountId,
+          created_at: 1,
+          updated_at: 1,
+        },
+      ]);
+      mockResolveSessionProviderAuth.mockReset();
+      mockResolveSessionProviderAuth.mockImplementation(async (_db, options) => [
+        {
+          provider: "openai",
+          authMode: "provider_account",
+          providerAccountId: options.explicit.openai.accountId,
+          selectionSource: "explicit",
+        },
+        { provider: "xai", authMode: "api_key", selectionSource: "unattended_policy" },
+      ]);
+      mockStore.insertInvocationGuarded.mockImplementation(async (params: unknown) => {
+        capturedInvocationParams.push(
+          structuredClone(params) as { children: Array<Record<string, unknown>> }
+        );
+        // Simulate an automation edit racing immediately after the firing is
+        // admitted. The launched session must retain the pre-admission pin.
+        selectedAccountId = editedAccountId;
+        return { inserted: true };
+      });
+
+      const scheduler = createSchedulerDO();
+      const response = await scheduler.fetch(
+        new Request("http://internal/internal/tick", { method: "POST" })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockSessionStoreCreate.mock.calls[0][0].providerAuth).toContainEqual({
+        provider: "openai",
+        authMode: "provider_account",
+        providerAccountId: firstAccountId,
+        selectionSource: "automation_pin",
+      });
     });
 
     it("starts later child launches before earlier child sessions finish initializing", async () => {
@@ -628,6 +779,7 @@ describe("SchedulerDO", () => {
       expect(res.status).toBe(200);
       const initBody = await getInitBody(fetchMock);
       expect(initBody.reasoningEffort).toBe("high");
+      expect(initBody).not.toHaveProperty("providerAuth");
     });
 
     it("snapshots the resolved repository onto the child and the session", async () => {
@@ -1021,7 +1173,7 @@ describe("SchedulerDO", () => {
           scheduled_at: sampleAutomation.next_run_at,
           skip_reason: "concurrent_run_active",
         }),
-        { nextRunAt: expect.any(Number) }
+        { fromSlot: sampleAutomation.next_run_at, nextRunAt: expect.any(Number) }
       );
       expect(mockStore.insertInvocationGuarded).not.toHaveBeenCalled();
     });

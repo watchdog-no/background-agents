@@ -59,7 +59,8 @@ LINEAR_CLI_VERSION = "2.0.0"
 # from a user secret when set in Settings → Secrets.
 CTX7_VERSION = "0.4.4"
 
-# Cache buster value lives in images/version.py; bump it to force Modal image rebuilds.
+# The cache buster follows the shared runtime manifest so every image provider
+# publishes the same generation label.
 
 # Base image with all development tools
 base_image = (

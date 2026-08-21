@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RepoConfig } from "@open-inspect/shared/types/repository-catalog";
 import type { Env } from "../types";
 
@@ -13,7 +13,7 @@ vi.mock("./repos", () => ({
   buildRepoDescriptions: mockBuildRepoDescriptions,
 }));
 
-import { classifyRepo } from "./index";
+import { CLASSIFIER_REQUEST_TIMEOUT_MS, classifyRepo } from "./index";
 
 const TEST_REPOS: RepoConfig[] = [
   {
@@ -70,6 +70,10 @@ describe("classifyRepo", () => {
     vi.clearAllMocks();
     mockGetAvailableRepos.mockResolvedValue(TEST_REPOS);
     mockBuildRepoDescriptions.mockResolvedValue("- acme/prod\n- acme/web");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("maps a confident endpoint result onto a repo and sends prompt + model", async () => {
@@ -135,5 +139,27 @@ describe("classifyRepo", () => {
     expect(result.repo?.fullName).toBe("acme/prod");
     expect(result.needsClarification).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("falls back to clarification when the classifier request times out", async () => {
+    const timeoutSignal = AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    mockFetch.mockImplementation(async (_input, init) => {
+      expect(init?.signal).toBe(timeoutSignal);
+      throw timeoutSignal.reason;
+    });
+
+    const result = await classify();
+
+    expect(timeoutSpy).toHaveBeenCalledWith(CLASSIFIER_REQUEST_TIMEOUT_MS);
+    expect(result).toEqual({
+      repo: null,
+      confidence: "low",
+      reasoning:
+        "The repository classifier failed to run, so I couldn't auto-detect the repository. Please reply with the repository name (e.g., `owner/repo`).",
+      alternatives: TEST_REPOS,
+      needsClarification: true,
+      failureReason: "provider_error",
+    });
   });
 });

@@ -7,6 +7,7 @@ import { evaluateImageBuildForSpawn, type ImageBuildSpawnRow } from "./image-sel
 import { computeRepositoriesFingerprint } from "../../image-builds/fingerprint";
 import { MIN_VNC_RUNTIME_VERSION } from "../../image-builds/model";
 import { COMPATIBLE_RUNTIME_VERSION } from "../../image-builds/test-helpers";
+import { MIN_COMPATIBLE_RUNTIME_VERSION } from "../../image-builds/model";
 
 const SESSION_REPOSITORIES = [
   { repoOwner: "acme", repoName: "web", baseBranch: "main" },
@@ -85,17 +86,23 @@ describe("evaluateImageBuildForSpawn", () => {
     });
   });
 
-  it("preserves the v56 compatibility floor", async () => {
+  it("enforces the runtime compatibility floor", async () => {
     expect(
       (
         await evaluateImageBuildForSpawn(
-          await readyImage({ runtime_version: "v56-managed-provider-runtime" }),
+          await readyImage({
+            runtime_version: `v${MIN_COMPATIBLE_RUNTIME_VERSION}-compatible-runtime`,
+          }),
           SESSION_REPOSITORIES
         )
       ).outcome
     ).toBe("selected");
 
-    for (const runtimeVersion of ["v55-legacy-runtime", "dev", ""]) {
+    for (const runtimeVersion of [
+      `v${MIN_COMPATIBLE_RUNTIME_VERSION - 1}-legacy-runtime`,
+      "dev",
+      "",
+    ]) {
       const image = await readyImage({ runtime_version: runtimeVersion });
 
       expect(await evaluateImageBuildForSpawn(image, SESSION_REPOSITORIES)).toEqual({

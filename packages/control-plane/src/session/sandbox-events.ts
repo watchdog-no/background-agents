@@ -18,7 +18,7 @@ import type { SessionMessenger } from "./messenger";
 import type { SessionStatusService } from "./session-status-service";
 import type { SessionWebSocketManager } from "./websocket-manager";
 import type { SessionTitleUpdateOptions, SessionTitleUpdateResult } from "./title";
-import type { BackgroundJobDispatcher } from "../platform-ports";
+import type { BackgroundTasks } from "../platform-ports";
 
 type PushResolver = { resolve: () => void; reject: (err: Error) => void };
 type SandboxEventWithAck = SandboxEvent & { ackId?: string };
@@ -40,7 +40,7 @@ export class SessionSandboxEventProcessor {
   private pendingPushResolvers = new Map<string, PushResolver>();
 
   constructor(
-    private readonly backgroundJobs: BackgroundJobDispatcher,
+    private readonly backgroundTasks: BackgroundTasks,
     // The DO swaps its logger for a request-scoped child during fetch();
     // a getter keeps this singleton reading the current logger instead of
     // capturing one by value at construction time.
@@ -98,6 +98,9 @@ export class SessionSandboxEventProcessor {
 
     if (event.type === "ready") {
       this.diffService.pinBaselines(event);
+      // Fills the column a fresh spawn cleared; a restore has already seeded
+      // the snapshot's version, which outranks whatever this sandbox reports.
+      this.sandboxRepository.recordReportedSandboxRuntimeVersion(event.runtimeVersion ?? null);
     }
 
     const eventMessageId = "messageId" in event ? event.messageId : null;
@@ -228,14 +231,10 @@ export class SessionSandboxEventProcessor {
       this.messenger.broadcast({ type: "sandbox_event", event });
 
       if (messageId) {
-        this.backgroundJobs.submit(
-          this.callbackService.notifyToolCall(messageId, event).catch((error) => {
-            this.log.error("callback.tool_call.background_error", {
-              message_id: messageId,
-              error,
-            });
-          })
-        );
+        this.backgroundTasks.submit(this.callbackService.notifyToolCall(messageId, event), {
+          name: "callback.notify_tool_call",
+          context: { message_id: messageId },
+        });
       }
       return;
     }
@@ -285,8 +284,12 @@ export class SessionSandboxEventProcessor {
           isProcessing: this.messageRepository.getProcessingMessage() !== null,
         });
         this.broadcastPromptQueue();
-        this.backgroundJobs.submit(
-          this.callbackService.notifyComplete(event.messageId, event.success, event.error)
+        this.backgroundTasks.submit(
+          this.callbackService.notifyComplete(event.messageId, event.success, event.error),
+          {
+            name: "callback.notify_complete",
+            context: { message_id: event.messageId },
+          }
         );
         await this.statusService.reconcileAfterExecution(event.success);
       } else {
@@ -298,14 +301,10 @@ export class SessionSandboxEventProcessor {
         });
       }
 
-      this.backgroundJobs.submit(
-        this.triggerSnapshot("execution_complete").catch((error) => {
-          this.log.error("snapshot.trigger.background_error", {
-            reason: "execution_complete",
-            error,
-          });
-        })
-      );
+      this.backgroundTasks.submit(this.triggerSnapshot("execution_complete"), {
+        name: "snapshot.trigger",
+        context: { reason: "execution_complete", message_id: event.messageId },
+      });
       this.updateLastActivity(now);
       await this.scheduleInactivityCheck();
       await this.processMessageQueue();

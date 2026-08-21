@@ -157,9 +157,34 @@ If you try to save a reserved key, the UI will show a validation error.
   endpoint
 - System variables (set by the control plane) always take precedence over user-defined secrets
 
-Managed OpenAI and xAI OAuth credentials are exceptions to generic environment injection. Their
-refresh and cached access tokens stay in the control plane; the sandbox receives only a non-secret
-provider marker and requests short-lived access through its session-authenticated broker.
+OpenAI and xAI subscription credentials belong in **Settings > Provider Accounts**, not generic
+Secrets. Their refresh and cached access tokens are encrypted with
+`PROVIDER_ACCOUNTS_ENCRYPTION_KEY`, remain control-plane-only, and are never returned to the browser
+or injected into sandboxes. A session pins an account ID, API-key mode, or legacy scoped-OAuth mode
+and requests short-lived access through `POST /sessions/:id/provider-auth/:provider/access-token`.
+
+Provider-account mode removes that provider's canonical API key from the sandbox environment so the
+runtime cannot bypass the selected subscription. API-key mode continues to use ordinary global,
+repository, or environment secrets.
+
+### Legacy managed OAuth coexistence
+
+Legacy scoped OpenAI/xAI OAuth remains supported for sessions pinned to it. Provider-account
+defaults affect only sessions created afterward. **Settings > Provider Accounts** lists legacy key
+locations across global, repository, and environment scopes:
+
+```text
+OPENAI_OAUTH_REFRESH_TOKEN
+OPENAI_OAUTH_ACCESS_TOKEN
+OPENAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT
+OPENAI_OAUTH_ACCOUNT_ID
+XAI_OAUTH_REFRESH_TOKEN
+XAI_OAUTH_ACCESS_TOKEN
+XAI_OAUTH_ACCESS_TOKEN_EXPIRES_AT
+```
+
+Do not reuse the same rotating refresh token in both systems. Operators may remove legacy keys once
+the legacy-bound sessions that depend on them are no longer needed.
 
 ### Secrets and prebuilt images
 
@@ -200,13 +225,13 @@ from it, even after you rotate the secret. Two guidelines:
 
 ### "Model not found" errors
 
-If you're using `sandbox_provider = "daytona"` with Claude models and see "Model not found" errors,
-confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or repo secret. Add
-`ANTHROPIC_API_KEY` only if you intentionally use metered API billing. If you're using
-`sandbox_provider = "vercel"` with Claude models, the same credential guidance applies. For DeepSeek
-models, add `DEEPSEEK_API_KEY` as a global secret. For Z.AI Coding Plan models, add `ZHIPU_API_KEY`
-as a global secret. For SuperGrok, follow the [managed OAuth setup guide](GROK_MODELS.md) instead of
-injecting the refresh token into a sandbox.
+If you see "Model not found" errors, verify the selected provider authentication mode first. For
+provider-account mode, verify the account and model entitlement. For the default Claude subscription
+path on any sandbox provider, confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or
+repository secret; add `ANTHROPIC_API_KEY` only for intentional metered API access. For API-key
+mode, add the required key to the session's secret scope. DeepSeek uses `DEEPSEEK_API_KEY`; Z.AI
+Coding Plan uses `ZHIPU_API_KEY`. For SuperGrok, follow the
+[provider-account setup guide](GROK_MODELS.md).
 
 ### Secret not appearing in sandbox
 

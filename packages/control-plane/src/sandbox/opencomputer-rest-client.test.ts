@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   OpenComputerRestClient,
+  OPENCOMPUTER_SANDBOX_VERSION,
   openComputerCheckpointResponseSchema,
   openComputerExecResultSchema,
   openComputerSandboxApiResponseSchema,
@@ -45,7 +46,7 @@ describe("OpenComputerRestClient runtime SANDBOX_VERSION export", () => {
     const [url, init] = fetchSpy.mock.calls[0];
     expect(String(url)).toContain("/sandboxes/sb-1/exec/run");
     const body = JSON.parse((init as RequestInit).body as string);
-    expect(body.args[1]).toContain("SANDBOX_VERSION=v59-vnc-opencode-1-18-18");
+    expect(body.args[1]).toContain(`SANDBOX_VERSION=${OPENCOMPUTER_SANDBOX_VERSION}`);
   });
 
   it("runRuntimeForeground (image build path) exports SANDBOX_VERSION", async () => {
@@ -55,7 +56,7 @@ describe("OpenComputerRestClient runtime SANDBOX_VERSION export", () => {
     await client.runRuntimeForeground("sb-1", 60);
 
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
-    expect(body.args[1]).toContain("SANDBOX_VERSION=v59-vnc-opencode-1-18-18");
+    expect(body.args[1]).toContain(`SANDBOX_VERSION=${OPENCOMPUTER_SANDBOX_VERSION}`);
   });
 });
 

@@ -1,14 +1,13 @@
 /**
- * SchedulerDO — singleton Durable Object that processes scheduled automations.
+ * Request-driven automation scheduler backed entirely by D1.
  *
- * Woken by the Worker's `scheduled()` handler (cron trigger) or by manual
- * trigger requests from the automation CRUD routes. Handles:
+ * Invoked by the Worker's `scheduled()` handler, automation routes, and
+ * SessionDO completion callbacks. Handles:
  * - Tick: recovery sweep + process overdue automations
  * - Trigger: manual single-automation trigger
  * - RunComplete: callback from SessionDO on execution completion
  */
 
-import { DurableObject } from "cloudflare:workers";
 import {
   automationEventSchema,
   matchesConditions,
@@ -38,6 +37,10 @@ import {
   type AutomationRepositoryInsert,
   type AutomationEnvironmentRow,
 } from "../db/automation-store";
+import {
+  AutomationModelProviderAuthStore,
+  toProviderSelections,
+} from "../db/automation-model-provider-auth";
 import { SlackChannelStore } from "../db/slack-channel-store";
 import { IntegrationSettingsStore } from "../db/integration-settings";
 import {
@@ -54,8 +57,11 @@ import { createLogger, parseLogLevel } from "../logger";
 import type { Logger } from "../logger";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
-import { createCloudflareBackgroundJobDispatcher } from "../cloudflare/background-job-dispatcher";
+import type { BackgroundTasks } from "../platform-ports";
 import { initializeSession } from "../session/initialize";
+import type { SessionInitInput } from "../session/initialize";
+import type { SessionModelProviderAuthInput } from "../model-provider-accounts/provider-auth-contracts";
+import { resolveSessionProviderAuth } from "../session/provider-account-resolution";
 import { resolveSessionScopedSettings } from "../session/integration-settings-resolution";
 import { resolveManagedSkills } from "../session/skill-resolution";
 import type { EnqueuePromptRequest } from "../session/enqueue-prompt-contract";
@@ -159,6 +165,8 @@ const runCompleteBodySchema = z.object({
   error: z.string().optional(),
 });
 
+export type AutomationRunCompletion = z.infer<typeof runCompleteBodySchema>;
+
 function badJsonRequest(message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
     status: 400,
@@ -210,16 +218,47 @@ type SchedulerPromptRequest = Pick<
   callbackContext: AutomationCallbackContext | SlackCallbackContext;
 };
 
-export class SchedulerDO extends DurableObject<Env> {
-  private readonly log: Logger;
-  /** The DO's database handle — the single point where env.DB is read. */
-  private readonly db: SqlDatabase;
+export async function resolveAutomationProviderAuth(
+  db: SqlDatabase,
+  automationId: string
+): Promise<SessionModelProviderAuthInput[]> {
+  const pinRows = await new AutomationModelProviderAuthStore(db).list(automationId);
+  const explicit = toProviderSelections(pinRows);
+  const resolved = await resolveSessionProviderAuth(db, { explicit, unattended: true });
+  const pinnedProviders = new Set(pinRows.map((pin) => pin.provider));
+  return resolved.map((auth) =>
+    pinnedProviders.has(auth.provider) && auth.selectionSource === "explicit"
+      ? { ...auth, selectionSource: "automation_pin" }
+      : auth
+  );
+}
 
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.log = createLogger("scheduler-do", {}, parseLogLevel(env.LOG_LEVEL));
-    // eslint-disable-next-line no-restricted-syntax -- composition root: the DO's one env.DB read
-    this.db = env.DB;
+export class Scheduler {
+  private readonly log: Logger;
+
+  constructor(
+    private readonly db: SqlDatabase,
+    private readonly env: Env,
+    private readonly backgroundJobs: BackgroundTasks
+  ) {
+    this.log = createLogger("scheduler", {}, parseLogLevel(env.LOG_LEVEL));
+  }
+
+  /** Dispatch helper for logic tests and callers that already hold an internal Request. */
+  async dispatch(request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    if (request.method === "POST" && path === "/internal/tick") return this.tick();
+    if (request.method === "POST" && path === "/internal/trigger") {
+      return this.trigger(await request.json());
+    }
+    if (request.method === "POST" && path === "/internal/event") {
+      return this.event(await request.json());
+    }
+    if (request.method === "POST" && path === "/internal/run-complete") {
+      return this.runComplete(await request.json());
+    }
+    if (request.method === "GET" && path === "/internal/health") return this.health();
+    return new Response("Not Found", { status: 404 });
   }
 
   /**
@@ -359,6 +398,24 @@ export class SchedulerDO extends DurableObject<Env> {
       children.push({ ...childBase(), status: "starting" });
     }
 
+    const launchCandidates = children.filter((child) => child.status === "starting");
+    // Resolve provider routing before admission, alongside the already-built
+    // target children. Together these values are the immutable launch snapshot
+    // for this firing: edits made after the guarded insert cannot change which
+    // account an admitted child uses.
+    let providerAuthSnapshot:
+      | { providerAuth: SessionModelProviderAuthInput[] }
+      | { error: unknown } = { providerAuth: [] };
+    if (launchCandidates.length > 0) {
+      try {
+        providerAuthSnapshot = {
+          providerAuth: await resolveAutomationProviderAuth(this.db, automation.id),
+        };
+      } catch (error) {
+        providerAuthSnapshot = { error };
+      }
+    }
+
     const invocation: AutomationInvocationRow = {
       id: invocationId,
       automation_id: automation.id,
@@ -380,8 +437,10 @@ export class SchedulerDO extends DurableObject<Env> {
         children,
         overlapScope,
         advanceSchedule:
-          source === "schedule" && params.advanceToNextRunAt !== undefined
-            ? { nextRunAt: params.advanceToNextRunAt }
+          source === "schedule" &&
+          params.scheduledAt !== undefined &&
+          params.advanceToNextRunAt !== undefined
+            ? { fromSlot: params.scheduledAt, nextRunAt: params.advanceToNextRunAt }
             : undefined,
       }));
     } catch (e) {
@@ -425,13 +484,21 @@ export class SchedulerDO extends DurableObject<Env> {
 
     const launchChild = async (child: AutomationRunRow): Promise<void> => {
       try {
-        const { sessionId } = await this.createSessionForAutomationRun(automation, child);
-        await this.sendPromptToSession(sessionId, automation, child.id, instructionsOverride);
-        await store.updateRun(child.id, {
+        if ("error" in providerAuthSnapshot) throw providerAuthSnapshot.error;
+        const { sessionId } = await this.createSessionForAutomationRun(
+          automation,
+          child,
+          providerAuthSnapshot.providerAuth
+        );
+        const claimed = await store.updateRun(child.id, {
           status: "running",
           session_id: sessionId,
           started_at: Date.now(),
         });
+        if (!claimed) {
+          throw new Error("Automation run was recovered before launch completed");
+        }
+        await this.sendPromptToSession(sessionId, automation, child.id, instructionsOverride);
         child.status = "running";
         child.session_id = sessionId;
       } catch (e) {
@@ -463,7 +530,6 @@ export class SchedulerDO extends DurableObject<Env> {
       }
     };
 
-    const launchCandidates = children.filter((child) => child.status === "starting");
     let nextLaunchIndex = 0;
     const launchWorkerCount = Math.min(AUTOMATION_LAUNCH_CONCURRENCY, launchCandidates.length);
     await Promise.all(
@@ -528,39 +594,17 @@ export class SchedulerDO extends DurableObject<Env> {
       },
       options.advanceSchedule &&
         params.source === "schedule" &&
+        params.scheduledAt !== undefined &&
         params.advanceToNextRunAt !== undefined
-        ? { nextRunAt: params.advanceToNextRunAt }
+        ? { fromSlot: params.scheduledAt, nextRunAt: params.advanceToNextRunAt }
         : undefined
     );
     return { outcome: "skipped" };
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    if (request.method === "POST" && path === "/internal/tick") {
-      return this.handleTick();
-    }
-    if (request.method === "POST" && path === "/internal/trigger") {
-      return this.handleTrigger(request);
-    }
-    if (request.method === "POST" && path === "/internal/event") {
-      return this.handleEvent(request);
-    }
-    if (request.method === "POST" && path === "/internal/run-complete") {
-      return this.handleRunComplete(request);
-    }
-    if (request.method === "GET" && path === "/internal/health") {
-      return this.handleHealth();
-    }
-
-    return new Response("Not Found", { status: 404 });
-  }
-
   // ─── Tick handler ────────────────────────────────────────────────────────
 
-  private async handleTick(): Promise<Response> {
+  async tick(): Promise<Response> {
     const store = new AutomationStore(this.db);
     const now = Date.now();
     let processed = 0;
@@ -815,8 +859,8 @@ export class SchedulerDO extends DurableObject<Env> {
 
   // ─── Event handler ───────────────────────────────────────────────────────
 
-  private async handleEvent(request: Request): Promise<Response> {
-    const parsedEvent = automationEventSchema.safeParse(await request.json());
+  async event(input: unknown): Promise<Response> {
+    const parsedEvent = automationEventSchema.safeParse(input);
     if (!parsedEvent.success) {
       return badJsonRequest("Invalid automation event");
     }
@@ -989,8 +1033,8 @@ export class SchedulerDO extends DurableObject<Env> {
 
   // ─── Manual trigger ──────────────────────────────────────────────────────
 
-  private async handleTrigger(request: Request): Promise<Response> {
-    const parsedBody = manualTriggerBodySchema.safeParse(await request.json());
+  async trigger(input: unknown): Promise<Response> {
+    const parsedBody = manualTriggerBodySchema.safeParse(input);
     if (!parsedBody.success) return badJsonRequest("automationId required");
 
     const { automationId } = parsedBody.data;
@@ -1050,8 +1094,8 @@ export class SchedulerDO extends DurableObject<Env> {
 
   // ─── Run complete callback ───────────────────────────────────────────────
 
-  private async handleRunComplete(request: Request): Promise<Response> {
-    const parsedBody = runCompleteBodySchema.safeParse(await request.json());
+  async runComplete(input: unknown): Promise<Response> {
+    const parsedBody = runCompleteBodySchema.safeParse(input);
     if (!parsedBody.success) return badJsonRequest("Invalid run-complete callback");
 
     const body = parsedBody.data;
@@ -1293,7 +1337,7 @@ export class SchedulerDO extends DurableObject<Env> {
 
   // ─── Health check ────────────────────────────────────────────────────────
 
-  private async handleHealth(): Promise<Response> {
+  async health(): Promise<Response> {
     const store = new AutomationStore(this.db);
     const overdueCount = await store.countOverdue(Date.now());
 
@@ -1310,7 +1354,8 @@ export class SchedulerDO extends DurableObject<Env> {
 
   private async createSessionForAutomationRun(
     automation: AutomationRow,
-    run: AutomationRunRow
+    run: AutomationRunRow,
+    providerAuth: SessionModelProviderAuthInput[]
   ): Promise<{ sessionId: string }> {
     const sessionId = generateId();
 
@@ -1339,7 +1384,7 @@ export class SchedulerDO extends DurableObject<Env> {
       request_id: run.id,
       metrics: createRequestMetrics(),
       db: this.db,
-      executionCtx: createCloudflareBackgroundJobDispatcher(this.ctx),
+      executionCtx: this.backgroundJobs,
     };
 
     // What the session opens — the run's repository snapshot or, for
@@ -1373,29 +1418,28 @@ export class SchedulerDO extends DurableObject<Env> {
       userId
     );
 
-    await initializeSession(
-      this.env,
-      {
-        sessionId,
-        ...target,
-        title: `[Auto] ${automation.name}`,
-        model: automation.model,
-        reasoningEffort: automation.reasoning_effort,
-        participantUserId: automation.created_by,
-        platformUserId: userId,
-        scmTokenEncrypted: null,
-        scmRefreshTokenEncrypted: null,
-        codeServerEnabled,
-        vncEnabled,
-        sandboxSettings,
-        spawnSource: "automation",
-        spawnDepth: 0,
-        automationId: automation.id,
-        automationRunId: run.id,
-        managedSkillsManifest,
-      },
-      ctx
-    );
+    const sessionInput: SessionInitInput = {
+      sessionId,
+      ...target,
+      title: `[Auto] ${automation.name}`,
+      model: automation.model,
+      reasoningEffort: automation.reasoning_effort,
+      participantUserId: automation.created_by,
+      platformUserId: userId,
+      scmTokenEncrypted: null,
+      scmRefreshTokenEncrypted: null,
+      codeServerEnabled,
+      vncEnabled,
+      sandboxSettings,
+      spawnSource: "automation",
+      spawnDepth: 0,
+      automationId: automation.id,
+      automationRunId: run.id,
+      managedSkillsManifest,
+      providerAuth,
+    };
+
+    await initializeSession(this.env, sessionInput, ctx);
 
     return { sessionId };
   }

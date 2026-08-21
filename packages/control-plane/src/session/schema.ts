@@ -42,6 +42,13 @@ const SESSION_DIFF_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_diff (
   updated_at INTEGER NOT NULL
 );`;
 
+const SESSION_ALARM_STATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS session_alarm_state (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  pending_deadline INTEGER,
+  in_flight_deadline INTEGER,
+  cancelled INTEGER NOT NULL DEFAULT 0
+);`;
+
 export const SCHEMA_SQL = `
 -- Core session state
 CREATE TABLE IF NOT EXISTS session (
@@ -154,6 +161,8 @@ CREATE TABLE IF NOT EXISTS sandbox (
   modal_object_id TEXT,                             -- Legacy provider object ID (Modal object ID or Daytona handle)
   snapshot_id TEXT,
   snapshot_image_id TEXT,                           -- Modal Image ID for filesystem snapshot restoration
+  snapshot_runtime_version TEXT,                    -- SANDBOX_VERSION that produced snapshot_image_id (restore compatibility floor)
+  runtime_version TEXT,                             -- SANDBOX_VERSION reported by the running sandbox
   auth_token TEXT,                                  -- Token for sandbox to authenticate back to control plane
   auth_token_hash TEXT,                             -- SHA-256 hash of sandbox auth token (preferred)
   status TEXT DEFAULT 'pending',                    -- 'pending', 'spawning', 'connecting', 'warming', 'syncing', 'ready', 'running', 'stale', 'snapshotting', 'stopped', 'failed'
@@ -184,6 +193,9 @@ ${SESSION_REPOSITORIES_TABLE_SQL};
 
 -- Latest durable checkout diff bundle. Source patches live only in this bounded row.
 ${SESSION_DIFF_TABLE_SQL}
+
+-- Runtime alarm recovery source for hosts that can be adopted by another process.
+${SESSION_ALARM_STATE_TABLE_SQL}
 
 -- WebSocket client mapping for hibernation recovery
 CREATE TABLE IF NOT EXISTS ws_client_mapping (
@@ -589,6 +601,22 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
         WHERE id IN (${duplicateProcessingMessages})`);
       sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_processing
         ON messages(status) WHERE status = 'processing'`);
+    },
+  },
+  {
+    // IDs 43-45 have already shipped in the fork. Append upstream's alarm
+    // state migration so existing Durable Objects do not skip it.
+    id: 46,
+    description: "Persist session alarm scheduling state",
+    run: SESSION_ALARM_STATE_TABLE_SQL,
+  },
+  {
+    // Keep the upstream runtime-version migration append-only for the same reason.
+    id: 47,
+    description: "Record sandbox runtime version and stamp it on snapshots",
+    run: (sql) => {
+      runMigration(sql, `ALTER TABLE sandbox ADD COLUMN runtime_version TEXT`);
+      runMigration(sql, `ALTER TABLE sandbox ADD COLUMN snapshot_runtime_version TEXT`);
     },
   },
 ];

@@ -48,6 +48,8 @@ function createSandbox(overrides: Partial<SandboxRow> = {}): SandboxRow {
     modal_object_id: null,
     snapshot_id: null,
     snapshot_image_id: null,
+    snapshot_runtime_version: null,
+    runtime_version: null,
     auth_token: null,
     auth_token_hash: null,
     status: "running",
@@ -92,6 +94,7 @@ function createHandler() {
   const repository = {
     upsertSession: vi.fn(),
     replaceSessionRepositories: vi.fn(),
+    transaction: vi.fn((callback: () => void) => callback()),
     createParticipant: vi.fn(),
     getPendingOrProcessingCount: vi.fn(() => 0),
     getMessageCount: vi.fn(() => 0),
@@ -316,6 +319,7 @@ describe("createSessionLifecycleHandler", () => {
         baseBranch: "feature/work",
       },
     ]);
+    expect(repository.transaction).toHaveBeenCalledOnce();
     expect(scheduleWarmSandbox).toHaveBeenCalled();
     expect(log.info).toHaveBeenCalledWith("Triggering sandbox spawn for new session");
   });

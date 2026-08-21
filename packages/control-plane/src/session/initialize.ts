@@ -8,6 +8,7 @@ import { buildSessionInternalUrl, SessionInternalPaths } from "./contracts";
 import { createLogger } from "../logger";
 import { assertEnabledSandboxServicePorts } from "../sandbox/settings";
 import type { SessionSkillManifestInput } from "./skill-resolution";
+import type { SessionModelProviderAuthInput } from "../model-provider-accounts/provider-auth-contracts";
 
 const logger = createLogger("session-init");
 
@@ -72,6 +73,8 @@ export interface SessionInitInput {
   automationRunId?: string | null;
   managedSkillsManifest?: SessionSkillManifestInput;
   managedSkillsSourceSessionId?: string;
+  /** Complete, immutable provider routing snapshot resolved by the caller. */
+  providerAuth: SessionModelProviderAuthInput[];
 }
 
 /**
@@ -159,6 +162,7 @@ export async function initializeSession(
     updatedAt: now,
     skillManifest: input.managedSkillsManifest,
     skillManifestSourceSessionId: input.managedSkillsSourceSessionId,
+    providerAuth: input.providerAuth,
   });
 
   // Step 2: DO init
