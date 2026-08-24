@@ -453,10 +453,15 @@ class SandboxSupervisor:
         if self._repository_teardown_complete:
             return
         self._repository_teardown_complete = True
-        if self.boot_mode is BootMode.BUILD or self._repository_boot_result is None:
+        if self.boot_mode is BootMode.BUILD:
             return
 
-        for repo in reversed(self._repository_boot_result.repositories):
+        repositories = (
+            self._repository_boot_result.repositories
+            if self._repository_boot_result is not None
+            else tuple(self.repository_boot.hooks.start_attempted_repositories)
+        )
+        for repo in reversed(repositories):
             try:
                 await self.repository_boot.hooks.run_teardown(repo, self.boot_mode)
             except Exception as error:

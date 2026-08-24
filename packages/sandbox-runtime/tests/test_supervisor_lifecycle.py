@@ -20,6 +20,7 @@ def _supervisor(tmp_path, events):
         side_effect=lambda mode, _ports: events.append(f"repository:{mode.value}") or result
     )
     repository.hooks.run_teardown = AsyncMock()
+    repository.hooks.start_attempted_repositories = []
 
     opencode_server = MagicMock()
     opencode_server.exit_code.return_value = None
@@ -160,6 +161,16 @@ async def test_shutdown_runs_repository_teardown_in_reverse_order(tmp_path):
 
     await supervisor.shutdown()
     assert repository.hooks.run_teardown.await_count == 2
+
+
+async def test_shutdown_tears_down_a_repository_after_partial_start_failure(tmp_path):
+    supervisor, repository, *_ = _supervisor(tmp_path, [])
+    attempted = RepoEntry("acme", "partial", "main", tmp_path / "partial")
+    repository.hooks.start_attempted_repositories = [attempted]
+
+    await supervisor.shutdown()
+
+    repository.hooks.run_teardown.assert_awaited_once_with(attempted, BootMode.FRESH)
 
 
 async def test_graceful_bridge_exit_requests_shutdown(tmp_path):

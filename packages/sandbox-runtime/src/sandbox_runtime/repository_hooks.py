@@ -22,6 +22,7 @@ class RepositoryHooks:
 
     def __init__(self, log: Any) -> None:
         self.log = log
+        self.start_attempted_repositories: list[RepoEntry] = []
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
         await terminate_owned_subprocess(process, kill_process_group=os.killpg)
@@ -128,6 +129,7 @@ class RepositoryHooks:
         )
 
     async def run_start(self, repo: RepoEntry, boot_mode: BootMode) -> bool:
+        self.start_attempted_repositories.append(repo)
         return await self._run(
             repo,
             boot_mode,

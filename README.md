@@ -296,9 +296,11 @@ docker compose down
 - `setup.sh` failures are non-fatal for fresh sessions, but fatal in image build mode
 - `start.sh` runs for every non-build session startup (fresh, prebuilt-image, snapshot-restore)
 - `start.sh` failures are strict: if present and it fails, session startup fails
-- `teardown.sh` runs for every successfully booted non-build session after agent services stop;
-  multi-repository sessions run it in reverse repository order
+- `teardown.sh` runs when a non-build sandbox runtime shuts down, after agent services stop;
+  multi-repository sessions run it in reverse repository order, including repositories whose
+  `start.sh` was invoked before startup failed
 - `teardown.sh` failures are logged but do not block sandbox shutdown
+- Provider-managed pause/resume does not shut down the runtime and therefore does not run teardown
 - Default timeouts:
   - `SETUP_TIMEOUT_SECONDS` (default `300`)
   - `START_TIMEOUT_SECONDS` (default `120`)

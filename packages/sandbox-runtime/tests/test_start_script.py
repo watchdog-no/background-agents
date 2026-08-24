@@ -122,6 +122,18 @@ class TestStartScriptSuccess:
         env_arg = mock_exec.call_args[1]["env"]
         assert env_arg["OPENINSPECT_BOOT_MODE"] == "repo_image"
 
+    async def test_records_repository_before_running_start_hook(self, tmp_path):
+        sup = _make_repository_boot(tmp_path)
+        _create_start_script(sup.repo_path)
+        fake_proc = _fake_process(returncode=1, stdout=b"failed\n")
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=fake_proc
+        ):
+            await sup.hooks.run_start(sup.repositories[0], BootMode.FRESH)
+
+        assert sup.hooks.start_attempted_repositories == [sup.repositories[0]]
+
 
 class TestStartScriptFailure:
     """Cases where the start script fails."""
