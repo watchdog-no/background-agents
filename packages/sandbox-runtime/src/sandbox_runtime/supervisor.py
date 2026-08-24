@@ -66,6 +66,7 @@ class SandboxSupervisor:
         self.boot_mode = BootMode.FRESH
         self._desktop_restart_task: asyncio.Task[bool] | None = None
         self._repository_boot_result: RepositoryBootResult | None = None
+        self._repository_teardown_complete = False
 
     async def _report_fatal_error(self, message: str) -> None:
         self.log.error("supervisor.fatal", error_message=message)
@@ -448,6 +449,25 @@ class SandboxSupervisor:
         self.log.info("supervisor.signal", signal_name=sig.name)
         self.shutdown_event.set()
 
+    async def _teardown_repositories(self) -> None:
+        if self._repository_teardown_complete:
+            return
+        self._repository_teardown_complete = True
+        if self.boot_mode is BootMode.BUILD or self._repository_boot_result is None:
+            return
+
+        for repo in reversed(self._repository_boot_result.repositories):
+            try:
+                await self.repository_boot.hooks.run_teardown(repo, self.boot_mode)
+            except Exception as error:
+                self.log.error(
+                    "teardown.error",
+                    exc=error,
+                    repo_owner=repo.owner,
+                    repo_name=repo.name,
+                    boot_mode=self.boot_mode.value,
+                )
+
     async def shutdown(self) -> None:
         self.log.info("supervisor.shutdown_start")
         if self._desktop_restart_task and not self._desktop_restart_task.done():
@@ -459,4 +479,5 @@ class SandboxSupervisor:
         await self.code_server.stop()
         await self.browser_desktop.stop()
         await self.opencode_server.stop()
+        await self._teardown_repositories()
         self.log.info("supervisor.shutdown_complete")

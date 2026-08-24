@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from sandbox_runtime.repo_config import RepoEntry
 from sandbox_runtime.repository_boot import RepositoryBootResult
 from sandbox_runtime.runtime_config import BootMode, RuntimeConfig
 from sandbox_runtime.supervisor import SandboxSupervisor
@@ -18,6 +19,7 @@ def _supervisor(tmp_path, events):
     repository.boot = AsyncMock(
         side_effect=lambda mode, _ports: events.append(f"repository:{mode.value}") or result
     )
+    repository.hooks.run_teardown = AsyncMock()
 
     opencode_server = MagicMock()
     opencode_server.exit_code.return_value = None
@@ -120,6 +122,44 @@ async def test_build_boot_excludes_runtime_services(tmp_path, monkeypatch):
     supervisor.managed_skills.materialize.assert_not_awaited()
     opencode_server.start.assert_not_awaited()
     agent_bridge.start.assert_not_awaited()
+    repository.hooks.run_teardown.assert_not_awaited()
+
+
+async def test_shutdown_runs_repository_teardown_in_reverse_order(tmp_path):
+    supervisor, repository, opencode_server, agent_bridge, code_server, terminal, desktop = (
+        _supervisor(tmp_path, [])
+    )
+    first = RepoEntry("acme", "first", "main", tmp_path / "first")
+    second = RepoEntry("acme", "second", "main", tmp_path / "second")
+    supervisor._repository_boot_result = RepositoryBootResult(
+        True, [], True, True, (first, second), tmp_path
+    )
+    stop_order = []
+    agent_bridge.stop.side_effect = lambda: stop_order.append("bridge")
+    terminal.stop.side_effect = lambda: stop_order.append("terminal")
+    code_server.stop.side_effect = lambda: stop_order.append("code-server")
+    desktop.stop.side_effect = lambda: stop_order.append("desktop")
+    opencode_server.stop.side_effect = lambda: stop_order.append("opencode")
+    repository.hooks.run_teardown.side_effect = lambda repo, _mode: stop_order.append(repo.name)
+
+    await supervisor.shutdown()
+
+    assert stop_order == [
+        "bridge",
+        "terminal",
+        "code-server",
+        "desktop",
+        "opencode",
+        "second",
+        "first",
+    ]
+    assert [call.args for call in repository.hooks.run_teardown.await_args_list] == [
+        (second, BootMode.FRESH),
+        (first, BootMode.FRESH),
+    ]
+
+    await supervisor.shutdown()
+    assert repository.hooks.run_teardown.await_count == 2
 
 
 async def test_graceful_bridge_exit_requests_shutdown(tmp_path):

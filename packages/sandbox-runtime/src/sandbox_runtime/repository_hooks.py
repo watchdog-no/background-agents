@@ -15,8 +15,10 @@ if TYPE_CHECKING:
 class RepositoryHooks:
     SETUP_SCRIPT_PATH = ".openinspect/setup.sh"
     START_SCRIPT_PATH = ".openinspect/start.sh"
+    TEARDOWN_SCRIPT_PATH = ".openinspect/teardown.sh"
     DEFAULT_SETUP_TIMEOUT_SECONDS = 300
     DEFAULT_START_TIMEOUT_SECONDS = 120
+    DEFAULT_TEARDOWN_TIMEOUT_SECONDS = 60
 
     def __init__(self, log: Any) -> None:
         self.log = log
@@ -133,4 +135,14 @@ class RepositoryHooks:
             relative_script_path=self.START_SCRIPT_PATH,
             timeout_env_var="START_TIMEOUT_SECONDS",
             default_timeout_seconds=self.DEFAULT_START_TIMEOUT_SECONDS,
+        )
+
+    async def run_teardown(self, repo: RepoEntry, boot_mode: BootMode) -> bool:
+        return await self._run(
+            repo,
+            boot_mode,
+            hook_name="teardown",
+            relative_script_path=self.TEARDOWN_SCRIPT_PATH,
+            timeout_env_var="TEARDOWN_TIMEOUT_SECONDS",
+            default_timeout_seconds=self.DEFAULT_TEARDOWN_TIMEOUT_SECONDS,
         )
