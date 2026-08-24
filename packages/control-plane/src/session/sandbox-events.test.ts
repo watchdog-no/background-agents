@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createTestBackgroundTasks } from "../background-tasks.test-support";
 import { SessionSandboxEventProcessor } from "./sandbox-events";
 import type { GitPushSpec } from "../source-control";
 import type { SandboxEvent } from "@open-inspect/shared/types/sandbox-events";
@@ -86,10 +87,7 @@ function createProcessor() {
     error: vi.fn(),
     child: vi.fn(),
   };
-  const waitUntil = vi.fn((task: Promise<unknown>) =>
-    task.catch((error) => log.error("background_task.failed", { error }))
-  );
-  const backgroundTasks = { submit: waitUntil };
+  const backgroundTasks = createTestBackgroundTasks();
 
   const processor = new SessionSandboxEventProcessor(
     backgroundTasks,
@@ -130,7 +128,7 @@ function createProcessor() {
     broadcastPromptQueue,
     updateLastActivity,
     applySessionTitleUpdate,
-    waitUntil,
+    backgroundTasks,
     log,
   };
 }
@@ -165,11 +163,9 @@ describe("SessionSandboxEventProcessor", () => {
       timestamp: 2000,
     });
 
-    const settled = await Promise.allSettled(h.waitUntil.mock.results.map(({ value }) => value));
-    expect(settled.every(({ status }) => status === "fulfilled")).toBe(true);
-    expect(h.log.error).toHaveBeenCalledWith("background_task.failed", {
-      error: expect.any(Error),
-    });
+    await h.backgroundTasks.settle();
+    // The failed snapshot is absorbed by the boundary, not thrown at the caller.
+    expect(h.backgroundTasks.failures).toEqual([expect.any(Error)]);
   });
 
   it("updates heartbeat without broadcasting", async () => {
@@ -588,7 +584,7 @@ describe("SessionSandboxEventProcessor", () => {
     expect(h.triggerSnapshot).toHaveBeenCalledWith("execution_complete");
     expect(h.scheduleInactivityCheck).toHaveBeenCalledTimes(1);
     expect(h.processMessageQueue).toHaveBeenCalledTimes(1);
-    expect(h.waitUntil).toHaveBeenCalled();
+    expect(h.backgroundTasks.submissions).not.toHaveLength(0);
   });
 
   it("waits for terminal projection before snapshot, queue drain, and acknowledgement", async () => {
@@ -1013,7 +1009,7 @@ describe("SessionSandboxEventProcessor", () => {
       expect(h.wsManager.send).not.toHaveBeenCalled();
     });
 
-    it("sends ACK on already_stopped path for execution_complete", async () => {
+    it("ACKs duplicate completions while safely repeating lifecycle reconciliation", async () => {
       const h = createProcessor();
       const sandboxWs = {} as WebSocket;
       h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
@@ -1036,6 +1032,10 @@ describe("SessionSandboxEventProcessor", () => {
         ackId: "execution_complete:msg-1",
       });
       expect(h.repository.recordMessageCompletion).not.toHaveBeenCalled();
+      expect(h.triggerSnapshot).toHaveBeenCalledWith("execution_complete");
+      expect(h.updateLastActivity).toHaveBeenCalledOnce();
+      expect(h.scheduleInactivityCheck).toHaveBeenCalledOnce();
+      expect(h.processMessageQueue).toHaveBeenCalledOnce();
     });
 
     it("does not send ACK for non-critical events even with ackId", async () => {

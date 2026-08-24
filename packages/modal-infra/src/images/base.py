@@ -59,8 +59,9 @@ LINEAR_CLI_VERSION = "2.0.0"
 # from a user secret when set in Settings → Secrets.
 CTX7_VERSION = "0.4.4"
 
-# The cache buster follows the shared runtime manifest so every image provider
-# publishes the same generation label.
+# CACHE_BUSTER follows the shared runtime manifest so every image provider
+# publishes the same generation label. The current generation includes the
+# account/init helpers and /usr/sbin path required by sandbox services.
 
 # Base image with all development tools
 base_image = (
@@ -75,6 +76,13 @@ base_image = (
         "openssh-client",
         "jq",
         "unzip",  # Required for Bun installation
+        # Account and init helpers. debian_slim ships without them, so nothing in
+        # a sandbox can create a system user, and services that refuse to run as
+        # root (Elasticsearch, Postgres, nginx) have no account to drop to.
+        "passwd",
+        "adduser",
+        "sysvinit-utils",
+        "procps",
         "ffmpeg",
         "xvfb",
         "fluxbox",
@@ -241,7 +249,11 @@ base_image = (
             "HOME": "/root",
             "NODE_ENV": "development",
             "PNPM_HOME": "/root/.local/share/pnpm",
-            "PATH": "/root/.bun/bin:/root/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin",
+            # /usr/sbin and /sbin carry useradd, service, and daemons like nginx.
+            # Sandbox commands run in non-interactive, non-login shells that never
+            # source /etc/profile, so without them on PATH those commands fail with
+            # "command not found" rather than anything that names the real problem.
+            "PATH": "/root/.bun/bin:/root/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "PYTHONPATH": "/app",
             "SANDBOX_VERSION": CACHE_BUSTER,
             # NODE_PATH for globally installed modules (used by custom tools)

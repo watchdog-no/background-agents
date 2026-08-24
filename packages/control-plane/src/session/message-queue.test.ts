@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createTestBackgroundTasks } from "../background-tasks.test-support";
 import { fingerprintWebPrompt, SessionMessageQueue } from "./message-queue";
 import { AttachmentClaimConflictError } from "./session-attachment-repository";
 import type { SessionAttachmentRepository } from "./session-attachment-repository";
@@ -196,13 +197,11 @@ function buildQueue(options?: { session?: SessionRow }) {
     terminateUnresponsiveSandbox: vi.fn(async () => {}),
     reportSandboxError: vi.fn((_reason: string) => {}),
   };
-  const waitUntil = vi.fn((task: Promise<unknown>) =>
-    task.catch((error) => log.error("background_task.failed", { error }))
-  );
-  const backgroundTasks = { submit: waitUntil };
+  const backgroundTasks = createTestBackgroundTasks();
   const getAlarm = vi.fn(async () => null as number | null);
   const setAlarm = vi.fn(async (_timestamp: number) => {});
   const projectTerminalMessage = vi.fn(async () => {});
+  const getProviderAuthenticationError = vi.fn(async (_model: string) => null as string | null);
 
   const queue = new SessionMessageQueue(
     backgroundTasks,
@@ -216,6 +215,7 @@ function buildQueue(options?: { session?: SessionRow }) {
     participantService as unknown as ParticipantService,
     callbackService as unknown as CallbackNotificationService,
     sessionStatus as unknown as SessionStatusService,
+    getProviderAuthenticationError,
     projectTerminalMessage,
     sandboxLifecycle,
     null,
@@ -245,10 +245,11 @@ function buildQueue(options?: { session?: SessionRow }) {
     broadcast,
     sessionStatus,
     sandboxLifecycle,
-    waitUntil,
+    backgroundTasks,
     getAlarm,
     setAlarm,
     callbackService,
+    getProviderAuthenticationError,
     projectTerminalMessage,
     log,
   };
@@ -344,12 +345,12 @@ describe("SessionMessageQueue", () => {
     );
 
     // Resolves immediately even though the spawn is still in flight; the
-    // spawn is handed to waitUntil so the prompt response is not held open.
+    // spawn is handed to backgroundTasks so the prompt response is not held open.
     await h.queue.processMessageQueue();
 
-    expect(h.waitUntil).toHaveBeenCalledTimes(1);
+    expect(h.backgroundTasks.submissions).toHaveLength(1);
     resolveSpawn();
-    await h.waitUntil.mock.results[0]!.value;
+    await h.backgroundTasks.settle();
   });
 
   it("reports sandbox_error when the background spawn throws", async () => {
@@ -358,7 +359,7 @@ describe("SessionMessageQueue", () => {
     h.sandboxLifecycle.spawnSandbox.mockRejectedValue(new Error("modal exploded"));
 
     await h.queue.processMessageQueue();
-    await h.waitUntil.mock.results[0]!.value;
+    await h.backgroundTasks.settle();
 
     // Routed through the lifecycle manager rather than broadcast directly, so
     // the reason is persisted too and survives the reload someone does to read it.
@@ -366,9 +367,8 @@ describe("SessionMessageQueue", () => {
     expect(h.broadcast).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "sandbox_error" })
     );
-    expect(h.log.error).toHaveBeenCalledWith("background_task.failed", {
-      error: expect.any(Error),
-    });
+    // The spawn failure is absorbed by the boundary, not thrown at the caller.
+    expect(h.backgroundTasks.failures).toEqual([expect.any(Error)]);
   });
 
   it("marks session active when a prompt is enqueued", async () => {
@@ -669,6 +669,55 @@ describe("SessionMessageQueue", () => {
     expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_event", event });
   });
 
+  it("fails an unavailable prompt model before spawning or dispatching", async () => {
+    const h = buildQueue();
+    h.repository.getNextPendingMessage.mockReturnValueOnce(
+      createMessage({ model: "xai/grok-4.5" })
+    );
+    h.getProviderAuthenticationError.mockResolvedValue(
+      "No xAI authentication is configured for this session"
+    );
+
+    await h.queue.processMessageQueue();
+
+    expect(h.getProviderAuthenticationError).toHaveBeenCalledWith("xai/grok-4.5");
+    expect(h.repository.recordMessageCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "msg-1",
+        success: false,
+        error: "No xAI authentication is configured for this session",
+      }),
+      expect.any(Number),
+      "pending"
+    );
+    expect(h.sandboxLifecycle.spawnSandbox).not.toHaveBeenCalled();
+    expect(h.wsManager.send).not.toHaveBeenCalled();
+  });
+
+  it("continues with the next prompt after rejecting unavailable authentication", async () => {
+    const h = buildQueue();
+    const sandboxWs = { readyState: 1 } as WebSocket;
+    h.repository.getNextPendingMessage
+      .mockReturnValueOnce(createMessage({ id: "blocked", model: "xai/grok-4.5" }))
+      .mockReturnValueOnce(createMessage({ id: "eligible", model: "anthropic/claude-haiku-4-5" }));
+    h.getProviderAuthenticationError.mockImplementation(async (model) =>
+      model === "xai/grok-4.5" ? "No xAI authentication is configured" : null
+    );
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+
+    await h.queue.processMessageQueue();
+
+    expect(h.repository.recordMessageCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "blocked", success: false }),
+      expect.any(Number),
+      "pending"
+    );
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      sandboxWs,
+      expect.objectContaining({ type: "prompt", messageId: "eligible" })
+    );
+  });
+
   it("uses the canonical profile userId instead of a bot transport identity", async () => {
     const h = buildQueue();
     const participant = createParticipant({
@@ -722,7 +771,7 @@ describe("SessionMessageQueue", () => {
 
   it("leaves the prompt pending and timeline untouched when sandbox send fails", async () => {
     const h = buildQueue();
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-unsent" }));
+    h.repository.getNextPendingMessage.mockReturnValueOnce(createMessage({ id: "msg-unsent" }));
     h.wsManager.getSandboxSocket.mockReturnValue({ readyState: 1 } as WebSocket);
     h.wsManager.send.mockReturnValue(false);
 
@@ -743,6 +792,7 @@ describe("SessionMessageQueue", () => {
     expect(h.sandboxLifecycle.terminateUnresponsiveSandbox).toHaveBeenCalledWith(
       "prompt_dispatch_send_failed"
     );
+    expect(h.repository.getNextPendingMessage).toHaveBeenCalledTimes(2);
   });
 
   it("does not dispatch when another worker wins the processing claim", async () => {
@@ -901,19 +951,19 @@ describe("SessionMessageQueue", () => {
     await h.queue.processMessageQueue();
 
     expect(h.callbackService.notifyStarted).toHaveBeenCalledWith("msg-linear");
-    expect(h.waitUntil).toHaveBeenCalledOnce();
+    expect(h.backgroundTasks.submissions).toHaveLength(1);
   });
 
   it("does not notify the integration when sandbox dispatch fails", async () => {
     const h = buildQueue();
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-failed" }));
+    h.repository.getNextPendingMessage.mockReturnValueOnce(createMessage({ id: "msg-failed" }));
     h.wsManager.getSandboxSocket.mockReturnValue({ readyState: 1 } as WebSocket);
     h.wsManager.send.mockReturnValue(false);
 
     await h.queue.processMessageQueue();
 
     expect(h.callbackService.notifyStarted).not.toHaveBeenCalled();
-    expect(h.waitUntil).not.toHaveBeenCalled();
+    expect(h.backgroundTasks.submissions).toHaveLength(0);
   });
 
   describe("execution timeout scheduling", () => {
@@ -1023,7 +1073,7 @@ describe("SessionMessageQueue", () => {
     });
 
     resolveProjection();
-    await h.waitUntil.mock.calls[0][0];
+    await h.backgroundTasks.settle();
     expect(h.broadcast).toHaveBeenCalledWith({
       type: "sandbox_event",
       event: expect.objectContaining({ type: "execution_complete" }),
@@ -1067,6 +1117,7 @@ describe("SessionMessageQueue", () => {
     expect(h.sandboxLifecycle.terminateUnresponsiveSandbox).toHaveBeenCalledWith(
       "stop_send_failed"
     );
+    expect(h.repository.getNextPendingMessage).toHaveBeenCalled();
     expect(h.repository.clearMessageAwaitingStopConfirmation).not.toHaveBeenCalled();
   });
 
@@ -1084,14 +1135,17 @@ describe("SessionMessageQueue", () => {
     expect(h.sandboxLifecycle.terminateUnresponsiveSandbox).toHaveBeenCalledWith(
       "stop_send_failed"
     );
+    expect(h.repository.getNextPendingMessage).toHaveBeenCalled();
   });
 
   it("terminates the sandbox after the bounded stop confirmation deadline", async () => {
     const h = buildQueue();
-    h.repository.getMessageAwaitingStopConfirmation.mockReturnValue({
-      id: "msg-stopped",
-      deadline: Date.now() - 1,
-    });
+    h.repository.getMessageAwaitingStopConfirmation
+      .mockReturnValueOnce({
+        id: "msg-stopped",
+        deadline: Date.now() - 1,
+      })
+      .mockReturnValue(null);
 
     await h.queue.recoverStopConfirmationTimeout();
 
@@ -1099,6 +1153,7 @@ describe("SessionMessageQueue", () => {
       "stop_confirmation_timeout"
     );
     expect(h.repository.clearMessageAwaitingStopConfirmation).not.toHaveBeenCalled();
+    expect(h.repository.getNextPendingMessage).toHaveBeenCalled();
   });
 
   it("clears the marker and resumes only after definitive sandbox termination", async () => {

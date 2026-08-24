@@ -16,6 +16,8 @@ import { SUBSCRIPTION_PROVIDER_IDS, type SubscriptionProviderId } from "./types/
  */
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 
+const GPT_5_6_DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+
 export interface ModelReasoningConfig {
   efforts: ReasoningEffort[];
   default: ReasoningEffort | undefined;
@@ -170,7 +172,7 @@ export const MODEL_CATALOG = [
         description: "Balanced, cost-efficient everyday work",
         reasoning: {
           efforts: ["none", "low", "medium", "high", "xhigh"],
-          default: undefined,
+          default: GPT_5_6_DEFAULT_REASONING_EFFORT,
         },
       },
       {
@@ -179,7 +181,7 @@ export const MODEL_CATALOG = [
         description: "Fast, cost-efficient high-volume workloads",
         reasoning: {
           efforts: ["none", "low", "medium", "high", "xhigh", "max"],
-          default: undefined,
+          default: GPT_5_6_DEFAULT_REASONING_EFFORT,
         },
       },
       {
@@ -207,6 +209,7 @@ export const MODEL_CATALOG = [
       { id: "opencode/qwen3.7-max", name: "Qwen3.7 Max", description: "Alibaba Cloud" },
       { id: "opencode/glm-5", name: "GLM 5", description: "Z.ai 744B MoE" },
       { id: "opencode/glm-5.1", name: "GLM 5.1", description: "Z.ai" },
+      { id: "opencode/glm-5.2", name: "GLM 5.2", description: "Z.ai" },
     ],
   },
   {

@@ -977,6 +977,8 @@ Go to your fork's Settings → Secrets and variables → Actions, and add:
 | `ANTHROPIC_API_KEY`                | Optional Anthropic API key for metered Claude fallback                                      |
 | `ANTHROPIC_OAUTH_CLIENT_ID`        | Optional Claude subscription OAuth public client ID override                                |
 | `ANTHROPIC_OAUTH_TOKEN_URL`        | Optional Claude subscription OAuth token endpoint override                                  |
+| `OPENAI_API_KEY`                   | Optional OpenAI API key used when a session selects API-key authentication                  |
+| `XAI_API_KEY`                      | Optional xAI API key used when a session selects API-key authentication                     |
 | `DEEPSEEK_API_KEY`                 | DeepSeek API key (optional, required only for DeepSeek models)                              |
 | `TOKEN_ENCRYPTION_KEY`             | Generated encryption key (OAuth tokens)                                                     |
 | `REPO_SECRETS_ENCRYPTION_KEY`      | Generated encryption key (repo secrets)                                                     |

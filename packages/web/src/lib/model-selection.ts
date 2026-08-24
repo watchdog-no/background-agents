@@ -1,11 +1,12 @@
 import {
   DEFAULT_MODEL,
-  getDefaultReasoningEffort,
+  getReasoningConfig,
   getValidModelOrDefault,
   isValidModel,
-  isValidReasoningEffort,
   normalizeModelId,
   resolveEnabledModel,
+  type ReasoningEffort,
+  type ValidModel,
 } from "@open-inspect/shared/models";
 
 export interface ModelPreference {
@@ -13,10 +14,15 @@ export interface ModelPreference {
   reasoningEffort?: string;
 }
 
+export interface ResolvedModelPreference {
+  model: ValidModel;
+  reasoningEffort?: ReasoningEffort;
+}
+
 export function resolveModelPreference(
   preference: ModelPreference,
   enabledModels: string[] | undefined
-): ModelPreference {
+): ResolvedModelPreference {
   const requestedModel = isValidModel(preference.model)
     ? normalizeModelId(preference.model)
     : undefined;
@@ -27,13 +33,15 @@ export function resolveModelPreference(
         fallbackModel: DEFAULT_MODEL,
       })
     : getValidModelOrDefault(preference.model);
+  const reasoningConfig = getReasoningConfig(model);
   return {
     model,
     reasoningEffort:
-      requestedModel === model &&
-      preference.reasoningEffort &&
-      isValidReasoningEffort(model, preference.reasoningEffort)
-        ? preference.reasoningEffort
-        : getDefaultReasoningEffort(model),
+      preference.reasoningEffort === undefined
+        ? undefined
+        : requestedModel === model
+          ? (reasoningConfig?.efforts.find((effort) => effort === preference.reasoningEffort) ??
+            reasoningConfig?.default)
+          : reasoningConfig?.default,
   };
 }
