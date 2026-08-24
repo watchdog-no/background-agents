@@ -5,8 +5,9 @@ import type { EnabledScopeUnit } from "./scope";
 import { MIN_REBUILD_RUNTIME_GENERATION } from "../sandbox/runtime-manifest";
 
 // Runtime generations are one sequence shared by every image-build provider.
-// Follow the manifest's rebuild generation so every provider converges on the
-// runtime required by the current control-plane broker contract.
+// The minimum compatible generation carries the generic provider-account token
+// broker plugin and follows the manifest's rebuild generation so every provider
+// converges on the runtime required by the current control-plane contract.
 export const MIN_REBUILD_RUNTIME_VERSION = MIN_REBUILD_RUNTIME_GENERATION;
 export type ImageBuildRebuildDecision =
   | { type: "skip"; reason: "building" }

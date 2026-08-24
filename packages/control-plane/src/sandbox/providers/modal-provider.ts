@@ -131,7 +131,6 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
       return {
         sandboxId: result.sandboxId,
         providerObjectId: result.modalObjectId,
-        status: result.status,
         createdAt: result.createdAt,
         codeServerUrl: result.codeServerUrl,
         codeServerPassword: result.codeServerPassword,

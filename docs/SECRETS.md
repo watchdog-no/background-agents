@@ -211,9 +211,10 @@ from it, even after you rotate the secret. Two guidelines:
 | `ANTHROPIC_API_KEY`             | Global | Optional Claude API key for metered SDK access                  |
 | `DEEPSEEK_API_KEY`              | Global | DeepSeek API access                                             |
 | `ZHIPU_API_KEY`                 | Global | Z.AI Coding Plan GLM access                                     |
-| `OPENAI_API_KEY`                | Global | Optional OpenAI API key for metered SDK access                  |
+| `OPENAI_API_KEY`                | Global | OpenAI API access when a session selects API-key mode           |
 | `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
 | `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
+| `XAI_API_KEY`                   | Global | xAI API access when a session selects API-key mode              |
 | `XAI_OAUTH_REFRESH_TOKEN`       | Any    | SuperGrok access ([setup guide](GROK_MODELS.md))                |
 | `DATABASE_URL`                  | Repo   | Database connection string                                      |
 | `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                          |
@@ -229,9 +230,10 @@ If you see "Model not found" errors, verify the selected provider authentication
 provider-account mode, verify the account and model entitlement. For the default Claude subscription
 path on any sandbox provider, confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or
 repository secret; add `ANTHROPIC_API_KEY` only for intentional metered API access. For API-key
-mode, add the required key to the session's secret scope. DeepSeek uses `DEEPSEEK_API_KEY`; Z.AI
-Coding Plan uses `ZHIPU_API_KEY`. For SuperGrok, follow the
-[provider-account setup guide](GROK_MODELS.md).
+mode, add the required key to the session's secret scope. OpenAI uses `OPENAI_API_KEY`; xAI uses
+`XAI_API_KEY`; DeepSeek uses `DEEPSEEK_API_KEY`; Z.AI Coding Plan uses `ZHIPU_API_KEY`. For other
+subscription authentication, follow the provider-account setup guidance in
+[OpenAI models](OPENAI_MODELS.md) or [Grok models](GROK_MODELS.md).
 
 ### Secret not appearing in sandbox
 

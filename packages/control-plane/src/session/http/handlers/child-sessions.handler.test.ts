@@ -83,7 +83,7 @@ function createSandbox(overrides: Partial<SandboxRow> = {}): SandboxRow {
     runtime_version: null,
     auth_token: null,
     auth_token_hash: null,
-    status: "running",
+    status: "ready",
     git_sync_status: "pending",
     last_heartbeat: null,
     last_activity: null,
@@ -587,7 +587,7 @@ describe("createChildSessionsHandler", () => {
         createdAt: 1000,
         updatedAt: 2000,
       },
-      sandbox: { status: "running" },
+      sandbox: { status: "ready" },
       hasUnfinishedPrompt: false,
       artifacts: [
         {
