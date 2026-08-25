@@ -3,7 +3,7 @@ Base image definition for Open-Inspect sandboxes.
 
 This image provides a complete development environment with:
 - Debian slim base with git, curl, build-essential
-- Node.js 22 LTS, pnpm, Bun runtime
+- Node.js 24 LTS, pnpm, Bun runtime
 - Python 3.12 with uv
 - OpenCode CLI pre-installed
 - agent-browser CLI with headless Chrome for browser automation
@@ -33,13 +33,16 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 # releases order the turn loop by comparing those IDs as strings, which makes
 # any session carrying pre-wraparound history exit the loop without calling the
 # model. 1.18.15 orders by message creation time instead.
-OPENCODE_VERSION = "1.18.18"
+OPENCODE_VERSION = "1.18.23"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"
 
 # agent-browser version to install (pinned for reproducible images)
-AGENT_BROWSER_VERSION = "0.21.2"
+AGENT_BROWSER_VERSION = "0.35.0"
+
+# Bun version to install (pinned for reproducible images)
+BUN_VERSION = "1.4.0"
 
 # ttyd version to install (pinned for reproducible images)
 TTYD_VERSION = "1.7.7"
@@ -100,10 +103,10 @@ base_image = (
         " > /etc/apt/sources.list.d/github-cli.list",
         "apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*",
     )
-    # Install Node.js 22 LTS
+    # Install Node.js 24 LTS
     .run_commands(
-        # Add NodeSource repository for Node.js 22
-        "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
+        # Add NodeSource repository for Node.js 24
+        "curl -fsSL https://deb.nodesource.com/setup_24.x | bash -",
         "apt-get install -y nodejs",
         # Verify installation
         "node --version",
@@ -115,7 +118,7 @@ base_image = (
         "npm install -g pnpm@latest",
         "pnpm --version",
         # Install Bun
-        "curl -fsSL https://bun.sh/install | bash",
+        f'curl -fsSL https://bun.sh/install | bash -s "bun-v{BUN_VERSION}"',
         # Add Bun to PATH for subsequent commands
         'echo "export BUN_INSTALL="$HOME/.bun"" >> /etc/profile.d/bun.sh',
         'echo "export PATH="$BUN_INSTALL/bin:$PATH"" >> /etc/profile.d/bun.sh',

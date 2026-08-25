@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v72-remove-retired-agent-packages",
-  "generation": 72,
+  "runtimeVersion": "v73-node24-agent-toolchain",
+  "generation": 73,
   "minimumCompatibleGeneration": 70,
-  "minimumRebuildGeneration": 72
+  "minimumRebuildGeneration": 73
 }
