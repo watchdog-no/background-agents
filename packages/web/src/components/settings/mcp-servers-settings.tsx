@@ -401,12 +401,14 @@ function RemoteToolVisibility({
   errorMessage: string | null;
   search: string;
   onSearchChange: (value: string) => void;
-  onChange: (tools: string[]) => void;
+  onChange: (tools: string[] | null) => void;
   onRefresh: () => void;
 }) {
-  const selectedNames = new Set(selected ?? []);
   const catalogNames = new Set(catalog?.map((tool) => tool.name) ?? []);
-  const unavailable = [...selectedNames].filter((name) => !catalogNames.has(name)).sort();
+  const selectedNames = new Set(selected ?? catalogNames);
+  const unavailable =
+    selected === null ? [] : [...selectedNames].filter((name) => !catalogNames.has(name)).sort();
+  const selectedAvailableCount = [...selectedNames].filter((name) => catalogNames.has(name)).length;
   const normalizedSearch = search.trim().toLowerCase();
   const visible = (catalog ?? []).filter(
     (tool) =>
@@ -419,7 +421,13 @@ function RemoteToolVisibility({
     const next = new Set(selectedNames);
     if (checked) next.add(name);
     else next.delete(name);
-    onChange([...next].sort());
+    onChange(
+      catalogNames.size > 0 &&
+        next.size === catalogNames.size &&
+        [...catalogNames].every((tool) => next.has(tool))
+        ? null
+        : [...next].sort()
+    );
   }
 
   return (
@@ -441,9 +449,15 @@ function RemoteToolVisibility({
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {selectedNames.size} selected / {catalog.length} available
+              {selected === null
+                ? `All tools (${catalog.length} available)`
+                : `${selectedAvailableCount} selected / ${catalog.length} available`}
             </span>
-            <span>Newly advertised tools stay unchecked</span>
+            <span>
+              {selected === null
+                ? "Newly advertised tools are included"
+                : "Newly advertised tools stay unchecked"}
+            </span>
           </div>
 
           <div className="relative">
@@ -461,9 +475,16 @@ function RemoteToolVisibility({
               type="button"
               variant="subtle"
               size="xs"
-              onClick={() =>
-                onChange([...new Set([...selectedNames, ...visible.map((t) => t.name)])].sort())
-              }
+              onClick={() => {
+                const next = new Set([...selectedNames, ...visible.map((tool) => tool.name)]);
+                onChange(
+                  catalogNames.size > 0 &&
+                    next.size === catalogNames.size &&
+                    [...catalogNames].every((tool) => next.has(tool))
+                    ? null
+                    : [...next].sort()
+                );
+              }}
             >
               Select filtered
             </Button>
@@ -761,11 +782,6 @@ export function McpServersSettings() {
       const tools = await discoverMcpTools(id);
       if (activeDraftId.current !== draftId) return;
       setToolCatalog(tools);
-      setForm((current) =>
-        current.type === "remote" && current.toolAllowlist === null
-          ? { ...current, toolAllowlist: tools.map((tool) => tool.name) }
-          : current
-      );
     } catch (err) {
       if (activeDraftId.current !== draftId) return;
       setToolError(err instanceof Error ? err.message : "Failed to load MCP tools");

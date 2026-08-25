@@ -155,7 +155,7 @@ describe("McpServersSettings", () => {
     });
   });
 
-  it("loads remote tools, filters them, and preserves explicit selections", async () => {
+  it("returns to dynamic all-tools mode when every current tool is reselected", async () => {
     mocks.updateMcpServer.mockResolvedValue({ ...servers[1], revision: 8 });
     const user = userEvent.setup();
     render(<McpServersSettings />);
@@ -176,30 +176,57 @@ describe("McpServersSettings", () => {
     await waitFor(() => expect(mocks.updateMcpServer).toHaveBeenCalled());
     expect(mocks.updateMcpServer).toHaveBeenCalledWith(
       "server-b",
-      expect.objectContaining({ toolAllowlist: ["errors", "query"], revision: 7 })
+      expect.objectContaining({ toolAllowlist: null, revision: 7 })
     );
   });
 
-  it("selects every tool on first discovery and leaves future tools unchecked", async () => {
+  it("keeps all tools dynamic until the first deselection", async () => {
     const user = userEvent.setup();
     render(<McpServersSettings />);
 
     await user.click(screen.getByRole("button", { name: /Server A/ }));
-    expect(await screen.findByText("2 selected / 2 available")).toBeInTheDocument();
+    expect(await screen.findByText("All tools (2 available)")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /errors/i })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /query/i })).toBeChecked();
 
-    await user.click(screen.getByRole("checkbox", { name: /errors/i }));
     mocks.discoverMcpTools.mockResolvedValue([
       { name: "errors", description: "List error groups" },
       { name: "query", description: "Query telemetry" },
       { name: "new_tool", description: "A newly advertised tool" },
     ]);
     await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("All tools (3 available)")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /new_tool/i })).toBeChecked();
 
-    expect(await screen.findByText("1 selected / 3 available")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /errors/i }));
+    mocks.discoverMcpTools.mockResolvedValue([
+      { name: "errors", description: "List error groups" },
+      { name: "query", description: "Query telemetry" },
+      { name: "new_tool", description: "A newly advertised tool" },
+      { name: "later_tool", description: "Advertised after restricting" },
+    ]);
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByText("2 selected / 4 available")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /query/i })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /new_tool/i })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /new_tool/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /later_tool/i })).not.toBeChecked();
+  });
+
+  it("persists untouched all-tools selection as null", async () => {
+    mocks.updateMcpServer.mockResolvedValue({ ...servers[0], revision: 4 });
+    const user = userEvent.setup();
+    render(<McpServersSettings />);
+
+    await user.click(screen.getByRole("button", { name: /Server A/ }));
+    expect(await screen.findByText("All tools (2 available)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(mocks.updateMcpServer).toHaveBeenCalled());
+    expect(mocks.updateMcpServer).toHaveBeenCalledWith(
+      "server-a",
+      expect.objectContaining({ toolAllowlist: null })
+    );
   });
 
   it("preserves remote selections across type toggles", async () => {
