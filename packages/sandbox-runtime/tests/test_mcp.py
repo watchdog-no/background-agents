@@ -201,6 +201,84 @@ class TestBuildMcpConfig:
         assert "headers" not in config["bare-remote"]
 
 
+class TestBuildMcpToolPermissions:
+    def test_omits_unrestricted_servers(self):
+        sup = _make_supervisor()
+        servers = [{"name": "betterstack", "toolAllowlist": None}]
+        assert sup._build_mcp_tool_permissions(servers) == {}
+
+    def test_denies_server_then_allows_selected_tools(self):
+        sup = _make_supervisor()
+        servers = [
+            {
+                "name": "betterstack",
+                "toolAllowlist": ["query", "errors"],
+            }
+        ]
+        assert list(sup._build_mcp_tool_permissions(servers).items()) == [
+            ("betterstack_*", "deny"),
+            ("betterstack_query", "allow"),
+            ("betterstack_errors", "allow"),
+        ]
+
+    def test_empty_allowlist_disables_every_tool(self):
+        sup = _make_supervisor()
+        servers = [{"name": "linear", "toolAllowlist": []}]
+        assert sup._build_mcp_tool_permissions(servers) == {"linear_*": "deny"}
+
+    def test_matches_opencode_name_sanitization(self):
+        sup = _make_supervisor()
+        servers = [{"name": "my.server", "toolAllowlist": ["find/issues"]}]
+        assert sup._build_mcp_tool_permissions(servers) == {
+            "my_server_*": "deny",
+            "my_server_find_issues": "allow",
+        }
+
+    async def test_start_appends_mcp_rules_after_global_allow(self, tmp_path):
+        sup = _make_supervisor(
+            {
+                "mcp_servers": [
+                    {
+                        "name": "betterstack",
+                        "type": "remote",
+                        "url": "https://mcp.example.com",
+                        "toolAllowlist": ["query"],
+                    }
+                ]
+            }
+        )
+        fake_proc = MagicMock(stdout=None)
+        create_proc = AsyncMock(return_value=fake_proc)
+
+        with (
+            patch.dict(
+                os.environ,
+                {"OPENAI_OAUTH_MANAGED": "", "ANTHROPIC_OAUTH_ENABLED": ""},
+                clear=False,
+            ),
+            patch("sandbox_runtime.opencode_server.asyncio.create_subprocess_exec", create_proc),
+            patch(
+                "sandbox_runtime.opencode_server.asyncio.create_task",
+                side_effect=lambda coro: coro.close(),
+            ),
+        ):
+            sup._setup_managed_oauth = MagicMock()
+            sup._install_mcp_packages = AsyncMock()
+            sup._prepare_opencode_filesystem = MagicMock(return_value=set())
+            sup._wait_for_health = AsyncMock()
+
+            await sup.start((), tmp_path)
+
+        env = create_proc.call_args.kwargs["env"]
+        config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+        assert list(config["permission"].items()) == [
+            ("*", "allow"),
+            ("doom_loop", "deny"),
+            ("betterstack_*", "deny"),
+            ("betterstack_query", "allow"),
+        ]
+
+
 # ─── _NPM_PKG_RE validation ─────────────────────────────────────────────────
 
 

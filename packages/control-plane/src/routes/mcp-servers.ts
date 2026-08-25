@@ -9,6 +9,7 @@ import {
 } from "../db/mcp-servers";
 import type { Env } from "../types";
 import { createLogger } from "../logger";
+import { discoverRemoteMcpTools } from "../mcp/tool-discovery";
 import {
   type Route,
   GITHUB_USER_OR_SERVICE_ROUTE,
@@ -160,6 +161,45 @@ async function handleDeleteMcpServer(
   return json({ ok: true });
 }
 
+async function handleDiscoverMcpTools(
+  _request: Request,
+  env: Env,
+  match: RegExpMatchArray,
+  ctx: RequestContext
+): Promise<Response> {
+  const id = match.groups?.id;
+  if (!id) return error("Missing server ID", 400);
+  if (!ctx.db) return error("Database not configured", 503);
+
+  const store = new McpServerStore(ctx.db, env.REPO_SECRETS_ENCRYPTION_KEY);
+  const server = await store.getDecrypted(id);
+  if (!server) return error("MCP server not found", 404);
+  if (server.type !== "remote") {
+    return error("Tool discovery is currently supported for remote MCP servers only", 400);
+  }
+
+  try {
+    const tools = await discoverRemoteMcpTools(server);
+    logger.info("MCP tools discovered", {
+      event: "mcp_server.tools_discovered",
+      request_id: ctx.request_id,
+      trace_id: ctx.trace_id,
+      id,
+      count: tools.length,
+    });
+    return json({ tools });
+  } catch (err) {
+    logger.warn("MCP tool discovery failed", {
+      event: "mcp_server.tool_discovery_failed",
+      request_id: ctx.request_id,
+      trace_id: ctx.trace_id,
+      id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return error("Failed to load tools from MCP server", 502);
+  }
+}
+
 export const mcpServerRoutes: Route[] = defineRoutes(GITHUB_USER_OR_SERVICE_ROUTE, [
   {
     method: "GET",
@@ -185,5 +225,10 @@ export const mcpServerRoutes: Route[] = defineRoutes(GITHUB_USER_OR_SERVICE_ROUT
     method: "DELETE",
     pattern: parsePattern("/mcp-servers/:id"),
     handler: handleDeleteMcpServer,
+  },
+  {
+    method: "POST",
+    pattern: parsePattern("/mcp-servers/:id/tools"),
+    handler: handleDiscoverMcpTools,
   },
 ]);

@@ -33,6 +33,7 @@ interface McpServerRow {
   url: string | null;
   env: string;
   repo_scope: string | null;
+  tool_allowlist: string | null;
   enabled: number;
   created_at: number;
   updated_at: number;
@@ -45,6 +46,18 @@ function parseRepoScopes(raw: string | null): string[] | null {
     return Array.isArray(parsed) ? parsed : [raw];
   } catch {
     return [raw];
+  }
+}
+
+function parseToolAllowlist(raw: string | null): string[] | null {
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((tool) => typeof tool === "string")
+      ? parsed
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -76,6 +89,7 @@ function rowToConfig(row: McpServerRow, payload: Record<string, string>): McpSer
     url: row.type === "remote" ? (row.url ?? undefined) : undefined,
     ...envOrHeaders,
     repoScopes: parseRepoScopes(row.repo_scope),
+    toolAllowlist: parseToolAllowlist(row.tool_allowlist),
     enabled: row.enabled === 1,
   };
 }
@@ -92,6 +106,7 @@ function rowToMetadata(row: McpServerRow): McpServerMetadata {
     hasEnv: row.type === "local" && hasCredentials,
     hasHeaders: row.type === "remote" && hasCredentials,
     repoScopes: parseRepoScopes(row.repo_scope),
+    toolAllowlist: parseToolAllowlist(row.tool_allowlist),
     enabled: row.enabled === 1,
   };
 }
@@ -156,6 +171,14 @@ export class McpServerStore {
     return row ? rowToMetadata(row) : null;
   }
 
+  async getDecrypted(id: string): Promise<McpServerConfig | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM mcp_servers WHERE id = ?")
+      .bind(id)
+      .first<McpServerRow>();
+    return row ? this.decryptRow(row) : null;
+  }
+
   async create(config: ValidatedCreateMcpServerInput): Promise<McpServerMetadata> {
     const id = generateId();
     const now = Date.now();
@@ -174,8 +197,8 @@ export class McpServerStore {
     try {
       await this.db
         .prepare(
-          `INSERT INTO mcp_servers (id, name, type, command, url, env, repo_scope, enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO mcp_servers (id, name, type, command, url, env, repo_scope, tool_allowlist, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           id,
@@ -187,6 +210,7 @@ export class McpServerStore {
           config.repoScopes?.length
             ? JSON.stringify(config.repoScopes.map((r) => r.toLowerCase()))
             : null,
+          config.toolAllowlist === undefined ? null : JSON.stringify(config.toolAllowlist),
           config.enabled ? 1 : 0,
           now,
           now
@@ -259,7 +283,7 @@ export class McpServerStore {
 
     try {
       const statement = this.db.prepare(
-        `UPDATE mcp_servers SET name = ?, type = ?, command = ?, url = ?, env = ?, repo_scope = ?, enabled = ?, updated_at = ?, revision = revision + 1
+        `UPDATE mcp_servers SET name = ?, type = ?, command = ?, url = ?, env = ?, repo_scope = ?, tool_allowlist = ?, enabled = ?, updated_at = ?, revision = revision + 1
          WHERE id = ? AND revision = COALESCE(?, revision)
          RETURNING *`
       );
@@ -275,6 +299,11 @@ export class McpServerStore {
               ? JSON.stringify(patch.repoScopes.map((r) => r.toLowerCase()))
               : null
             : row.repo_scope,
+          patch.toolAllowlist !== undefined
+            ? patch.toolAllowlist === null
+              ? null
+              : JSON.stringify(patch.toolAllowlist)
+            : row.tool_allowlist,
           patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : row.enabled,
           now,
           id,
