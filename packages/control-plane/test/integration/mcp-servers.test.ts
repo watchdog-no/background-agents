@@ -65,6 +65,32 @@ describe("MCP Servers API", () => {
       expect("env" in body).toBe(false);
     });
 
+    it("rejects overlapping tool namespaces when either server is restricted", async () => {
+      const first = await serviceFetch("https://test.local/mcp-servers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "foo_bar",
+          type: "remote",
+          url: "https://first.example.com",
+        }),
+      });
+      expect(first.status).toBe(201);
+
+      const overlapping = await serviceFetch("https://test.local/mcp-servers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "foo",
+          type: "remote",
+          url: "https://second.example.com",
+          toolAllowlist: [],
+        }),
+      });
+      expect(overlapping.status).toBe(400);
+      await expect(overlapping.json<{ error: string }>()).resolves.toMatchObject({
+        error: expect.stringMatching(/tool namespace overlaps/i),
+      });
+    });
+
     it("returns 400 for missing name", async () => {
       const response = await serviceFetch("https://test.local/mcp-servers", {
         method: "POST",
@@ -277,6 +303,36 @@ describe("MCP Servers API", () => {
   });
 
   describe("PUT /mcp-servers/:id", () => {
+    it("rejects enabling a tool restriction on an overlapping namespace", async () => {
+      const firstRes = await serviceFetch("https://test.local/mcp-servers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "foo",
+          type: "remote",
+          url: "https://first.example.com",
+        }),
+      });
+      const first = await firstRes.json<McpServerMetadata>();
+      await serviceFetch("https://test.local/mcp-servers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "foo_bar",
+          type: "remote",
+          url: "https://second.example.com",
+        }),
+      });
+
+      const response = await serviceFetch(`https://test.local/mcp-servers/${first.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ toolAllowlist: ["query"], revision: first.revision }),
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json<{ error: string }>()).resolves.toMatchObject({
+        error: expect.stringMatching(/tool namespace overlaps/i),
+      });
+    });
+
     it("stores explicit and empty tool allowlists", async () => {
       const createRes = await serviceFetch("https://test.local/mcp-servers", {
         method: "POST",

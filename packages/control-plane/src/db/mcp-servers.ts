@@ -24,6 +24,10 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
 }
 
+function sanitizeToolNamespace(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 interface McpServerRow {
   id: string;
   revision: number;
@@ -150,6 +154,34 @@ export class McpServerStore {
     return rowToConfig(row, env);
   }
 
+  private async validateToolNamespace(
+    name: string,
+    toolAllowlist: string[] | null | undefined,
+    excludeId?: string
+  ): Promise<void> {
+    const { results } = await this.db
+      .prepare("SELECT id, name, tool_allowlist FROM mcp_servers")
+      .all<Pick<McpServerRow, "id" | "name" | "tool_allowlist">>();
+    const namespace = sanitizeToolNamespace(name);
+    for (const existing of results) {
+      if (existing.id === excludeId) continue;
+      const existingNamespace = sanitizeToolNamespace(existing.name);
+      const overlaps =
+        namespace === existingNamespace ||
+        namespace.startsWith(`${existingNamespace}_`) ||
+        existingNamespace.startsWith(`${namespace}_`);
+      if (
+        overlaps &&
+        ((toolAllowlist !== null && toolAllowlist !== undefined) ||
+          existing.tool_allowlist !== null)
+      ) {
+        throw new McpServerValidationError(
+          `MCP tool namespace overlaps server '${existing.name}'; rename one server before restricting tools`
+        );
+      }
+    }
+  }
+
   async list(repoScope?: string): Promise<McpServerMetadata[]> {
     const { results } = await this.db
       .prepare("SELECT * FROM mcp_servers ORDER BY name")
@@ -189,6 +221,7 @@ export class McpServerStore {
     if (config.type === "remote" && !config.url) {
       throw new McpServerValidationError("remote MCP servers require a URL");
     }
+    await this.validateToolNamespace(config.name, config.toolAllowlist);
 
     const encryptedEnv = await this.encryptEnv(
       config.type === "remote" ? (config.headers ?? {}) : (config.env ?? {})
@@ -278,6 +311,12 @@ export class McpServerStore {
     if (mergedType === "remote" && !mergedUrl) {
       throw new McpServerValidationError("remote MCP servers require a URL");
     }
+
+    const mergedToolAllowlist =
+      patch.toolAllowlist !== undefined
+        ? patch.toolAllowlist
+        : parseToolAllowlist(row.tool_allowlist);
+    await this.validateToolNamespace(patch.name ?? row.name, mergedToolAllowlist, id);
 
     const now = Date.now();
 

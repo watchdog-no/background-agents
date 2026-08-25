@@ -11,7 +11,7 @@ const DISCOVERY_TIMEOUT_MS = 15_000;
 const MAX_DISCOVERED_TOOLS = 1000;
 const MAX_TOOL_DESCRIPTION_LENGTH = 2000;
 
-function authenticatedFetch(
+export function authenticatedFetch(
   headers: Record<string, string>,
   signal: AbortSignal,
   baseFetch: FetchLike
@@ -19,7 +19,9 @@ function authenticatedFetch(
   return (input, init) => {
     const requestHeaders = new Headers(headers);
     for (const [name, value] of new Headers(init?.headers)) requestHeaders.set(name, value);
-    return baseFetch(input, { ...init, headers: requestHeaders, signal });
+    const requestSignal = init?.signal;
+    const combinedSignal = requestSignal ? AbortSignal.any([signal, requestSignal]) : signal;
+    return baseFetch(input, { ...init, headers: requestHeaders, signal: combinedSignal });
   };
 }
 

@@ -71,6 +71,8 @@ type FormState = {
   repoScopes: string[];
   scopeMode: ScopeMode;
   toolAllowlist: string[] | null;
+  localToolAllowlist: string[] | null;
+  remoteToolAllowlist: string[] | null;
   enabled: boolean;
 };
 
@@ -83,6 +85,8 @@ const emptyForm: FormState = {
   repoScopes: [],
   scopeMode: "global",
   toolAllowlist: null,
+  localToolAllowlist: null,
+  remoteToolAllowlist: null,
   enabled: DEFAULT_MCP_SERVER_ENABLED,
 };
 
@@ -101,6 +105,8 @@ function metadataToForm(metadata: McpServerMetadata): FormState {
     repoScopes: metadata.repoScopes ?? [],
     scopeMode: metadata.repoScopes?.length ? "selected" : "global",
     toolAllowlist: metadata.toolAllowlist ?? null,
+    localToolAllowlist: metadata.type === "local" ? (metadata.toolAllowlist ?? null) : null,
+    remoteToolAllowlist: metadata.type === "remote" ? (metadata.toolAllowlist ?? null) : null,
     enabled: metadata.enabled,
   };
 }
@@ -431,7 +437,7 @@ function RemoteToolVisibility({
         </div>
       )}
 
-      {catalog && (
+      {catalog ? (
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
@@ -514,7 +520,22 @@ function RemoteToolVisibility({
             </div>
           )}
         </div>
-      )}
+      ) : selected !== null ? (
+        <div>
+          <p className="mb-1 text-xs text-muted-foreground">
+            {selectedNames.size} selected tool{selectedNames.size === 1 ? "" : "s"}
+          </p>
+          {unavailable.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {unavailable.map((tool) => (
+                <ToolTag key={tool} name={tool} onRemove={() => toggle(tool, false)} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No tools selected</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -561,7 +582,9 @@ function McpServerForm({
                 ...form,
                 type: "local",
                 envRows: form.type === "local" ? form.envRows : [createEnvRow()],
-                toolAllowlist: form.type === "local" ? form.toolAllowlist : null,
+                toolAllowlist: form.type === "local" ? form.toolAllowlist : form.localToolAllowlist,
+                remoteToolAllowlist:
+                  form.type === "remote" ? form.toolAllowlist : form.remoteToolAllowlist,
               })
             }
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition ${
@@ -580,7 +603,10 @@ function McpServerForm({
                 ...form,
                 type: "remote",
                 envRows: form.type === "remote" ? form.envRows : [createEnvRow()],
-                toolAllowlist: form.type === "remote" ? form.toolAllowlist : null,
+                toolAllowlist:
+                  form.type === "remote" ? form.toolAllowlist : form.remoteToolAllowlist,
+                localToolAllowlist:
+                  form.type === "local" ? form.toolAllowlist : form.localToolAllowlist,
               })
             }
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition ${
@@ -832,7 +858,9 @@ export function McpServersSettings() {
       if (saveOwner.kind === "new") {
         const created = await createMcpServer(payload);
         toast.success("MCP server created");
-        setForm(metadataToForm(created));
+        setForm((current) =>
+          activeDraftId.current === saveOwner.draftId ? metadataToForm(created) : current
+        );
         setEditor((current) =>
           current?.draftId === saveOwner.draftId
             ? {

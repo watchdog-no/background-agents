@@ -1,7 +1,7 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { McpServerConfig } from "@open-inspect/shared/types/integrations";
 import { describe, expect, it, vi } from "vitest";
-import { discoverRemoteMcpTools } from "./tool-discovery";
+import { authenticatedFetch, discoverRemoteMcpTools } from "./tool-discovery";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -21,6 +21,23 @@ const remoteServer: McpServerConfig = {
 };
 
 describe("discoverRemoteMcpTools", () => {
+  it("preserves both discovery timeout and transport cancellation signals", async () => {
+    const timeout = new AbortController();
+    const transport = new AbortController();
+    let forwardedSignal: AbortSignal | null | undefined;
+    const fetchMock: FetchLike = vi.fn(async (_input, init) => {
+      forwardedSignal = init?.signal;
+      return new Response(null, { status: 204 });
+    });
+    const request = authenticatedFetch({}, timeout.signal, fetchMock);
+
+    await request("https://mcp.example.com", { signal: transport.signal });
+    expect(forwardedSignal?.aborted).toBe(false);
+
+    transport.abort();
+    expect(forwardedSignal?.aborted).toBe(true);
+  });
+
   it("discovers, sanitizes, deduplicates, and sorts remote tools", async () => {
     const requestHeaders: Headers[] = [];
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

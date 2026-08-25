@@ -12,6 +12,7 @@ expect.extend(matchers);
 
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
+  createMcpServer: vi.fn(),
   updateMcpServer: vi.fn(),
   discoverMcpTools: vi.fn(),
 }));
@@ -22,7 +23,7 @@ vi.mock("@/hooks/use-repos", () => ({
 }));
 vi.mock("@/hooks/use-mcp-servers", () => ({
   useMcpServers: () => ({ servers, loading: false, mutate: mocks.mutate }),
-  createMcpServer: vi.fn(),
+  createMcpServer: mocks.createMcpServer,
   updateMcpServer: mocks.updateMcpServer,
   deleteMcpServer: vi.fn(),
   discoverMcpTools: mocks.discoverMcpTools,
@@ -68,6 +69,41 @@ beforeEach(() => {
 });
 
 describe("McpServersSettings", () => {
+  it("does not overwrite a newer draft when an older create completes", async () => {
+    let resolveSave!: (server: McpServerMetadata) => void;
+    mocks.createMcpServer.mockReturnValue(
+      new Promise<McpServerMetadata>((resolve) => {
+        resolveSave = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    render(<McpServersSettings />);
+
+    await user.click(screen.getByRole("button", { name: "Add Server" }));
+    await user.type(screen.getByPlaceholderText("e.g. documentation"), "New Server");
+    await user.type(screen.getByPlaceholderText("npx -y @playwright/mcp"), "npx tool");
+    await user.click(screen.getAllByRole("button", { name: "Add Server" })[1]);
+
+    await user.click(screen.getByRole("button", { name: /Server B/ }));
+    expect(screen.getByDisplayValue("https://b.example.com")).toBeInTheDocument();
+
+    resolveSave({
+      id: "new-server",
+      revision: 1,
+      name: "New Server",
+      type: "local",
+      command: ["npx", "tool"],
+      hasEnv: false,
+      hasHeaders: false,
+      repoScopes: null,
+      toolAllowlist: null,
+      enabled: true,
+    });
+
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
+    expect(screen.getByDisplayValue("https://b.example.com")).toBeInTheDocument();
+  });
+
   it("does not close a newer draft when an older save completes", async () => {
     let resolveSave!: (server: McpServerMetadata) => void;
     mocks.updateMcpServer.mockReturnValue(
@@ -164,6 +200,39 @@ describe("McpServersSettings", () => {
     expect(await screen.findByText("1 selected / 3 available")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /query/i })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /new_tool/i })).not.toBeChecked();
+  });
+
+  it("preserves remote selections across type toggles", async () => {
+    const user = userEvent.setup();
+    render(<McpServersSettings />);
+
+    await user.click(screen.getByRole("button", { name: /Server B/ }));
+    expect(await screen.findByText("1 selected / 2 available")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Local" }));
+    await user.click(screen.getByRole("button", { name: "Remote" }));
+
+    expect(screen.getByRole("checkbox", { name: /query/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /errors/i })).not.toBeChecked();
+  });
+
+  it("keeps persisted selections removable when discovery fails", async () => {
+    mocks.discoverMcpTools.mockRejectedValue(new Error("MCP server unavailable"));
+    mocks.updateMcpServer.mockResolvedValue({ ...servers[1], toolAllowlist: [], revision: 8 });
+    const user = userEvent.setup();
+    render(<McpServersSettings />);
+
+    await user.click(screen.getByRole("button", { name: /Server B/ }));
+    expect(await screen.findByText("MCP server unavailable")).toBeInTheDocument();
+    expect(screen.getByText("query")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove query" }));
+    expect(screen.getByText("No tools selected")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(mocks.updateMcpServer).toHaveBeenCalled());
+    expect(mocks.updateMcpServer).toHaveBeenCalledWith(
+      "server-b",
+      expect.objectContaining({ toolAllowlist: [] })
+    );
   });
 
   it("accepts manual tool names for local servers", async () => {
