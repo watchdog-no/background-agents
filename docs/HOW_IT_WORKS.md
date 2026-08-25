@@ -268,6 +268,16 @@ For multi-repository sessions, steps 2–4 run per repository in position order:
 cloned into its own `/workspace` directory and each repository's setup and start scripts run in
 sequence.
 
+### Shutdown
+
+When a sandbox runtime shuts down, Open-Inspect first stops the agent-facing services, then runs
+each repository's optional `.openinspect/teardown.sh` in reverse repository order. Repositories
+whose `start.sh` was invoked before startup failed are included. This lets a repository release
+external resources whose lifetime should match the runtime, such as a temporary development
+environment. Teardown failures and the 60-second default timeout are logged but do not prevent the
+sandbox from exiting. Image builds do not run teardown hooks. Provider-managed pause/resume keeps
+the runtime alive and therefore does not run teardown.
+
 ### Restore (From Snapshot)
 
 When restoring from a previous snapshot:

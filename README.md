@@ -270,7 +270,7 @@ Agents can decompose work into parallel child sessions:
 
 ### Repository Lifecycle Scripts
 
-Repositories can define two optional startup scripts under `.openinspect/`:
+Repositories can define three optional lifecycle scripts under `.openinspect/`:
 
 ```bash
 # .openinspect/setup.sh (provisioning)
@@ -285,15 +285,27 @@ pip install -r requirements.txt
 docker compose up -d postgres redis
 ```
 
+```bash
+# .openinspect/teardown.sh (runtime shutdown)
+#!/bin/bash
+docker compose down
+```
+
 - `setup.sh` runs for image builds and fresh sessions
 - `setup.sh` is skipped for prebuilt-image and snapshot-restore starts
 - `setup.sh` failures are non-fatal for fresh sessions, but fatal in image build mode
 - `start.sh` runs for every non-build session startup (fresh, prebuilt-image, snapshot-restore)
 - `start.sh` failures are strict: if present and it fails, session startup fails
+- `teardown.sh` runs when a non-build sandbox runtime shuts down, after agent services stop;
+  multi-repository sessions run it in reverse repository order, including repositories whose
+  `start.sh` was invoked before startup failed
+- `teardown.sh` failures are logged but do not block sandbox shutdown
+- Provider-managed pause/resume does not shut down the runtime and therefore does not run teardown
 - Default timeouts:
   - `SETUP_TIMEOUT_SECONDS` (default `300`)
   - `START_TIMEOUT_SECONDS` (default `120`)
-- Both hooks receive `OPENINSPECT_BOOT_MODE` (`build`, `fresh`, `repo_image`, `snapshot_restore`)
+  - `TEARDOWN_TIMEOUT_SECONDS` (default `60`)
+- All hooks receive `OPENINSPECT_BOOT_MODE` (`build`, `fresh`, `repo_image`, `snapshot_restore`)
 - Git operations in hooks can authenticate to other private repos on the configured SCM host when
   the shared installation has access
 
