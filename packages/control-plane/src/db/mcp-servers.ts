@@ -24,6 +24,10 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
 }
 
+function sanitizeToolNamespace(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 interface McpServerRow {
   id: string;
   revision: number;
@@ -33,6 +37,7 @@ interface McpServerRow {
   url: string | null;
   env: string;
   repo_scope: string | null;
+  tool_allowlist: string | null;
   enabled: number;
   created_at: number;
   updated_at: number;
@@ -45,6 +50,18 @@ function parseRepoScopes(raw: string | null): string[] | null {
     return Array.isArray(parsed) ? parsed : [raw];
   } catch {
     return [raw];
+  }
+}
+
+function parseToolAllowlist(raw: string | null): string[] | null {
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((tool) => typeof tool === "string")
+      ? parsed
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -76,6 +93,7 @@ function rowToConfig(row: McpServerRow, payload: Record<string, string>): McpSer
     url: row.type === "remote" ? (row.url ?? undefined) : undefined,
     ...envOrHeaders,
     repoScopes: parseRepoScopes(row.repo_scope),
+    toolAllowlist: parseToolAllowlist(row.tool_allowlist),
     enabled: row.enabled === 1,
   };
 }
@@ -92,6 +110,7 @@ function rowToMetadata(row: McpServerRow): McpServerMetadata {
     hasEnv: row.type === "local" && hasCredentials,
     hasHeaders: row.type === "remote" && hasCredentials,
     repoScopes: parseRepoScopes(row.repo_scope),
+    toolAllowlist: parseToolAllowlist(row.tool_allowlist),
     enabled: row.enabled === 1,
   };
 }
@@ -135,6 +154,34 @@ export class McpServerStore {
     return rowToConfig(row, env);
   }
 
+  private async validateToolNamespace(
+    name: string,
+    toolAllowlist: string[] | null | undefined,
+    excludeId?: string
+  ): Promise<void> {
+    const { results } = await this.db
+      .prepare("SELECT id, name, tool_allowlist FROM mcp_servers")
+      .all<Pick<McpServerRow, "id" | "name" | "tool_allowlist">>();
+    const namespace = sanitizeToolNamespace(name);
+    for (const existing of results) {
+      if (existing.id === excludeId) continue;
+      const existingNamespace = sanitizeToolNamespace(existing.name);
+      const overlaps =
+        namespace === existingNamespace ||
+        namespace.startsWith(`${existingNamespace}_`) ||
+        existingNamespace.startsWith(`${namespace}_`);
+      if (
+        overlaps &&
+        ((toolAllowlist !== null && toolAllowlist !== undefined) ||
+          existing.tool_allowlist !== null)
+      ) {
+        throw new McpServerValidationError(
+          `MCP tool namespace overlaps server '${existing.name}'; rename one server before restricting tools`
+        );
+      }
+    }
+  }
+
   async list(repoScope?: string): Promise<McpServerMetadata[]> {
     const { results } = await this.db
       .prepare("SELECT * FROM mcp_servers ORDER BY name")
@@ -156,6 +203,14 @@ export class McpServerStore {
     return row ? rowToMetadata(row) : null;
   }
 
+  async getDecrypted(id: string): Promise<McpServerConfig | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM mcp_servers WHERE id = ?")
+      .bind(id)
+      .first<McpServerRow>();
+    return row ? this.decryptRow(row) : null;
+  }
+
   async create(config: ValidatedCreateMcpServerInput): Promise<McpServerMetadata> {
     const id = generateId();
     const now = Date.now();
@@ -166,6 +221,7 @@ export class McpServerStore {
     if (config.type === "remote" && !config.url) {
       throw new McpServerValidationError("remote MCP servers require a URL");
     }
+    await this.validateToolNamespace(config.name, config.toolAllowlist);
 
     const encryptedEnv = await this.encryptEnv(
       config.type === "remote" ? (config.headers ?? {}) : (config.env ?? {})
@@ -174,8 +230,8 @@ export class McpServerStore {
     try {
       await this.db
         .prepare(
-          `INSERT INTO mcp_servers (id, name, type, command, url, env, repo_scope, enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO mcp_servers (id, name, type, command, url, env, repo_scope, tool_allowlist, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           id,
@@ -187,6 +243,7 @@ export class McpServerStore {
           config.repoScopes?.length
             ? JSON.stringify(config.repoScopes.map((r) => r.toLowerCase()))
             : null,
+          config.toolAllowlist === undefined ? null : JSON.stringify(config.toolAllowlist),
           config.enabled ? 1 : 0,
           now,
           now
@@ -255,11 +312,17 @@ export class McpServerStore {
       throw new McpServerValidationError("remote MCP servers require a URL");
     }
 
+    const mergedToolAllowlist =
+      patch.toolAllowlist !== undefined
+        ? patch.toolAllowlist
+        : parseToolAllowlist(row.tool_allowlist);
+    await this.validateToolNamespace(patch.name ?? row.name, mergedToolAllowlist, id);
+
     const now = Date.now();
 
     try {
       const statement = this.db.prepare(
-        `UPDATE mcp_servers SET name = ?, type = ?, command = ?, url = ?, env = ?, repo_scope = ?, enabled = ?, updated_at = ?, revision = revision + 1
+        `UPDATE mcp_servers SET name = ?, type = ?, command = ?, url = ?, env = ?, repo_scope = ?, tool_allowlist = ?, enabled = ?, updated_at = ?, revision = revision + 1
          WHERE id = ? AND revision = COALESCE(?, revision)
          RETURNING *`
       );
@@ -275,6 +338,11 @@ export class McpServerStore {
               ? JSON.stringify(patch.repoScopes.map((r) => r.toLowerCase()))
               : null
             : row.repo_scope,
+          patch.toolAllowlist !== undefined
+            ? patch.toolAllowlist === null
+              ? null
+              : JSON.stringify(patch.toolAllowlist)
+            : row.tool_allowlist,
           patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : row.enabled,
           now,
           id,

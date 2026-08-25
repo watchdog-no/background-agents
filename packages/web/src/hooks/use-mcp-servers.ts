@@ -4,6 +4,7 @@ import { browserApiFetch } from "@/lib/browser-api-fetch";
 import type {
   CreateMcpServerRequest,
   McpServerMetadata,
+  McpToolMetadata,
   UpdateMcpServerRequest,
 } from "@open-inspect/shared/types/integrations";
 
@@ -58,4 +59,16 @@ export async function deleteMcpServer(id: string): Promise<void> {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error || "Failed to delete MCP server");
   }
+}
+
+export async function discoverMcpTools(id: string): Promise<McpToolMetadata[]> {
+  const response = await browserApiFetch(`${MCP_SERVERS_KEY}/${id}/tools`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || "Failed to load MCP tools");
+  }
+  const body = (await response.json()) as { tools: McpToolMetadata[] };
+  return body.tools;
 }

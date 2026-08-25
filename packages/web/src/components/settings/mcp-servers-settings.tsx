@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback, type ClipboardEvent } from "react";
+import { useState, useCallback, useRef, type ClipboardEvent } from "react";
 import { toast } from "sonner";
 import type {
   CreateMcpServerRequest,
   McpServerMetadata,
+  McpToolMetadata,
 } from "@open-inspect/shared/types/integrations";
 import { DEFAULT_MCP_SERVER_ENABLED } from "@open-inspect/shared/types/integrations";
 import {
@@ -12,10 +13,18 @@ import {
   createMcpServer,
   updateMcpServer,
   deleteMcpServer,
+  discoverMcpTools,
 } from "@/hooks/use-mcp-servers";
 import { useRepos } from "@/hooks/use-repos";
 import { parseMaybeEnvContent } from "@/lib/env-paste";
-import { PlusIcon, TerminalIcon, GlobeIcon, ChevronRightIcon } from "@/components/ui/icons";
+import {
+  PlusIcon,
+  TerminalIcon,
+  GlobeIcon,
+  ChevronRightIcon,
+  SearchIcon,
+  XIcon,
+} from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,6 +70,9 @@ type FormState = {
   envRows: EnvRow[];
   repoScopes: string[];
   scopeMode: ScopeMode;
+  toolAllowlist: string[] | null;
+  localToolAllowlist: string[] | null;
+  remoteToolAllowlist: string[] | null;
   enabled: boolean;
 };
 
@@ -72,6 +84,9 @@ const emptyForm: FormState = {
   envRows: [createEnvRow()],
   repoScopes: [],
   scopeMode: "global",
+  toolAllowlist: null,
+  localToolAllowlist: null,
+  remoteToolAllowlist: null,
   enabled: DEFAULT_MCP_SERVER_ENABLED,
 };
 
@@ -89,6 +104,9 @@ function metadataToForm(metadata: McpServerMetadata): FormState {
     envRows: [createEnvRow()],
     repoScopes: metadata.repoScopes ?? [],
     scopeMode: metadata.repoScopes?.length ? "selected" : "global",
+    toolAllowlist: metadata.toolAllowlist ?? null,
+    localToolAllowlist: metadata.type === "local" ? (metadata.toolAllowlist ?? null) : null,
+    remoteToolAllowlist: metadata.type === "remote" ? (metadata.toolAllowlist ?? null) : null,
     enabled: metadata.enabled,
   };
 }
@@ -257,6 +275,292 @@ function EnvRowsEditor({
   );
 }
 
+function ToolTag({ name, onRemove }: { name: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-sm border border-border bg-muted px-2 py-1 font-mono text-xs">
+      {name}
+      <button type="button" onClick={onRemove} aria-label={`Remove ${name}`}>
+        <XIcon className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+      </button>
+    </span>
+  );
+}
+
+function ManualToolAllowlistEditor({
+  tools,
+  onChange,
+}: {
+  tools: string[];
+  onChange: (tools: string[]) => void;
+}) {
+  const [value, setValue] = useState("");
+
+  function addTools(raw: string) {
+    const additions = raw
+      .split(/[\n,]/)
+      .map((tool) => tool.trim())
+      .filter(Boolean);
+    if (additions.length === 0) return;
+    onChange([...new Set([...tools, ...additions])]);
+    setValue("");
+  }
+
+  return (
+    <div className="space-y-2">
+      {tools.length > 0 && (
+        <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+          {tools.map((tool) => (
+            <ToolTag
+              key={tool}
+              name={tool}
+              onRemove={() => onChange(tools.filter((t) => t !== tool))}
+            />
+          ))}
+        </div>
+      )}
+      <Input
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== ",") return;
+          event.preventDefault();
+          addTools(value);
+        }}
+        onPaste={(event) => {
+          const pasted = event.clipboardData.getData("text");
+          if (!/[\n,]/.test(pasted)) return;
+          event.preventDefault();
+          addTools(pasted);
+        }}
+        onBlur={() => addTools(value)}
+        placeholder="Add a tool name and press Enter"
+        className="font-mono text-xs"
+      />
+      <p className="text-xs text-muted-foreground">
+        Use server-native names such as <code className="text-xs">list_runs</code>. Paste comma- or
+        newline-separated names to add several.
+      </p>
+    </div>
+  );
+}
+
+function LocalToolVisibility({
+  form,
+  setForm,
+  radioPrefix,
+}: {
+  form: FormState;
+  setForm: (form: FormState) => void;
+  radioPrefix: string;
+}) {
+  if (form.type !== "local") return null;
+  const restricted = form.toolAllowlist !== null;
+
+  return (
+    <div>
+      <Label className="mb-1.5">Tool visibility</Label>
+      <div className="mb-2 space-y-2">
+        <RadioCard
+          name={`tool-mode-${radioPrefix}`}
+          checked={!restricted}
+          onChange={() => setForm({ ...form, toolAllowlist: null })}
+          label="All tools"
+          description="Expose every tool advertised by this local MCP"
+        />
+        <RadioCard
+          name={`tool-mode-${radioPrefix}`}
+          checked={restricted}
+          onChange={() => setForm({ ...form, toolAllowlist: form.toolAllowlist ?? [] })}
+          label="Selected tools only"
+          description="Only expose the server-native tool names listed below"
+        />
+      </div>
+      {form.toolAllowlist !== null && (
+        <ManualToolAllowlistEditor
+          tools={form.toolAllowlist}
+          onChange={(toolAllowlist) => setForm({ ...form, toolAllowlist })}
+        />
+      )}
+    </div>
+  );
+}
+
+function RemoteToolVisibility({
+  catalog,
+  selected,
+  loading,
+  errorMessage,
+  search,
+  onSearchChange,
+  onChange,
+  onRefresh,
+}: {
+  catalog: McpToolMetadata[] | null;
+  selected: string[] | null;
+  loading: boolean;
+  errorMessage: string | null;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onChange: (tools: string[] | null) => void;
+  onRefresh: () => void;
+}) {
+  const catalogNames = new Set(catalog?.map((tool) => tool.name) ?? []);
+  const selectedNames = new Set(selected ?? catalogNames);
+  const unavailable =
+    selected === null ? [] : [...selectedNames].filter((name) => !catalogNames.has(name)).sort();
+  const selectedAvailableCount = [...selectedNames].filter((name) => catalogNames.has(name)).length;
+  const normalizedSearch = search.trim().toLowerCase();
+  const visible = (catalog ?? []).filter(
+    (tool) =>
+      !normalizedSearch ||
+      tool.name.toLowerCase().includes(normalizedSearch) ||
+      tool.description?.toLowerCase().includes(normalizedSearch)
+  );
+
+  function toggle(name: string, checked: boolean) {
+    const next = new Set(selectedNames);
+    if (checked) next.add(name);
+    else next.delete(name);
+    onChange(
+      catalogNames.size > 0 &&
+        next.size === catalogNames.size &&
+        [...catalogNames].every((tool) => next.has(tool))
+        ? null
+        : [...next].sort()
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <Label>Tool visibility</Label>
+        <Button type="button" variant="subtle" size="xs" onClick={onRefresh} disabled={loading}>
+          {loading ? "Loading..." : "Refresh"}
+        </Button>
+      </div>
+
+      {errorMessage && (
+        <div className="mb-2 rounded-sm border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {errorMessage}
+        </div>
+      )}
+
+      {catalog ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {selected === null
+                ? `All tools (${catalog.length} available)`
+                : `${selectedAvailableCount} selected / ${catalog.length} available`}
+            </span>
+            <span>
+              {selected === null
+                ? "Newly advertised tools are included"
+                : "Newly advertised tools stay unchecked"}
+            </span>
+          </div>
+
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search tools"
+              className="pl-8"
+            />
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="subtle"
+              size="xs"
+              onClick={() => {
+                const next = new Set([...selectedNames, ...visible.map((tool) => tool.name)]);
+                onChange(
+                  catalogNames.size > 0 &&
+                    next.size === catalogNames.size &&
+                    [...catalogNames].every((tool) => next.has(tool))
+                    ? null
+                    : [...next].sort()
+                );
+              }}
+            >
+              Select filtered
+            </Button>
+            <Button
+              type="button"
+              variant="subtle"
+              size="xs"
+              onClick={() => {
+                const visibleNames = new Set(visible.map((tool) => tool.name));
+                onChange([...selectedNames].filter((name) => !visibleNames.has(name)).sort());
+              }}
+            >
+              Clear filtered
+            </Button>
+          </div>
+
+          <div className="max-h-72 overflow-y-auto rounded-sm border border-border">
+            {visible.length === 0 ? (
+              <p className="px-3 py-4 text-center text-sm text-muted-foreground">
+                No matching tools
+              </p>
+            ) : (
+              visible.map((tool) => (
+                <label
+                  key={tool.name}
+                  className="flex cursor-pointer items-start gap-2 border-b border-border-muted px-3 py-2 last:border-b-0 hover:bg-muted/50"
+                >
+                  <Checkbox
+                    checked={selectedNames.has(tool.name)}
+                    onCheckedChange={(checked) => toggle(tool.name, checked === true)}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-mono text-xs text-foreground">{tool.name}</span>
+                    {tool.description && (
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {tool.description}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+
+          {unavailable.length > 0 && (
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">No longer advertised</p>
+              <div className="flex flex-wrap gap-1">
+                {unavailable.map((tool) => (
+                  <ToolTag key={tool} name={tool} onRemove={() => toggle(tool, false)} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : selected !== null ? (
+        <div>
+          <p className="mb-1 text-xs text-muted-foreground">
+            {selectedNames.size} selected tool{selectedNames.size === 1 ? "" : "s"}
+          </p>
+          {unavailable.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {unavailable.map((tool) => (
+                <ToolTag key={tool} name={tool} onRemove={() => toggle(tool, false)} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No tools selected</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 interface McpServerFormProps {
   form: FormState;
   setForm: (form: FormState) => void;
@@ -264,6 +568,7 @@ interface McpServerFormProps {
   loadingRepos: boolean;
   radioPrefix: string;
   hasExistingCredentials?: boolean;
+  showToolVisibility?: boolean;
 }
 
 function McpServerForm({
@@ -273,6 +578,7 @@ function McpServerForm({
   loadingRepos,
   radioPrefix,
   hasExistingCredentials,
+  showToolVisibility = false,
 }: McpServerFormProps) {
   const selectedRepoScopes = new Set(form.repoScopes);
 
@@ -297,6 +603,9 @@ function McpServerForm({
                 ...form,
                 type: "local",
                 envRows: form.type === "local" ? form.envRows : [createEnvRow()],
+                toolAllowlist: form.type === "local" ? form.toolAllowlist : form.localToolAllowlist,
+                remoteToolAllowlist:
+                  form.type === "remote" ? form.toolAllowlist : form.remoteToolAllowlist,
               })
             }
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition ${
@@ -315,6 +624,10 @@ function McpServerForm({
                 ...form,
                 type: "remote",
                 envRows: form.type === "remote" ? form.envRows : [createEnvRow()],
+                toolAllowlist:
+                  form.type === "remote" ? form.toolAllowlist : form.remoteToolAllowlist,
+                localToolAllowlist:
+                  form.type === "local" ? form.toolAllowlist : form.localToolAllowlist,
               })
             }
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition ${
@@ -358,6 +671,10 @@ function McpServerForm({
         setForm={setForm}
         hasExistingCredentials={hasExistingCredentials}
       />
+
+      {showToolVisibility && (
+        <LocalToolVisibility form={form} setForm={setForm} radioPrefix={radioPrefix} />
+      )}
 
       <div>
         <Label className="mb-1.5">Availability</Label>
@@ -445,27 +762,63 @@ export function McpServersSettings() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [toolCatalog, setToolCatalog] = useState<McpToolMetadata[] | null>(null);
+  const [loadingTools, setLoadingTools] = useState(false);
+  const [toolError, setToolError] = useState<string | null>(null);
+  const [toolSearch, setToolSearch] = useState("");
+  const activeDraftId = useRef<string | null>(null);
+
+  function resetToolDiscovery() {
+    setToolCatalog(null);
+    setLoadingTools(false);
+    setToolError(null);
+    setToolSearch("");
+  }
+
+  async function loadRemoteTools(id: string, draftId: string) {
+    setLoadingTools(true);
+    setToolError(null);
+    try {
+      const tools = await discoverMcpTools(id);
+      if (activeDraftId.current !== draftId) return;
+      setToolCatalog(tools);
+    } catch (err) {
+      if (activeDraftId.current !== draftId) return;
+      setToolError(err instanceof Error ? err.message : "Failed to load MCP tools");
+    } finally {
+      if (activeDraftId.current === draftId) setLoadingTools(false);
+    }
+  }
 
   function startNew() {
     setForm(emptyForm);
-    setEditor({ kind: "new", draftId: crypto.randomUUID() });
+    resetToolDiscovery();
+    const draftId = crypto.randomUUID();
+    activeDraftId.current = draftId;
+    setEditor({ kind: "new", draftId });
   }
 
   function startEdit(server: McpServerMetadata) {
     if (editor?.kind === "existing" && editor.id === server.id) {
+      activeDraftId.current = null;
       setEditor(null);
     } else {
+      resetToolDiscovery();
+      const draftId = crypto.randomUUID();
+      activeDraftId.current = draftId;
       setForm(metadataToForm(server));
       setEditor({
         kind: "existing",
-        draftId: crypto.randomUUID(),
+        draftId,
         id: server.id,
         revision: server.revision,
       });
+      if (server.type === "remote") void loadRemoteTools(server.id, draftId);
     }
   }
 
   function cancel() {
+    activeDraftId.current = null;
     setEditor(null);
   }
 
@@ -495,6 +848,7 @@ export function McpServersSettings() {
       const common = {
         name: form.name.trim(),
         enabled: form.enabled,
+        toolAllowlist: form.toolAllowlist,
         repoScopes:
           form.scopeMode === "selected" && form.repoScopes.length > 0 ? form.repoScopes : null,
       };
@@ -518,14 +872,32 @@ export function McpServersSettings() {
             };
 
       if (saveOwner.kind === "new") {
-        await createMcpServer(payload);
+        const created = await createMcpServer(payload);
         toast.success("MCP server created");
+        setForm((current) =>
+          activeDraftId.current === saveOwner.draftId ? metadataToForm(created) : current
+        );
+        setEditor((current) =>
+          current?.draftId === saveOwner.draftId
+            ? {
+                kind: "existing",
+                draftId: saveOwner.draftId,
+                id: created.id,
+                revision: created.revision,
+              }
+            : current
+        );
+        if (created.type === "remote") void loadRemoteTools(created.id, saveOwner.draftId);
       } else {
         await updateMcpServer(saveOwner.id, { ...payload, revision: saveOwner.revision });
         toast.success("MCP server updated");
+        setEditor((current) => {
+          if (current?.draftId !== saveOwner.draftId) return current;
+          activeDraftId.current = null;
+          return null;
+        });
       }
 
-      setEditor((current) => (current?.draftId === saveOwner.draftId ? null : current));
       mutate();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
@@ -692,10 +1064,23 @@ export function McpServersSettings() {
                       repos={repos}
                       loadingRepos={loadingRepos}
                       radioPrefix={server.id}
+                      showToolVisibility
                       hasExistingCredentials={
                         server.type === form.type && (server.hasEnv || server.hasHeaders)
                       }
                     />
+                    {form.type === "remote" && (
+                      <RemoteToolVisibility
+                        catalog={toolCatalog}
+                        selected={form.toolAllowlist}
+                        loading={loadingTools}
+                        errorMessage={toolError}
+                        search={toolSearch}
+                        onSearchChange={setToolSearch}
+                        onChange={(toolAllowlist) => setForm({ ...form, toolAllowlist })}
+                        onRefresh={() => loadRemoteTools(server.id, editor.draftId)}
+                      />
+                    )}
                     <div className="flex gap-2 pt-2">
                       <Button onClick={save} disabled={saving} size="sm">
                         {saving ? "Saving..." : "Save Changes"}

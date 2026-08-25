@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v73-node24-agent-toolchain",
-  "generation": 73,
-  "minimumCompatibleGeneration": 70,
-  "minimumRebuildGeneration": 73
+  "runtimeVersion": "v74-mcp-tool-permissions",
+  "generation": 74,
+  "minimumCompatibleGeneration": 74,
+  "minimumRebuildGeneration": 74
 }

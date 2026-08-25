@@ -471,6 +471,27 @@ class OpenCodeServer:
                 config[name] = entry
         return config
 
+    @staticmethod
+    def _sanitize_tool_name(value: str) -> str:
+        """Match OpenCode's MCP tool-name sanitization."""
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
+
+    def _build_mcp_tool_permissions(self, servers: list[Mapping[str, Any]]) -> dict[str, str]:
+        """Build ordered OpenCode permission rules for explicit MCP allowlists."""
+        permissions: dict[str, str] = {}
+        for server in servers:
+            name = server.get("name")
+            allowlist = server.get("toolAllowlist")
+            if not isinstance(name, str) or not name or not isinstance(allowlist, (list, tuple)):
+                continue
+
+            prefix = self._sanitize_tool_name(name)
+            permissions[f"{prefix}_*"] = "deny"
+            for tool in allowlist:
+                if isinstance(tool, str) and tool:
+                    permissions[f"{prefix}_{self._sanitize_tool_name(tool)}"] = "allow"
+        return permissions
+
     async def start(self, repositories: tuple[RepoEntry, ...], workdir: Path) -> None:
         """Start OpenCode server with configuration."""
         self._setup_managed_oauth()
@@ -491,6 +512,11 @@ class OpenCodeServer:
             if mcp_config:
                 opencode_config["mcp"] = mcp_config
                 self.log.info("mcp.configured", count=len(mcp_config))
+            tool_permissions = self._build_mcp_tool_permissions(mcp_servers)
+            if tool_permissions:
+                # OpenCode applies the last matching permission rule. Append the
+                # MCP wildcard deny and exact allows after the global allow rule.
+                opencode_config["permission"].update(tool_permissions)
 
         # Working directory: the repo for single-repo sessions, /workspace
         # for multi-repo (every member visible) and repo-less sessions.

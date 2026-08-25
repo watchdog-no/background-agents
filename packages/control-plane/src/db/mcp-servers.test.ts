@@ -70,6 +70,7 @@ const sampleRow = {
   url: null,
   env: JSON.stringify({ DEBUG: "1" }),
   repo_scope: null,
+  tool_allowlist: null,
   enabled: 1,
   created_at: 1000,
   updated_at: 1000,
@@ -84,6 +85,7 @@ const remoteRow = {
   url: "https://mcp.example.com/sse",
   env: "{}",
   repo_scope: JSON.stringify(["carboncopyinc/habakkuk"]),
+  tool_allowlist: null,
   enabled: 1,
   created_at: 1001,
   updated_at: 1001,
@@ -176,6 +178,33 @@ describe("McpServerStore", () => {
       const result = await store.get("def456");
       expect(result!.hasHeaders).toBe(true);
       expect(result!.hasEnv).toBe(false);
+    });
+
+    it("returns the persisted tool allowlist in metadata", async () => {
+      const { db } = createFakeD1({
+        firstResult: { ...remoteRow, tool_allowlist: JSON.stringify(["query", "list_incidents"]) },
+      });
+      const store = new McpServerStore(db);
+      const result = await store.get("def456");
+      expect(result!.toolAllowlist).toEqual(["query", "list_incidents"]);
+    });
+  });
+
+  describe("getDecrypted()", () => {
+    it("returns credentials and tool selection for discovery", async () => {
+      const { db } = createFakeD1({
+        firstResult: {
+          ...remoteRowWithHeaders,
+          tool_allowlist: JSON.stringify(["query"]),
+        },
+      });
+      const store = new McpServerStore(db);
+      const result = await store.getDecrypted("ghi789");
+      expect(result?.headers).toEqual({
+        Authorization: "Bearer sk-test-123",
+        "X-Api-Key": "key-456",
+      });
+      expect(result?.toolAllowlist).toEqual(["query"]);
     });
   });
 

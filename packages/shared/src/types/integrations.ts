@@ -409,14 +409,22 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   headers?: Record<string, string>;
   repoScopes?: string[] | null;
+  /** Server-native tool names visible to the agent. Null exposes every tool. */
+  toolAllowlist?: string[] | null;
   enabled: boolean;
 }
 
 export const DEFAULT_MCP_SERVER_ENABLED = true;
 
+const mcpToolAllowlistSchema = z
+  .array(z.string().trim().min(1))
+  .max(1000)
+  .transform((tools) => [...new Set(tools)]);
+
 const mcpServerCommonFields = {
   name: z.string().trim().min(1),
   repoScopes: z.array(z.string()).nullable().optional(),
+  toolAllowlist: mcpToolAllowlistSchema.nullable().optional(),
   enabled: z.boolean().optional(),
 };
 
@@ -476,7 +484,13 @@ export interface McpServerMetadata {
   hasEnv: boolean;
   hasHeaders: boolean;
   repoScopes?: string[] | null;
+  toolAllowlist?: string[] | null;
   enabled: boolean;
+}
+
+export interface McpToolMetadata {
+  name: string;
+  description?: string;
 }
 
 export const INTEGRATION_DEFINITIONS: {
