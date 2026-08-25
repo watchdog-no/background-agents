@@ -7,7 +7,7 @@
  * return surface rather than the fakes.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { UserEnvResolver } from "./user-env-resolver";
 import { resolveSessionRepoId } from "./repo-id-resolution";
 import {
@@ -222,7 +222,6 @@ function makeHarness(
     /** Omit to model an unset SECRETS_CAP_ENFORCEMENT (fail-closed enforce). */
     capEnforcement?: string;
     resolveRepoId?: (session: SessionRow) => Promise<number>;
-    injectLinearAppToken?: (sandboxEnv: Record<string, string>, log: Logger) => Promise<void>;
   } = {}
 ) {
   const session = options.session === undefined ? sessionRow() : options.session;
@@ -252,7 +251,6 @@ function makeHarness(
     durableObjectId: "do-id-fallback",
     repoSecretsEncryptionKey: options.encryptionKey,
     secretsCapEnforcement: options.capEnforcement,
-    injectLinearAppToken: options.injectLinearAppToken ?? (async () => {}),
     log: () => currentLogger,
   });
 
@@ -320,19 +318,6 @@ describe("UserEnvResolver", () => {
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
 
       await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
-    });
-
-    it("injects a Linear app token after assembling the provider environment", async () => {
-      const injectLinearAppToken = vi.fn(async (sandboxEnv: Record<string, string>) => {
-        sandboxEnv.LINEAR_API_KEY = "linear-app-token";
-      });
-      const h = makeHarness({ injectLinearAppToken });
-      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
-
-      await expect(h.resolver.getUserEnvVars()).resolves.toEqual({
-        LINEAR_API_KEY: "linear-app-token",
-      });
-      expect(injectLinearAppToken).toHaveBeenCalledOnce();
     });
   });
 

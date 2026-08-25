@@ -6,18 +6,15 @@
  */
 
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
 import type { Env, AgentSessionWebhook } from "./types";
 import {
   buildOAuthAuthorizeUrl,
-  getAppActorToken,
   completeLinearOAuthInstallation,
   verifyLinearWebhook,
 } from "./utils/linear-client";
 import { callbacksRouter } from "./callbacks";
 import { createLogger } from "./logger";
 import { resolveAppName } from "@open-inspect/shared/app-name";
-import { verifyInternalToken } from "@open-inspect/shared/auth";
 import { handleAgentSessionEvent, escapeHtml } from "./webhook-handler";
 import { isDuplicateEvent } from "./kv-store";
 
@@ -174,32 +171,6 @@ app.post("/webhook", async (c) => {
 
   log.debug("webhook.skipped", { trace_id: traceId, type: eventType, action });
   return c.json({ ok: true, skipped: true, reason: `unhandled event type: ${eventType}` });
-});
-
-// ─── Internal Auth Middleware ─────────────────────────────────────────────────
-
-// The fork-only app-token endpoint is service-to-service only. Keep its
-// bearer-token contract, but derive it from the Linear bot's per-service secret
-// rather than the retired shared secret.
-const internalAuthMiddleware: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const secret = c.env.SERVICE_AUTH_SECRET;
-  if (!secret) return c.json({ error: "Auth not configured" }, 500);
-  const isValid = await verifyInternalToken(c.req.header("Authorization") ?? null, secret);
-  if (!isValid) return c.json({ error: "Unauthorized" }, 401);
-  return next();
-};
-
-app.use("/internal/*", internalAuthMiddleware);
-
-// ─── Internal Endpoints ───────────────────────────────────────────────────────
-
-// Mint a fresh app-actor access token for the control plane to inject into
-// sandboxes. The token is short-lived (~24h) and refreshed on demand, so it is
-// fetched per sandbox spawn rather than stored as a static secret.
-app.get("/internal/app-token", async (c) => {
-  const accessToken = await getAppActorToken(c.env);
-  if (!accessToken) return c.json({ error: "no_authorized_workspace" }, 404);
-  return c.json({ accessToken });
 });
 
 // Mount callbacks router

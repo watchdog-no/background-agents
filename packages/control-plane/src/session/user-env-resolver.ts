@@ -48,7 +48,6 @@ export interface UserEnvResolverDeps {
   durableObjectId: string;
   repoSecretsEncryptionKey: string | undefined;
   secretsCapEnforcement: string | undefined;
-  injectLinearAppToken: (sandboxEnv: Record<string, string>, log: Logger) => Promise<void>;
   /**
    * Thunk, deliberately: the owner replaces its logger with a session-scoped
    * one during initialization, so a by-value capture would pin whichever
@@ -69,7 +68,6 @@ export class UserEnvResolver {
   private readonly durableObjectId: string;
   private readonly repoSecretsEncryptionKey: string | undefined;
   private readonly secretsCapEnforcement: string | undefined;
-  private readonly injectLinearAppToken: UserEnvResolverDeps["injectLinearAppToken"];
   private readonly log: () => Logger;
 
   constructor(deps: UserEnvResolverDeps) {
@@ -79,7 +77,6 @@ export class UserEnvResolver {
     this.durableObjectId = deps.durableObjectId;
     this.repoSecretsEncryptionKey = deps.repoSecretsEncryptionKey;
     this.secretsCapEnforcement = deps.secretsCapEnforcement;
-    this.injectLinearAppToken = deps.injectLinearAppToken;
     this.log = deps.log;
   }
 
@@ -90,9 +87,6 @@ export class UserEnvResolver {
   async getUserEnvVars(): Promise<Record<string, string> | undefined> {
     const context = await this.loadUserEnvContext();
     if (!context) return undefined;
-    // Preserve the fork's Linear app-actor authentication after the upstream
-    // SessionDO secret assembly moved into this collaborator.
-    await this.injectLinearAppToken(context.sandboxEnv, this.log());
     return Object.keys(context.sandboxEnv).length === 0 ? undefined : context.sandboxEnv;
   }
 

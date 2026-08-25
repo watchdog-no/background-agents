@@ -8,7 +8,6 @@ This image provides a complete development environment with:
 - OpenCode CLI pre-installed
 - agent-browser CLI with headless Chrome for browser automation
 - ffmpeg for browser video encoding
-- ctx7 (Context7) CLI for up-to-date library documentation
 - Sandbox entrypoint and bridge code
 """
 
@@ -46,22 +45,8 @@ AGENT_BROWSER_VERSION = "0.21.2"
 TTYD_VERSION = "1.7.7"
 TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
-# linear-cli version to install (pinned for reproducible images).
-# Gives the agent read/write access to Linear via the `linear` CLI, paired with
-# the linear-cli Skill. Authenticates from LINEAR_API_KEY, populated per spawn
-# from the Linear app-actor token when available or from a user secret fallback.
-LINEAR_CLI_VERSION = "2.0.0"
-
-# ctx7 (Context7) version to install (pinned for reproducible images).
-# Gives the agent up-to-date library/framework documentation via the `ctx7` CLI,
-# paired with the context7 Skill. Auth is optional: it works anonymously
-# (rate-limited) and reads CONTEXT7_API_KEY for higher limits, populated per spawn
-# from a user secret when set in Settings → Secrets.
-CTX7_VERSION = "0.4.4"
-
 # CACHE_BUSTER follows the shared runtime manifest so every image provider
-# publishes the same generation label. The current generation includes the
-# account/init helpers and /usr/sbin path required by sandbox services.
+# publishes the same generation label and invalidates cached image layers.
 
 # Base image with all development tools
 base_image = (
@@ -200,22 +185,6 @@ base_image = (
         f"npm install -g agent-browser@{AGENT_BROWSER_VERSION}",
         "agent-browser install",
         "agent-browser --version",
-    )
-    # Install linear-cli (schpet/linear-cli) for agent-side Linear access.
-    # The npm package fetches a platform-native binary at install time and
-    # exposes it on PATH as `linear`. The agent authenticates via the
-    # LINEAR_API_KEY env var (no `linear auth login` needed); see the
-    # linear-cli Skill for usage.
-    .run_commands(
-        f"npm install -g @schpet/linear-cli@{LINEAR_CLI_VERSION}",
-        "linear --version",
-    )
-    # Install ctx7 (Context7) for up-to-date library/framework documentation.
-    # Exposes `ctx7` on PATH. Auth is optional: anonymous works (rate-limited),
-    # CONTEXT7_API_KEY raises limits. See the context7 Skill for usage.
-    .run_commands(
-        f"npm install -g ctx7@{CTX7_VERSION}",
-        "ctx7 --version",
     )
     # Create working directories
     .run_commands(

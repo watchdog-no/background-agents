@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v71-sandbox-sbin-path",
-  "generation": 71,
+  "runtimeVersion": "v72-remove-retired-agent-packages",
+  "generation": 72,
   "minimumCompatibleGeneration": 70,
-  "minimumRebuildGeneration": 71
+  "minimumRebuildGeneration": 72
 }

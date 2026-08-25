@@ -28,7 +28,6 @@ export {
 const log = createLogger("linear-client");
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
-const CLIENT_CREDENTIALS_TOKEN_KEY_PREFIX = "oauth:client-credentials:";
 export const LINEAR_GRAPHQL_TIMEOUT_MS = 15_000;
 
 const linearCommentCreateResponseSchema = z.object({
@@ -102,49 +101,6 @@ export async function getLinearClientOrThrow(
         expectedAppUserId,
       }),
   };
-}
-
-/**
- * Mint a fresh app-actor access token for the (single-tenant) workspace.
- *
- * Open-Inspect is single-tenant, so at most one workspace completes the OAuth
- * install and exactly one `oauth:client-credentials:*` entry lives in KV. This
- * resolves that entry and returns a valid token, transparently renewing it.
- * Used by the control plane to inject `LINEAR_API_KEY="Bearer <token>"` into
- * sandboxes so the coding agent acts as the Linear app, not a human user.
- *
- * Returns null when no workspace has authorized the app yet, or when more than
- * one workspace token exists. The latter is fail-closed on purpose: with
- * multiple tokens we cannot know which workspace the sandbox should act as, and
- * arbitrarily picking one risks authenticating the agent to the wrong workspace
- * and writing comments/updates into the wrong tenant. An operator must delete
- * the stale client-credentials cache entries before app-actor access resumes.
- */
-export async function getAppActorToken(env: Env): Promise<string | null> {
-  const { keys } = await env.LINEAR_KV.list({ prefix: CLIENT_CREDENTIALS_TOKEN_KEY_PREFIX });
-  if (keys.length === 0) return null;
-  if (keys.length > 1) {
-    // Single-tenant invariant violated — fail closed rather than guess a tenant.
-    log.error("app_token.multiple_workspaces", {
-      count: keys.length,
-      org_ids: keys
-        .map((key) => key.name.slice(CLIENT_CREDENTIALS_TOKEN_KEY_PREFIX.length))
-        .join(","),
-    });
-    return null;
-  }
-  const orgId = keys[0].name.slice(CLIENT_CREDENTIALS_TOKEN_KEY_PREFIX.length);
-  try {
-    return await getClientCredentialsTokenOrThrow(env, orgId);
-  } catch (error) {
-    if (!(error instanceof LinearAuthError)) throw error;
-    log.error("app_token.unavailable", {
-      org_id: orgId,
-      auth_failure_reason: error.reason,
-      status: error.status,
-    });
-    return null;
-  }
 }
 
 /**

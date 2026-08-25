@@ -283,7 +283,7 @@ function McpServerForm({
         <Input
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
-          placeholder="e.g. playwright, context7"
+          placeholder="e.g. documentation"
         />
       </div>
 

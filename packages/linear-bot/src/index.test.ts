@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateInternalToken } from "@open-inspect/shared/auth";
-import type { Env } from "./types";
 import type * as WebhookHandler from "./webhook-handler";
 import {
   createFakeKV,
@@ -26,95 +24,6 @@ vi.mock("./webhook-handler", async (importOriginal) => {
 });
 
 const { default: app } = await import("./index");
-
-function makeEnv(overrides: Partial<Env> = {}): Env {
-  const { kv } = createFakeKV();
-  return makeLinearBotEnv(kv, {
-    SERVICE_AUTH_SECRET: "internal-secret",
-    ...overrides,
-  });
-}
-
-function makeCtx() {
-  return makeExecutionContext();
-}
-
-async function authHeaders(secret = "internal-secret"): Promise<Record<string, string>> {
-  const token = await generateInternalToken(secret);
-  return { Authorization: `Bearer ${token}` };
-}
-
-function cachedClientCredentialsToken(accessToken: string): string {
-  const issuedAt = Date.now();
-  return JSON.stringify({
-    version: 1,
-    access_token: accessToken,
-    token_type: "Bearer",
-    scope: "read,write,app:assignable,app:mentionable",
-    issued_at: issuedAt,
-    expires_at: issuedAt + 60 * 60 * 1000,
-    organization_id: "org-1",
-    organization_name: "Acme",
-    app_user_id: "app-user-1",
-  });
-}
-
-describe("GET /internal/app-token", () => {
-  it("returns 500 when internal auth is not configured", async () => {
-    const response = await app.fetch(
-      new Request("http://localhost/internal/app-token"),
-      makeEnv({ SERVICE_AUTH_SECRET: undefined }),
-      makeCtx()
-    );
-
-    expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({ error: "Auth not configured" });
-  });
-
-  it("returns 401 for invalid internal auth", async () => {
-    const response = await app.fetch(
-      new Request("http://localhost/internal/app-token", {
-        headers: { Authorization: "Bearer invalid" },
-      }),
-      makeEnv(),
-      makeCtx()
-    );
-
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
-  });
-
-  it("returns 404 when no workspace has authorized the app", async () => {
-    const response = await app.fetch(
-      new Request("http://localhost/internal/app-token", {
-        headers: await authHeaders(),
-      }),
-      makeEnv(),
-      makeCtx()
-    );
-
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "no_authorized_workspace" });
-  });
-
-  it("returns the app actor token for an authorized workspace", async () => {
-    const { kv } = createFakeKV({
-      "oauth:client-credentials:org-1": cachedClientCredentialsToken("app-token"),
-    });
-    const env = makeLinearBotEnv(kv, { SERVICE_AUTH_SECRET: "internal-secret" });
-
-    const response = await app.fetch(
-      new Request("http://localhost/internal/app-token", {
-        headers: await authHeaders(),
-      }),
-      env,
-      makeCtx()
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ accessToken: "app-token" });
-  });
-});
 
 function makeAgentSessionPayload(webhookId = "webhook-config-1") {
   return {

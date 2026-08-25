@@ -3,14 +3,12 @@ import {
   emitAgentActivity,
   fetchIssueDetails,
   fetchUser,
-  getAppActorToken,
   getRepoSuggestions,
   LINEAR_GRAPHQL_TIMEOUT_MS,
   linearGraphQL,
   postIssueComment,
 } from "./linear-client";
 import type { LinearApiClient } from "./linear-client";
-import { createFakeKV, makeLinearBotEnv } from "../test-helpers";
 
 const client: LinearApiClient = {
   accessToken: "test-token",
@@ -26,25 +24,6 @@ function mockFetchResponse(data: unknown): void {
       json: () => Promise.resolve(data),
     })
   );
-}
-
-function cachedClientCredentialsToken(
-  accessToken: string,
-  organizationId: string,
-  appUserId = "app-user-1"
-): string {
-  const issuedAt = Date.now();
-  return JSON.stringify({
-    version: 1,
-    access_token: accessToken,
-    token_type: "Bearer",
-    scope: "read,write,app:assignable,app:mentionable",
-    issued_at: issuedAt,
-    expires_at: issuedAt + 60 * 60 * 1000,
-    organization_id: organizationId,
-    organization_name: "Acme",
-    app_user_id: appUserId,
-  });
 }
 
 describe("linearGraphQL", () => {
@@ -306,41 +285,6 @@ describe("getRepoSuggestions", () => {
     });
 
     await expect(getRepoSuggestions(client, "issue-1", "agent-1", [])).resolves.toEqual([]);
-  });
-});
-
-describe("getAppActorToken", () => {
-  it("returns null when no workspace has authorized the app", async () => {
-    const { kv } = createFakeKV();
-    await expect(getAppActorToken(makeLinearBotEnv(kv))).resolves.toBeNull();
-  });
-
-  it("resolves the single workspace client-credentials token", async () => {
-    const { kv } = createFakeKV({
-      "oauth:client-credentials:org-1": cachedClientCredentialsToken("tok-abc", "org-1"),
-    });
-    await expect(getAppActorToken(makeLinearBotEnv(kv))).resolves.toBe("tok-abc");
-  });
-
-  it("fails closed when multiple workspace tokens exist", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const { kv } = createFakeKV({
-      "oauth:client-credentials:org-1": cachedClientCredentialsToken("tok-1", "org-1"),
-      "oauth:client-credentials:org-2": cachedClientCredentialsToken("tok-2", "org-2"),
-    });
-
-    await expect(getAppActorToken(makeLinearBotEnv(kv))).resolves.toBeNull();
-    const logLines = consoleError.mock.calls.map(([line]) => JSON.parse(String(line)));
-    expect(logLines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          level: "error",
-          msg: "app_token.multiple_workspaces",
-          count: 2,
-          org_ids: "org-1,org-2",
-        }),
-      ])
-    );
   });
 });
 
