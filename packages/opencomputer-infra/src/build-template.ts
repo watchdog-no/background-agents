@@ -6,10 +6,12 @@ import runtimeManifest from "../../sandbox-runtime/src/sandbox_runtime/runtime_m
 
 // Never pin below 1.18.15 — see packages/modal-infra/src/images/base.py for why
 // (OpenCode's message-ID counter wraps and earlier releases order by ID string).
-const OPENCODE_VERSION = "1.18.18";
+const NODE_MAJOR_VERSION = "24";
+const OPENCODE_VERSION = "1.18.23";
 const CODE_SERVER_VERSION = "4.109.5";
 const PYTHON_VERSION = "3.12";
-const AGENT_BROWSER_VERSION = "0.21.2";
+const AGENT_BROWSER_VERSION = "0.35.0";
+const BUN_VERSION = "1.4.0";
 const TTYD_VERSION = "1.7.7";
 const TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55";
 const SANDBOX_HOME = "/home/sandbox";
@@ -155,6 +157,9 @@ function buildImage(options: Pick<BuildOptions, "repoRoot" | "builderMemoryMb">)
     .pipInstall(["uv"])
     .runCommands(
       `mkdir -p ${SANDBOX_APP_DIR} ${NPM_PREFIX} ${NPM_CACHE} ${USER_BIN} ${SANDBOX_HOME}/.config ${SANDBOX_HOME}/workspace ${SANDBOX_HOME}/tmp/opencode`,
+      `curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR_VERSION}.x | sudo -E bash -`,
+      "sudo apt-get install -y nodejs",
+      "node --version",
       `HOME=${SANDBOX_HOME} UV_CACHE_DIR=${UV_CACHE} UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR} uv python install ${PYTHON_VERSION}`,
       `HOME=${SANDBOX_HOME} UV_CACHE_DIR=${UV_CACHE} UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR} uv venv --python ${PYTHON_VERSION} ${PYTHON_VENV}`,
       `ln -sf ${PYTHON_VENV}/bin/python ${USER_BIN}/python3`,
@@ -188,7 +193,7 @@ function buildImage(options: Pick<BuildOptions, "repoRoot" | "builderMemoryMb">)
       "sudo mv /tmp/ttyd /usr/local/bin/ttyd",
       "sudo chmod 0755 /usr/local/bin/ttyd",
       // bun — used by agent-browser and some opencode tooling.
-      `curl -fsSL https://bun.sh/install | sudo env BUN_INSTALL=${BUN_INSTALL_DIR} bash || true`,
+      `curl -fsSL https://bun.sh/install | sudo env BUN_INSTALL=${BUN_INSTALL_DIR} bash -s "bun-v${BUN_VERSION}" || true`,
       // agent-browser Chromium download (best-effort; the shared libs are installed via aptInstall above).
       `sudo env HOME=${SANDBOX_HOME} PATH=${NPM_PREFIX}/bin:${BUN_INSTALL_DIR}/bin:${USER_BIN}:/usr/local/bin:/usr/bin:/bin agent-browser install || true`
     )

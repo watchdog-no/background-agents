@@ -16,22 +16,21 @@ if TYPE_CHECKING:
 #
 # Never pin below 1.18.15 — see packages/modal-infra/src/images/base.py for why
 # (OpenCode's message-ID counter wraps and earlier releases order by ID string).
-OPENCODE_VERSION = "1.18.18"
+OPENCODE_VERSION = "1.18.23"
 CODE_SERVER_VERSION = "4.109.5"
-AGENT_BROWSER_VERSION = "0.21.2"
-LINEAR_CLI_VERSION = "2.0.0"
-CTX7_VERSION = "0.4.4"
+AGENT_BROWSER_VERSION = "0.35.0"
+BUN_VERSION = "1.4.0"
 # Bump when changing image contents to invalidate the Daytona snapshot.
 # daytona-v2: install the SCM credential-helper shim and configure
 # git system-wide so per-request token brokerage works (parity with Modal v52).
-# daytona-v3: install schpet/linear-cli for agent-side Linear access.
-# daytona-v4: install ctx7 (Context7) for agent-side library documentation.
 # daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
 # daytona-v6: upgrade OpenCode after upstream SSE fixes.
 # daytona-v7: upgrade to OpenCode 1.18.11.
 # daytona-v8: add the VNC/noVNC desktop toolchain.
 # daytona-v9: upgrade past the OpenCode message-ID wraparound bug.
-SANDBOX_VERSION = "daytona-v9-vnc-opencode-1-18-18"
+# daytona-v10: remove retired agent-side packages.
+# daytona-v11: upgrade the Node, OpenCode, agent-browser, and Bun toolchain.
+SANDBOX_VERSION = "daytona-v11-node24-vnc-opencode-1-18-23"
 
 
 def build_base_image(repo_root: Path) -> Image:
@@ -54,10 +53,10 @@ def build_base_image(repo_root: Path) -> Image:
             "https://cli.github.com/packages stable main' "
             "> /etc/apt/sources.list.d/github-cli.list",
             "apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*",
-            "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
+            "curl -fsSL https://deb.nodesource.com/setup_24.x | bash -",
             "apt-get install -y nodejs",
             "npm install -g pnpm@latest",
-            "curl -fsSL https://bun.sh/install | bash",
+            f'curl -fsSL https://bun.sh/install | bash -s "bun-v{BUN_VERSION}"',
             "python -m pip install --upgrade pip",
         )
         .pip_install(
@@ -77,8 +76,6 @@ def build_base_image(repo_root: Path) -> Image:
             "rm /tmp/code-server.deb",
             f"npm install -g agent-browser@{AGENT_BROWSER_VERSION}",
             "agent-browser install",
-            f"npm install -g @schpet/linear-cli@{LINEAR_CLI_VERSION}",
-            f"npm install -g ctx7@{CTX7_VERSION}",
             "mkdir -p /workspace /app /tmp/opencode",
             # Install the SCM credential-helper shim and configure git
             # system-wide. The shim delegates to the Python helper module

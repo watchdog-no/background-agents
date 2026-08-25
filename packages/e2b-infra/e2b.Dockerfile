@@ -15,9 +15,10 @@
 FROM python:3.12-slim-bookworm
 
 # Pinned toolchain versions (keep in sync with daytona-infra/src/toolchain.py).
-ARG OPENCODE_VERSION=1.18.18
+ARG OPENCODE_VERSION=1.18.23
 ARG CODE_SERVER_VERSION=4.109.5
-ARG AGENT_BROWSER_VERSION=0.21.2
+ARG AGENT_BROWSER_VERSION=0.35.0
+ARG BUN_VERSION=1.4.0
 
 # System packages: git/build toolchain + browser and VNC/noVNC dependencies.
 RUN apt-get update \
@@ -31,11 +32,11 @@ RUN apt-get update \
   && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' \
      > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/* \
-  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
   && apt-get install -y nodejs \
   && npm install -g pnpm@latest \
   # Install bun system-wide (not /root/.bun, which the runtime `user` can't read).
-  && BUN_INSTALL=/usr/local curl -fsSL https://bun.sh/install | bash \
+  && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s "bun-v${BUN_VERSION}" \
   && python -m pip install --upgrade pip
 
 # Python runtime deps for the supervisor + bridge.

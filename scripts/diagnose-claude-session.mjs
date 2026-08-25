@@ -42,7 +42,7 @@
  *   PROMPT='Hello, who are you?'     # first prompt to send through OpenCode
  *   SECOND_PROMPT='...'              # second same-session prompt used to verify prompt caching
  *   OPENCODE_BIN=opencode           # use a binary on PATH instead of the pinned npx version
- *   OPENCODE_VERSION=1.15.13        # npx version to run when OPENCODE_BIN is unset
+ *   OPENCODE_VERSION=1.18.23        # npx version to run when OPENCODE_BIN is unset
  *   KEEP_TMP=1                      # don't delete the temp sandbox dir (for inspection)
  */
 
@@ -67,7 +67,7 @@ const CLIENT_ID =
 const ANTHROPIC_BASE = "https://api.anthropic.com";
 const BETA = "oauth-2025-04-20";
 const MODEL = process.env.MODEL?.trim() || process.env.VERIFY_MODEL?.trim() || "claude-sonnet-4-6";
-const OPENCODE_VERSION = process.env.OPENCODE_VERSION?.trim() || "1.15.13";
+const OPENCODE_VERSION = process.env.OPENCODE_VERSION?.trim() || "1.18.23";
 const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 const SANDBOX_AUTH_TOKEN = "diag-sandbox-auth-token";
 const SESSION_ID = "diag-session";

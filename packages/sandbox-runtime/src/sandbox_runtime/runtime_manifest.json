@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v71-sandbox-sbin-path",
-  "generation": 71,
+  "runtimeVersion": "v73-node24-agent-toolchain",
+  "generation": 73,
   "minimumCompatibleGeneration": 70,
-  "minimumRebuildGeneration": 71
+  "minimumRebuildGeneration": 73
 }

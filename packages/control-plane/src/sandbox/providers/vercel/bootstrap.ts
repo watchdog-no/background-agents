@@ -18,9 +18,10 @@ export function buildVercelBootstrapScript(params: { runtimeExtractDir?: string 
   return `
 set -euo pipefail
 
-OPENCODE_VERSION="1.18.18"
+OPENCODE_VERSION="1.18.23"
 CODE_SERVER_VERSION="4.109.5"
-AGENT_BROWSER_VERSION="0.21.2"
+AGENT_BROWSER_VERSION="0.35.0"
+BUN_VERSION="1.4.0"
 TTYD_VERSION="1.7.7"
 TTYD_SHA256="8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 FLUXBOX_VERSION="1.3.7"
@@ -82,7 +83,7 @@ test -f /usr/share/novnc/vnc.html
 
 sudo npm install -g pnpm@latest opencode-ai@"$OPENCODE_VERSION" @opencode-ai/plugin@"$OPENCODE_VERSION" zod agent-browser@"$AGENT_BROWSER_VERSION"
 if [ ! -x /root/.bun/bin/bun ]; then
-  curl -fsSL https://bun.sh/install | sudo -E bash || true
+  curl -fsSL https://bun.sh/install | sudo -E bash -s "bun-v$BUN_VERSION" || true
 fi
 sudo env PATH="/root/.bun/bin:$PATH" agent-browser install || true
 

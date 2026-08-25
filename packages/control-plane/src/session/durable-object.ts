@@ -17,7 +17,6 @@ import {
 import { isSessionPromptable } from "@open-inspect/shared/types/session-activity";
 import { resolveAppName } from "@open-inspect/shared/app-name";
 import { DEFAULT_MODEL } from "@open-inspect/shared/models";
-import { injectLinearAppToken } from "./linear-app-token";
 import { generateId, hashToken, encryptToken } from "../auth/crypto";
 import { resolveSandboxBackendName } from "../sandbox/provider-name";
 import { createSandboxProviderFromEnv } from "../sandbox/provider-factory";
@@ -425,7 +424,6 @@ export class SessionDO extends DurableObject<Env> {
         durableObjectId: this.ctx.id.toString(),
         repoSecretsEncryptionKey: this.env.REPO_SECRETS_ENCRYPTION_KEY,
         secretsCapEnforcement: this.env.SECRETS_CAP_ENFORCEMENT,
-        injectLinearAppToken: (sandboxEnv, log) => injectLinearAppToken(this.env, sandboxEnv, log),
         log: () => this.log,
       });
     }
