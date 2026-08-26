@@ -1,9 +1,10 @@
 /**
  * Session target resolution for Linear issues.
  *
- * Owns the five-stage ladder — project mapping → team mapping → explicit
+ * Owns the six-stage ladder — project mapping → team mapping → explicit
  * `owner/repo` in the trigger or clarification-reply comment → Linear's
- * repo-suggestions API → LLM classification — and the target-kind policy.
+ * repo-suggestions API → configured default → LLM classification — and the
+ * target-kind policy.
  * Team and project mappings may name a repository or a saved environment
  * (design §7.5); the suggestion and classification stages remain
  * repository-only. Targets unify instead of migrate — repository entries
@@ -37,6 +38,18 @@ function extendsRepositoryPath(text: string, index: number, direction: -1 | 1): 
   return REPO_PATH_CHAR.test(text[cursor] ?? "");
 }
 
+function containsRepositoryUrlReference(text: string, reference: string): boolean {
+  for (const match of text.matchAll(/https?:\/\/[^\s<>|]+/g)) {
+    try {
+      const path = new URL(match[0]).pathname.replace(/^\/+/, "").toLowerCase();
+      if (path === reference || path.startsWith(`${reference}/`)) return true;
+    } catch {
+      // Ignore malformed URL-like text and continue with ordinary references.
+    }
+  }
+  return false;
+}
+
 /**
  * Find the single available repository a comment names explicitly.
  *
@@ -49,6 +62,7 @@ export function matchExplicitRepo(text: string, repos: RepoConfig[]): RepoConfig
   const haystack = text.toLowerCase();
   const named = repos.filter((repo) => {
     const needle = repo.fullName.toLowerCase();
+    if (containsRepositoryUrlReference(haystack, needle)) return true;
     for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
       const end = at + needle.length;
       // A neighbor extends the repository path when it is a path character,
@@ -277,7 +291,23 @@ export async function resolveSessionTarget(
     }
   }
 
-  // 5. Fall back to our LLM classification
+  // 5. Use the configured default when richer routing signals did not resolve.
+  const configuredDefaultRepository = env.CLASSIFICATION_DEFAULT_REPOSITORY?.trim().toLowerCase();
+  const defaultRepo = configuredDefaultRepository
+    ? repos.find(
+        (repo) =>
+          repo.fullName.toLowerCase() === configuredDefaultRepository ||
+          repo.id.toLowerCase() === configuredDefaultRepository
+      )
+    : null;
+  if (defaultRepo) {
+    return {
+      target: repositoryTarget(defaultRepo.owner, defaultRepo.name, defaultRepo.fullName),
+      reasoning: `No project, team, explicit repository, or Linear suggestion matched; using the configured default repository ${defaultRepo.fullName}`,
+    };
+  }
+
+  // 6. Fall back to our LLM classification
   await emitAgentActivity(
     client,
     agentSessionId,

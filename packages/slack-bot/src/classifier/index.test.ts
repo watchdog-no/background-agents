@@ -74,7 +74,6 @@ const TEST_ENVIRONMENT: Environment = {
 };
 
 const TEST_ENV = {
-  CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
   SERVICE_AUTH_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
@@ -136,7 +135,7 @@ describe("RepoClassifier", () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe("https://internal/classify");
     const sentBody = JSON.parse((init as RequestInit).body as string);
-    expect(sentBody.model).toBe("anthropic/claude-haiku-4-5");
+    expect(sentBody.model).toBe("openai/gpt-5.6-luna");
     expect(typeof sentBody.prompt).toBe("string");
     expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
       "slack-bot"
@@ -169,12 +168,22 @@ describe("RepoClassifier", () => {
       ["repository short name", "please fix web", "acme/web"],
       ["repository alias", "please fix the frontend", "acme/web"],
       ["terminal punctuation", "please use acme/web.", "acme/web"],
+      ["repository URL", "please fix <https://github.com/acme/web/issues/1>", "acme/web"],
     ])("routes an explicit %s without calling the endpoint", async (_label, message, expected) => {
       const classifier = new RepoClassifier(envWithDefault);
       const result = await classifier.classify(message);
 
       expect(classifiedRepoFullName(result)).toBe(expected);
       expect(result.reasoning).toContain("explicitly names repository");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("prioritizes a full repository name over another repository's short name", async () => {
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify("fix web rendering in acme/prod");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
+      expect(result.needsClarification).toBe(false);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 

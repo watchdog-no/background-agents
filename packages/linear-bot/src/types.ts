@@ -20,7 +20,8 @@ export interface Env {
   CONTROL_PLANE_URL: string;
   WEB_APP_URL: string;
   DEFAULT_MODEL: string;
-  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: anthropic/claude-haiku-4-5)
+  CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.6-luna)
+  CLASSIFICATION_DEFAULT_REPOSITORY?: string; // deterministic fallback after mappings, explicit mentions, and Linear suggestions
   APP_NAME?: string;
 
   // OAuth app credentials

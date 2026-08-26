@@ -39,7 +39,6 @@ const TEST_REPOS: RepoConfig[] = [
 ];
 
 const TEST_ENV = {
-  CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
   SERVICE_AUTH_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
@@ -95,7 +94,7 @@ describe("classifyRepo", () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe("https://internal/classify");
     const sent = JSON.parse((init as RequestInit).body as string);
-    expect(sent.model).toBe("anthropic/claude-haiku-4-5");
+    expect(sent.model).toBe("openai/gpt-5.6-luna");
     expect(typeof sent.prompt).toBe("string");
     expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
       "linear-bot"

@@ -38,7 +38,7 @@ export interface SessionRow {
   base_sha: string | null;
   current_sha: string | null;
   opencode_session_id: string | null;
-  model: string; // LLM model to use (e.g., "anthropic/claude-haiku-4-5")
+  model: string; // LLM model to use (e.g., "openai/gpt-5.6-luna")
   reasoning_effort: string | null; // Reasoning effort level (e.g., "high", "max")
   status: SessionStatus;
   parent_session_id: string | null;

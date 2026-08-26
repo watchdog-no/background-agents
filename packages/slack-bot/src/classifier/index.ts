@@ -29,7 +29,7 @@ import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
 const CLASSIFY_TARGET_TOOL_NAME = "classify_repository";
-const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.6-luna";
 const CONFIDENCE_LEVELS: ClassificationResult["confidence"][] = ["high", "medium", "low"];
 
 /**
