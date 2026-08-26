@@ -1,16 +1,22 @@
 /**
  * Target classifier for the Slack bot.
  *
- * Uses an LLM to classify which target — a repository or a saved environment —
- * a Slack message refers to, based on message content, thread context, and
- * channel information.
+ * Resolves which target — a repository or a saved environment — a Slack
+ * message refers to. Deterministic routing handles configured rules, channel
+ * associations, explicit mentions, and the configured default before the LLM
+ * fallback is considered.
  */
 
 import type { Env, ThreadContext, ClassificationResult } from "../types";
 import { buildRepoDescriptions } from "./repos";
 import { buildEnvironmentDescriptions } from "./environments";
 import { loadTargetCatalog, type TargetCatalog } from "./catalog";
-import { matchTargetId, resolveChannelTargets, resolveRoutingRuleTargets } from "./routing";
+import {
+  matchTargetId,
+  resolveChannelTargets,
+  resolveExplicitTargets,
+  resolveRoutingRuleTargets,
+} from "./routing";
 import { escapeMrkdwnText } from "@open-inspect/shared/slack";
 import type {
   ClassifyErrorResponse,
@@ -214,7 +220,7 @@ export class RepoClassifier {
    * Returns a high-confidence result when exactly one accessible target matches,
    * a clarification result when several distinct targets match (so the user
    * picks rather than the bot guessing), or `null` when no rule applies — in
-   * which case the caller falls through to channel association and the LLM.
+   * which case the caller continues through the remaining routing stages.
    */
   private async classifyByRoutingRules(
     message: string,
@@ -254,11 +260,9 @@ export class RepoClassifier {
    * {@link resolveChannelTargets}).
    *
    * Returns a high-confidence result when the channel is associated with
-   * exactly one target. Several associated repositories fall through (`null`)
-   * to the LLM, which is told to weigh channel context — but channel
-   * associations themselves aren't part of its prompt signal, so a
-   * multi-target set that includes an environment asks the user
-   * deterministically instead of letting the model drop the association.
+   * exactly one target. Several associated repositories continue through the
+   * explicit/default stages, while a multi-target set that includes an
+   * environment asks the user deterministically.
    */
   private classifyByChannelAssociations(
     channelId: string,
@@ -351,7 +355,53 @@ export class RepoClassifier {
       };
     }
 
-    // Delegate the LLM call to the control plane.
+    const messageTargets = resolveExplicitTargets(message, catalog);
+    const explicitTargets =
+      messageTargets.length > 0 || !context?.previousMessages?.length
+        ? messageTargets
+        : resolveExplicitTargets(context.previousMessages.join("\n"), catalog);
+    if (explicitTargets.length === 1) {
+      const target = explicitTargets[0];
+      log.info("classifier.explicit_target_match", {
+        trace_id: traceId,
+        target_id: targetId(target),
+      });
+      return {
+        target,
+        confidence: "high",
+        reasoning: `Message or thread context explicitly names ${target.kind} ${escapeMrkdwnText(targetLabel(target))}.`,
+        needsClarification: false,
+      };
+    }
+    if (explicitTargets.length > 1) {
+      return {
+        target: null,
+        confidence: "medium",
+        reasoning: "The message names several targets; asking which one to use.",
+        alternatives: explicitTargets,
+        needsClarification: true,
+      };
+    }
+
+    const configuredDefaultRepository = this.env.CLASSIFICATION_DEFAULT_REPOSITORY?.trim();
+    const defaultTarget = configuredDefaultRepository
+      ? matchTargetId(configuredDefaultRepository, catalog)
+      : null;
+    if (defaultTarget?.kind === "repository") {
+      log.info("classifier.default_repository_match", {
+        trace_id: traceId,
+        target_id: defaultTarget.repo.fullName,
+      });
+      return {
+        target: defaultTarget,
+        confidence: "high",
+        reasoning: `No explicit target matched; using the configured default repository ${escapeMrkdwnText(defaultTarget.repo.fullName)}.`,
+        needsClarification: false,
+      };
+    }
+
+    // Preserve the provider classifier as a fallback for deployments without a
+    // valid default repository.
     try {
       const prompt = buildClassificationPrompt(message, catalog, context);
 

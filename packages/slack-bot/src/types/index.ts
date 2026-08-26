@@ -28,6 +28,7 @@ export interface Env {
   WEB_APP_URL: string;
   DEFAULT_MODEL: string;
   CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: anthropic/claude-haiku-4-5)
+  CLASSIFICATION_DEFAULT_REPOSITORY?: string; // deterministic fallback after rules, channels, and explicit mentions
   APP_NAME?: string;
   /**
    * Kill switch for Slack channel-message automation triggers. The bot only

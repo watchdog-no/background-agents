@@ -35,6 +35,7 @@ import { commitSigningRoutes } from "./routes/commit-signing";
 import { scmSettingsRoutes } from "./routes/scm-settings";
 import { modelPreferencesRoutes } from "./routes/model-preferences";
 import { reposRoutes } from "./routes/repos";
+import { classifyRoutes } from "./routes/classify";
 import { secretsRoutes } from "./routes/secrets";
 import { environmentRoutes } from "./routes/environments";
 import { environmentSecretsRoutes } from "./routes/environment-secrets";
@@ -321,6 +322,9 @@ export const routes: Route[] = [
 
   // Repository management
   ...reposRoutes,
+
+  // Target classification for bots
+  ...classifyRoutes,
 
   // Secrets
   ...secretsRoutes,

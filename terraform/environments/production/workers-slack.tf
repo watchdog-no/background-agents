@@ -70,12 +70,11 @@ module "slack_bot_worker" {
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = "openai/gpt-5.6-sol" },
-    # Repo classification runs in-Worker via the control-plane /classify
-    # endpoint. Must be an Anthropic model: OpenAI subscription OAuth routes to
-    # the chatgpt.com Codex backend, which Cloudflare edge-blocks (403) from
-    # Worker egress IPs. The Anthropic OAuth path hits api.anthropic.com, which
-    # is reachable from Workers.
-    { name = "CLASSIFICATION_MODEL", value = "anthropic/claude-haiku-4-5" },
+    # The classifier only calls the provider when deterministic routing and the
+    # configured default cannot resolve a target. Luna uses the metered
+    # OPENAI_API_KEY path because ChatGPT subscription OAuth is blocked from Workers.
+    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.6-luna" },
+    { name = "CLASSIFICATION_DEFAULT_REPOSITORY", value = "watchdog-no/watchdog-monorepo" },
     # Kill switch for Slack channel-message triggers; the bot only ingests/
     # forwards channel messages when this is exactly "true" (dark by default).
     { name = "SLACK_TRIGGERS_ENABLED", value = var.slack_triggers_enabled ? "true" : "false" },

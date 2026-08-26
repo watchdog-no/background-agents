@@ -1,6 +1,6 @@
 /**
  * Target resolution for the classifier's stages: matched keyword rules,
- * channel associations, and LLM-returned target ids → launchable
+ * channel associations, explicit mentions, and LLM-returned target ids → launchable
  * {@link SlackSessionTarget}s. Every resolver works over the
  * {@link TargetCatalog} the classifier loads up front, so this module owns
  * target-kind dispatch and no fetching (routing rules aside).
@@ -16,6 +16,31 @@ import type { TargetCatalog } from "./catalog";
 export interface ResolvedRoutingRuleTarget {
   target: SlackSessionTarget;
   keyword: string;
+}
+
+const TARGET_PATH_CHAR = /[\w/-]/;
+
+function extendsTargetReference(text: string, index: number, direction: -1 | 1): boolean {
+  const neighbor = text[index] ?? "";
+  if (TARGET_PATH_CHAR.test(neighbor)) return true;
+  if (neighbor !== ".") return false;
+
+  let cursor = index + direction;
+  while (text[cursor] === ".") cursor += direction;
+  return TARGET_PATH_CHAR.test(text[cursor] ?? "");
+}
+
+function containsExplicitReference(text: string, reference: string): boolean {
+  const needle = reference.trim().toLowerCase();
+  if (!needle) return false;
+
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    const end = at + needle.length;
+    if (!extendsTargetReference(text, at - 1, -1) && !extendsTargetReference(text, end, 1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -69,6 +94,35 @@ export function resolveChannelTargets(
       .map((environment): SlackSessionTarget => ({ kind: "environment", environment })),
     ...catalog.repos
       .filter((repo) => repo.channelAssociations?.includes(channelId))
+      .map((repo): SlackSessionTarget => ({ kind: "repository", repo })),
+  ];
+}
+
+/**
+ * Find every catalog target named explicitly in a message. Repository full
+ * names, short names, and configured aliases match case-insensitively; saved
+ * environments match by id or name. Boundary checks prevent a short target
+ * such as `api` from matching inside `rapidly` or `api-legacy`.
+ */
+export function resolveExplicitTargets(
+  message: string,
+  catalog: TargetCatalog
+): SlackSessionTarget[] {
+  const text = message.toLowerCase();
+  return [
+    ...catalog.environments
+      .filter((environment) =>
+        [environment.id, environment.name].some((reference) =>
+          containsExplicitReference(text, reference)
+        )
+      )
+      .map((environment): SlackSessionTarget => ({ kind: "environment", environment })),
+    ...catalog.repos
+      .filter((repo) =>
+        [repo.fullName, repo.name, ...(repo.aliases ?? [])].some((reference) =>
+          containsExplicitReference(text, reference)
+        )
+      )
       .map((repo): SlackSessionTarget => ({ kind: "repository", repo })),
   ];
 }

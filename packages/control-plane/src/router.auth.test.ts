@@ -140,6 +140,12 @@ describe("managed skill browser authentication", () => {
   });
 });
 
+describe("bot classification routing", () => {
+  it("registers the service-authenticated classify endpoint", () => {
+    expect(routeFor("POST", "/classify")?.authentication.kind).toBe("user-or-service");
+  });
+});
+
 describe("route-owned principal restrictions", () => {
   it("rejects a non-web service on web-service routes", async () => {
     const { env } = createEnv(401);
