@@ -74,7 +74,6 @@ const TEST_ENVIRONMENT: Environment = {
 };
 
 const TEST_ENV = {
-  CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
   SERVICE_AUTH_SECRET: "test-secret",
   CONTROL_PLANE: { fetch: mockFetch },
 } as unknown as Env;
@@ -121,12 +120,12 @@ describe("RepoClassifier", () => {
     mockClassifyResult({
       targetId: "acme/prod",
       confidence: "high",
-      reasoning: "The message explicitly mentions prod.",
+      reasoning: "The alerting issue belongs to prod.",
       alternatives: [],
     });
 
     const classifier = new RepoClassifier(TEST_ENV);
-    const result = await classifier.classify("please fix prod slack alerts", undefined, "trace-1");
+    const result = await classifier.classify("please fix the alerting issue", undefined, "trace-1");
 
     expect(classifiedRepoFullName(result)).toBe("acme/prod");
     expect(result.confidence).toBe("high");
@@ -136,7 +135,7 @@ describe("RepoClassifier", () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe("https://internal/classify");
     const sentBody = JSON.parse((init as RequestInit).body as string);
-    expect(sentBody.model).toBe("anthropic/claude-haiku-4-5");
+    expect(sentBody.model).toBe("openai/gpt-5.6-luna");
     expect(typeof sentBody.prompt).toBe("string");
     expect(new Headers((init as RequestInit).headers).get("X-OpenInspect-Service")).toBe(
       "slack-bot"
@@ -145,13 +144,105 @@ describe("RepoClassifier", () => {
     expect(prompt).toContain("## Available Repositories\n- acme/prod\n- acme/web");
   });
 
+  it("uses the configured default repository without calling the endpoint", async () => {
+    const classifier = new RepoClassifier({
+      ...TEST_ENV,
+      CLASSIFICATION_DEFAULT_REPOSITORY: "acme/prod",
+    });
+    const result = await classifier.classify("please fix this issue");
+
+    expect(classifiedRepoFullName(result)).toBe("acme/prod");
+    expect(result.confidence).toBe("high");
+    expect(result.reasoning).toContain("configured default repository acme/prod");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  describe("explicit target mentions", () => {
+    const envWithDefault = {
+      ...TEST_ENV,
+      CLASSIFICATION_DEFAULT_REPOSITORY: "acme/prod",
+    } as Env;
+
+    it.each([
+      ["repository full name", "please use ACME/WEB for this", "acme/web"],
+      ["repository short name", "please fix web", "acme/web"],
+      ["repository alias", "please fix the frontend", "acme/web"],
+      ["terminal punctuation", "please use acme/web.", "acme/web"],
+      ["repository URL", "please fix <https://github.com/acme/web/issues/1>", "acme/web"],
+    ])("routes an explicit %s without calling the endpoint", async (_label, message, expected) => {
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify(message);
+
+      expect(classifiedRepoFullName(result)).toBe(expected);
+      expect(result.reasoning).toContain("explicitly names repository");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("prioritizes a full repository name over another repository's short name", async () => {
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify("fix web rendering in acme/prod");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/prod");
+      expect(result.needsClarification).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("does not match a repository name inside a longer repository path", async () => {
+      const classifier = new RepoClassifier({
+        ...TEST_ENV,
+        CLASSIFICATION_DEFAULT_REPOSITORY: "acme/web",
+      });
+      const result = await classifier.classify("compare prod-legacy behavior");
+
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
+      expect(result.reasoning).toContain("configured default repository");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("asks for clarification when several targets are named", async () => {
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify("compare acme/prod and acme/web");
+
+      expect(result.target).toBeNull();
+      expect(result.needsClarification).toBe(true);
+      expect(
+        result.alternatives?.map((target) =>
+          target.kind === "repository" ? target.repo.fullName : target.environment.id
+        )
+      ).toEqual(["acme/prod", "acme/web"]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("routes an explicitly named environment before the repository default", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([TEST_ENVIRONMENT]);
+
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify("work on full-stack");
+
+      expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
+      expect(result.reasoning).toContain("explicitly names environment");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("uses an explicit repository from thread context when the message names none", async () => {
+      const classifier = new RepoClassifier(envWithDefault);
+      const result = await classifier.classify("please fix it", {
+        channelId: "C123",
+        previousMessages: ["The problem is in acme/web."],
+      });
+
+      expect(classifiedRepoFullName(result)).toBe("acme/web");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("flags an infra failure with the endpoint reason when the endpoint errors", async () => {
     mockFetch.mockResolvedValue(
       jsonResponse({ reason: "oauth_unauthorized", message: "rejected" }, 502)
     );
 
     const classifier = new RepoClassifier(TEST_ENV);
-    const result = await classifier.classify("frontend UI issue in web app");
+    const result = await classifier.classify("please diagnose this issue");
 
     expect(result.target).toBeNull();
     expect(result.confidence).toBe("low");
@@ -172,7 +263,7 @@ describe("RepoClassifier", () => {
     );
 
     const classifier = new RepoClassifier(TEST_ENV);
-    const result = await classifier.classify("please update prod deployment config");
+    const result = await classifier.classify("please update the deployment config");
 
     expect(result.target).toBeNull();
     expect(result.needsClarification).toBe(true);
@@ -236,16 +327,16 @@ describe("RepoClassifier", () => {
     });
 
     it("skips a rule whose target is not accessible and falls through to the endpoint", async () => {
-      mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/ghost" }]);
+      mockGetRoutingRules.mockResolvedValue([{ keyword: "navigation", target: "acme/ghost" }]);
       mockClassifyResult({
         targetId: "acme/web",
         confidence: "high",
-        reasoning: "Mentions frontend.",
+        reasoning: "The navigation belongs to web.",
         alternatives: [],
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("frontend issue");
+      const result = await classifier.classify("navigation issue");
 
       expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).toHaveBeenCalledOnce();
@@ -384,7 +475,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("fullstack web app issue");
+      const result = await classifier.classify("fullstack login issue");
 
       expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).toHaveBeenCalledOnce();
@@ -488,7 +579,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("web app issue", { channelId: "C123" });
+      const result = await classifier.classify("login issue", { channelId: "C123" });
 
       expect(classifiedRepoFullName(result)).toBe("acme/web");
       expect(mockFetch).toHaveBeenCalledOnce();
@@ -506,7 +597,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("update login across web and prod");
+      const result = await classifier.classify("update login across both services");
 
       expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
       expect(result.needsClarification).toBe(false);
@@ -524,7 +615,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      await classifier.classify("web app issue");
+      await classifier.classify("landing page issue");
 
       expect(sentPrompt()).not.toContain("## Available Environments");
     });
@@ -539,7 +630,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("work on full-stack");
+      const result = await classifier.classify("work across both services");
 
       expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
     });
@@ -604,7 +695,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("work on full-stack");
+      const result = await classifier.classify("work across all services");
 
       expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
     });
@@ -629,7 +720,7 @@ describe("RepoClassifier", () => {
       });
 
       const classifier = new RepoClassifier(TEST_ENV);
-      const result = await classifier.classify("web app issue");
+      const result = await classifier.classify("landing page issue");
 
       expect(result.reasoning).toBe("Mentions &lt;!channel&gt; &amp; the web app.");
     });

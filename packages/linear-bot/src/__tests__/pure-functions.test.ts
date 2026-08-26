@@ -75,6 +75,12 @@ describe("matchExplicitRepo", () => {
     expect(matchExplicitRepo("use acme/backend...", repos)?.fullName).toBe("acme/backend");
     expect(matchExplicitRepo("acme/backend, please", repos)?.fullName).toBe("acme/backend");
   });
+
+  it("matches a repository named in a repository URL", () => {
+    expect(
+      matchExplicitRepo("fix <https://github.com/acme/backend/issues/42>", repos)?.fullName
+    ).toBe("acme/backend");
+  });
 });
 
 // ─── extractModelFromLabels ──────────────────────────────────────────────────

@@ -1011,7 +1011,7 @@ class OpenCodePromptStream:
 
         Args:
             content: The prompt text content
-            model: Optional model override (e.g., "claude-haiku-4-5" or "anthropic/claude-haiku-4-5")
+            model: Optional model override (e.g., "gpt-5.6-luna" or "openai/gpt-5.6-luna")
             opencode_message_id: OpenCode-compatible ascending message ID (e.g., "msg_...").
                                  When provided, OpenCode uses this as the user message ID,
                                  and assistant responses will have parentID pointing to it.

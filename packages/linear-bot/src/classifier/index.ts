@@ -18,10 +18,9 @@ import { createLogger } from "../logger";
 
 const log = createLogger("classifier");
 
-// Anthropic, not OpenAI: the /classify endpoint runs inside a Cloudflare Worker,
-// and OpenAI subscription OAuth routes to the chatgpt.com Codex backend, which
-// edge-blocks Worker egress (403). The Anthropic OAuth path uses api.anthropic.com.
-const DEFAULT_CLASSIFICATION_MODEL = "anthropic/claude-haiku-4-5";
+// Classification uses the control plane's metered OpenAI API-key path; ChatGPT
+// subscription OAuth is not used for Worker egress.
+const DEFAULT_CLASSIFICATION_MODEL = "openai/gpt-5.6-luna";
 export const CLASSIFIER_REQUEST_TIMEOUT_MS = 10_000;
 const classifyRawResultSchema = z.object({
   repoId: z.string().nullable(),
