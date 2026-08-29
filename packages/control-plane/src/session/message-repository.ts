@@ -30,6 +30,7 @@ export interface CreateMessageData {
   callbackContext?: string | null;
   clientRequestId?: string | null;
   requestFingerprint?: string | null;
+  coalescingKey?: string | null;
   status: MessageStatus;
   createdAt: number;
 }
@@ -134,6 +135,36 @@ export class MessageRepository {
     return this.rows<MessageRow>(result)[0] ?? null;
   }
 
+  getUnfinishedMessageByCoalescingKey(coalescingKey: string): MessageRow | null {
+    const result = this.sql.exec(
+      `SELECT * FROM messages
+       WHERE coalescing_key = ? AND status IN ('processing', 'pending')
+       ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC, rowid DESC
+       LIMIT 1`,
+      coalescingKey
+    );
+    return this.rows<MessageRow>(result)[0] ?? null;
+  }
+
+  updatePendingCoalescedMessage(data: {
+    messageId: string;
+    content: string;
+    clientRequestId: string | null;
+    requestFingerprint: string | null;
+  }): boolean {
+    const result = this.sql.exec(
+      `UPDATE messages
+       SET content = ?, client_request_id = ?, request_fingerprint = ?
+       WHERE id = ? AND status = 'pending'
+       RETURNING id`,
+      data.content,
+      data.clientRequestId,
+      data.requestFingerprint,
+      data.messageId
+    );
+    return this.rows<{ id: string }>(result).length === 1;
+  }
+
   getUnfinishedMessagePosition(messageId: string): number | null {
     const result = this.sql.exec(
       `SELECT id FROM messages WHERE status IN ('pending', 'processing')
@@ -208,8 +239,8 @@ export class MessageRepository {
 
   createMessage(data: CreateMessageData): void {
     this.sql.exec(
-      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, attachments, callback_context, client_request_id, request_fingerprint, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, attachments, callback_context, client_request_id, request_fingerprint, coalescing_key, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.id,
       data.authorId,
       data.content,
@@ -220,6 +251,7 @@ export class MessageRepository {
       data.callbackContext ?? null,
       data.clientRequestId ?? null,
       data.requestFingerprint ?? null,
+      data.coalescingKey ?? null,
       data.status,
       data.createdAt
     );

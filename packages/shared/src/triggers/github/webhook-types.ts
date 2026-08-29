@@ -142,6 +142,15 @@ const commentSchema = z.object({
   user: userSchema.optional(),
 });
 
+const reviewSchema = z.object({
+  id: z.number(),
+  body: z.string().nullable().optional(),
+  state: z.string(),
+  commit_id: z.string().optional(),
+  submitted_at: z.string().nullable().optional(),
+  user: userSchema.optional(),
+});
+
 const issueObjectSchema = z.object({
   number: z.number(),
   title: z.string().optional(),
@@ -177,6 +186,11 @@ export const pullRequestReviewCommentEventSchema = baseEventSchema.extend({
   comment: commentSchema,
 });
 
+export const pullRequestReviewEventSchema = baseEventSchema.extend({
+  pull_request: pullRequestObjectSchema,
+  review: reviewSchema,
+});
+
 export const checkSuiteEventSchema = baseEventSchema.extend({
   check_suite: checkSuiteObjectSchema,
 });
@@ -190,5 +204,6 @@ export type GitHubEventBase = z.infer<typeof baseEventSchema>;
 export type PullRequestPayload = z.infer<typeof pullRequestEventSchema>;
 export type IssueCommentPayload = z.infer<typeof issueCommentEventSchema>;
 export type PullRequestReviewCommentPayload = z.infer<typeof pullRequestReviewCommentEventSchema>;
+export type PullRequestReviewPayload = z.infer<typeof pullRequestReviewEventSchema>;
 export type CheckSuitePayload = z.infer<typeof checkSuiteEventSchema>;
 export type IssuesPayload = z.infer<typeof issuesEventSchema>;

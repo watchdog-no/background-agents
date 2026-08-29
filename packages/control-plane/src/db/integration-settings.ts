@@ -349,6 +349,13 @@ export class IntegrationSettingsStore {
     this.validateModelAndEffort(settings);
 
     if (
+      settings.autoAddressReviewFeedback !== undefined &&
+      typeof settings.autoAddressReviewFeedback !== "boolean"
+    ) {
+      throw new IntegrationSettingsValidationError("autoAddressReviewFeedback must be a boolean");
+    }
+
+    if (
       settings.codeReviewInstructions !== undefined &&
       typeof settings.codeReviewInstructions !== "string"
     ) {

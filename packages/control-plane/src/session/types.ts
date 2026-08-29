@@ -107,6 +107,7 @@ export interface MessageRow {
   callback_context: string | null; // JSON: { channel, threadTs, repoFullName, model }
   client_request_id: string | null;
   request_fingerprint: string | null;
+  coalescing_key: string | null;
   status: MessageStatus;
   error_message: string | null;
   stop_confirmation_deadline: number | null;

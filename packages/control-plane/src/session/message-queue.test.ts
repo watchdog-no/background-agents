@@ -80,6 +80,7 @@ function createMessage(overrides: Partial<MessageRow> = {}): MessageRow {
     callback_context: null,
     client_request_id: null,
     request_fingerprint: null,
+    coalescing_key: null,
     status: "pending",
     error_message: null,
     stop_confirmation_deadline: null,
@@ -139,6 +140,10 @@ function buildQueue(options?: { session?: SessionRow }) {
     createEvent: vi.fn(),
     getPendingOrProcessingCount: vi.fn(() => 1),
     getMessageByClientRequestId: vi.fn(() => null as MessageRow | null),
+    getUnfinishedMessageByCoalescingKey: vi.fn(() => null as MessageRow | null),
+    updatePendingCoalescedMessage: vi.fn<MessageRepository["updatePendingCoalescedMessage"]>(
+      () => true
+    ),
     cancelPendingMessage: vi.fn(() => false),
     getUnfinishedMessagePosition: vi.fn((): number | null => 1),
     listUnfinishedMessages: vi.fn((): MessageRow[] => []),
@@ -156,6 +161,8 @@ function buildQueue(options?: { session?: SessionRow }) {
     updateMessageToProcessing: vi.fn(),
     updateMessageToPending: vi.fn(),
     getParticipantById: vi.fn(() => createParticipant()),
+    getParticipantByCanonicalUserId: vi.fn(() => null as ParticipantRow | null),
+    getOwnerParticipant: vi.fn(() => null as ParticipantRow | null),
     getSession: vi.fn(() => options?.session ?? createSession()),
     updateParticipantCoalesce: vi.fn(),
     recordMessageCompletion: vi.fn((event: { messageId: string }, completedAt: number) => ({
@@ -656,7 +663,7 @@ describe("SessionMessageQueue", () => {
   it("materializes the user_message at processing start", async () => {
     const h = buildQueue();
     const sandboxWs = { readyState: 1 } as WebSocket;
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage());
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ source: "github-review" }));
     h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
 
     await h.queue.processMessageQueue();
@@ -668,6 +675,7 @@ describe("SessionMessageQueue", () => {
         type: "user_message",
         messageId: "msg-1",
         content: "hello",
+        source: "github-review",
       })
     );
     const event = h.repository.startMessageProcessing.mock.calls[0][2];
@@ -1357,6 +1365,219 @@ describe("SessionMessageQueue", () => {
       });
 
       expect(h.participantService.create).toHaveBeenCalledWith("github:1001", "github:1001");
+    });
+
+    it("reuses the original participant by canonical user id", async () => {
+      const h = buildQueue();
+      const owner = createParticipant({
+        id: "part-owner",
+        user_id: "owner-session-user",
+        canonical_user_id: "user-1",
+      });
+      h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
+      h.repository.getParticipantByCanonicalUserId.mockReturnValue(owner);
+      h.repository.getParticipantById.mockReturnValue(owner);
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "user-1",
+        canonicalUserId: "user-1",
+        source: "github",
+      });
+
+      expect(h.repository.getParticipantByCanonicalUserId).toHaveBeenCalledWith("user-1");
+      expect(h.participantService.create).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ authorId: "part-owner", source: "github" }),
+        []
+      );
+    });
+
+    it("reuses the session owner for a GitHub review follow-up without a canonical user", async () => {
+      const h = buildQueue();
+      const owner = createParticipant({
+        id: "part-owner",
+        user_id: "linear:usr_9",
+        role: "owner",
+        scm_access_token_encrypted: "encrypted-token",
+      });
+      h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
+      h.repository.getOwnerParticipant.mockReturnValue(owner);
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "github-review-followup",
+        source: "github-review",
+      });
+
+      expect(h.repository.getOwnerParticipant).toHaveBeenCalledOnce();
+      expect(h.participantService.create).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ authorId: "part-owner", source: "github-review" }),
+        []
+      );
+    });
+
+    it("appends a review batch to a matching pending prompt", async () => {
+      const h = buildQueue();
+      h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
+        createMessage({
+          id: "msg-review",
+          author_id: "part-1",
+          content: "First review batch",
+          source: "github-review",
+          status: "pending",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      const result = await h.queue.enqueuePromptFromApi({
+        content: "Second review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:2",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(result).toEqual({ messageId: "msg-review", status: "queued" });
+      expect(h.repository.updatePendingCoalescedMessage).toHaveBeenCalledWith({
+        messageId: "msg-review",
+        content: "First review batch\n\nAdditional reviews",
+        clientRequestId: "github-review:artifact-1:2",
+        requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      });
+      expect(h.repository.createMessageWithAttachments).not.toHaveBeenCalled();
+
+      const requestFingerprint = h.repository.updatePendingCoalescedMessage.mock.calls[0]?.[0]
+        .requestFingerprint as string;
+      h.repository.getMessageByClientRequestId.mockReturnValue(
+        createMessage({
+          id: "msg-review",
+          author_id: "part-1",
+          source: "github-review",
+          status: "pending",
+          client_request_id: "github-review:artifact-1:2",
+          request_fingerprint: requestFingerprint,
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Second review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:2",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(h.repository.updatePendingCoalescedMessage).toHaveBeenCalledOnce();
+    });
+
+    it("queues a review batch behind a matching prompt that is processing", async () => {
+      const h = buildQueue();
+      h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
+        createMessage({
+          id: "msg-review",
+          source: "github-review",
+          status: "processing",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Second review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:88",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "Second review batch",
+          coalescingKey: "github-review:artifact-1",
+        }),
+        []
+      );
+    });
+
+    it("queues a separate review prompt when the pending one is full", async () => {
+      const h = buildQueue();
+      h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
+        createMessage({
+          id: "msg-review",
+          author_id: "part-1",
+          content: "x".repeat(64_000),
+          source: "github-review",
+          status: "pending",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Next review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:99",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "Next review batch" }),
+        []
+      );
+    });
+
+    it("rejects a completed client request id reused with different content", async () => {
+      const h = buildQueue();
+      h.repository.getMessageByClientRequestId.mockReturnValue(
+        createMessage({
+          id: "msg-old-review",
+          author_id: "part-1",
+          content: "Old review batch",
+          source: "github-review",
+          status: "completed",
+          client_request_id: "github-review:artifact-1:77",
+          request_fingerprint: "different-fingerprint",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      await expect(
+        h.queue.enqueuePromptFromApi({
+          content: "New review batch",
+          pendingAppendContent: "Additional reviews",
+          authorId: "user-1",
+          source: "github-review",
+          clientRequestId: "github-review:artifact-1:77",
+          coalescingKey: "github-review:artifact-1",
+        })
+      ).rejects.toMatchObject({ name: "PromptRequestConflictError" });
+    });
+
+    it("persists an API client request id for idempotent retries", async () => {
+      const h = buildQueue();
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "user-1",
+        source: "github",
+        clientRequestId: "github-review:artifact-1:3",
+      });
+
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientRequestId: "github-review:artifact-1:3",
+          requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        }),
+        []
+      );
     });
 
     it("updates stored SCM identity and tokens after successful enrichment", async () => {

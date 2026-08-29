@@ -20,6 +20,7 @@ export interface IntegrationEntry<
 /** Overridable behavior settings for the GitHub bot. Used at both global (defaults) and per-repo (overrides) levels. */
 export interface GitHubBotSettings {
   autoReviewOnOpen?: boolean;
+  autoAddressReviewFeedback?: boolean;
   model?: string;
   reasoningEffort?: string;
   allowedTriggerUsers?: string[];

@@ -2,6 +2,7 @@ import { messageSourceSchema } from "@open-inspect/shared/types/sessions";
 import { sessionAttachmentReferencesSchema } from "@open-inspect/shared/types/session-attachments";
 import {
   BLANK_PROMPT_MESSAGE,
+  clientRequestIdSchema,
   isBlankPrompt,
   promptContentSchema,
 } from "@open-inspect/shared/types/prompts";
@@ -17,6 +18,9 @@ export const enqueuePromptRequestSchema = z
     reasoningEffort: z.string().optional(),
     attachments: sessionAttachmentReferencesSchema.optional(),
     callbackContext: z.record(z.string(), z.unknown()).optional(),
+    clientRequestId: clientRequestIdSchema.optional(),
+    coalescingKey: z.string().min(1).max(128).optional(),
+    pendingAppendContent: promptContentSchema.optional(),
     // Trusted SCM enrichment resolved by the router at prompt time.
     scmEnrichment: z
       .object({
@@ -30,6 +34,13 @@ export const enqueuePromptRequestSchema = z
       })
       .optional(),
   })
+  .refine(
+    (prompt) => prompt.pendingAppendContent === undefined || prompt.coalescingKey !== undefined,
+    {
+      message: "pendingAppendContent requires coalescingKey",
+      path: ["pendingAppendContent"],
+    }
+  )
   .refine((prompt) => !isBlankPrompt(prompt), {
     message: BLANK_PROMPT_MESSAGE,
     path: ["content"],

@@ -85,6 +85,10 @@ export function GitHubIntegrationSettings() {
   const repoOverrides = repoSettingsData?.repos ?? [];
   const availableRepos = reposData?.repos ?? [];
   const defaultAutoReviewOnOpen = settings?.defaults?.autoReviewOnOpen ?? true;
+  const defaultAutoAddressReviewFeedback = settings?.defaults?.autoAddressReviewFeedback ?? false;
+  const enabledReviewFeedbackOverrides = repoOverrides.filter(
+    (entry) => entry.settings.autoAddressReviewFeedback === true
+  ).length;
 
   return (
     <div>
@@ -97,16 +101,31 @@ export function GitHubIntegrationSettings() {
         title="Connection"
         description="GitHub App access used for repo discovery and scope."
       >
-        {availableRepos.length > 0 ? (
+        <div className="space-y-3">
+          {availableRepos.length > 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Repository access is available. You can limit the bot to selected repositories below.
+            </p>
+          ) : (
+            <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm">
+              GitHub App is not configured or has no accessible repositories. Repository filtering
+              is currently unavailable.
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
-            Repository access is available. You can limit the bot to selected repositories below.
+            Automatic review follow-up requires the <strong>Pull request reviews</strong> webhook
+            event.{" "}
+            <a
+              href="https://github.com/settings/apps"
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:text-foreground"
+            >
+              Open GitHub App settings
+            </a>
+            .
           </p>
-        ) : (
-          <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm">
-            GitHub App is not configured or has no accessible repositories. Repository filtering is
-            currently unavailable.
-          </p>
-        )}
+        </div>
       </Section>
 
       <CommitSigningSettings />
@@ -115,17 +134,19 @@ export function GitHubIntegrationSettings() {
         settings={settings}
         availableRepos={availableRepos}
         enabledModelOptions={enabledModelOptions}
+        enabledReviewFeedbackOverrides={enabledReviewFeedbackOverrides}
       />
 
       <Section
         title="Repository Overrides"
-        description="Set model, reasoning, and custom instruction overrides for specific repositories."
+        description="Override models, behavior, and instructions for specific repositories."
       >
         <RepoOverridesSection
           overrides={repoOverrides}
           availableRepos={availableRepos}
           enabledModelOptions={enabledModelOptions}
           defaultAutoReviewOnOpen={defaultAutoReviewOnOpen}
+          defaultAutoAddressReviewFeedback={defaultAutoAddressReviewFeedback}
         />
       </Section>
     </div>
@@ -136,15 +157,20 @@ function GlobalSettingsSection({
   settings,
   availableRepos,
   enabledModelOptions,
+  enabledReviewFeedbackOverrides,
 }: {
   settings: GitHubGlobalConfig | null | undefined;
   availableRepos: EnrichedRepository[];
   enabledModelOptions: ModelCategory[];
+  enabledReviewFeedbackOverrides: number;
 }) {
   const [model, setModel] = useState(settings?.defaults?.model ?? "");
   const [effort, setEffort] = useState(settings?.defaults?.reasoningEffort ?? "");
   const [autoReviewOnOpen, setAutoReviewOnOpen] = useState(
     settings?.defaults?.autoReviewOnOpen ?? true
+  );
+  const [autoAddressReviewFeedback, setAutoAddressReviewFeedback] = useState(
+    settings?.defaults?.autoAddressReviewFeedback ?? false
   );
   const [enabledRepos, setEnabledRepos] = useState<string[]>(settings?.enabledRepos ?? []);
   const [repoScopeMode, setRepoScopeMode] = useState<"all" | "selected">(
@@ -175,6 +201,7 @@ function GlobalSettingsSection({
         setModel(settings.defaults?.model ?? "");
         setEffort(settings.defaults?.reasoningEffort ?? "");
         setAutoReviewOnOpen(settings.defaults?.autoReviewOnOpen ?? true);
+        setAutoAddressReviewFeedback(settings.defaults?.autoAddressReviewFeedback ?? false);
         setEnabledRepos(settings.enabledRepos ?? []);
         setRepoScopeMode(settings.enabledRepos === undefined ? "all" : "selected");
         setAllowedTriggerUsers(settings.defaults?.allowedTriggerUsers ?? []);
@@ -205,6 +232,7 @@ function GlobalSettingsSection({
         setModel("");
         setEffort("");
         setAutoReviewOnOpen(true);
+        setAutoAddressReviewFeedback(false);
         setEnabledRepos([]);
         setRepoScopeMode("all");
         setAllowedTriggerUsers([]);
@@ -213,7 +241,7 @@ function GlobalSettingsSection({
         setCommentActionInstructions("");
         setNewUsername("");
         setDirty(false);
-        toast.success("Settings reset to defaults.");
+        toast.success("Defaults reset. Repository overrides were kept.");
       } else {
         const data = await res.json();
         toast.error(data.error || "Failed to reset settings");
@@ -232,6 +260,7 @@ function GlobalSettingsSection({
     const body: GitHubGlobalConfig = {
       defaults: {
         autoReviewOnOpen,
+        autoAddressReviewFeedback,
         ...(model ? { model } : {}),
         ...(effort ? { reasoningEffort: effort } : {}),
         ...(triggerUserMode === "specific" ? { allowedTriggerUsers } : {}),
@@ -321,6 +350,37 @@ function GlobalSettingsSection({
           }}
         />
       </label>
+
+      <label
+        htmlFor="auto-address-review-feedback-toggle"
+        className="flex items-center justify-between px-4 py-3 border border-border hover:bg-muted/50 transition cursor-pointer mb-4 rounded-sm"
+      >
+        <div>
+          <span className="text-sm font-medium text-foreground">
+            Address review feedback automatically
+          </span>
+          <span className="text-sm text-muted-foreground ml-2">
+            After submitted reviews settle, resume the session that published the PR to evaluate
+            feedback and push fixes when needed
+          </span>
+        </div>
+        <Switch
+          id="auto-address-review-feedback-toggle"
+          checked={autoAddressReviewFeedback}
+          onCheckedChange={(checked) => {
+            setAutoAddressReviewFeedback(checked);
+            setDirty(true);
+            setError("");
+          }}
+        />
+      </label>
+
+      {!autoAddressReviewFeedback && enabledReviewFeedbackOverrides > 0 && (
+        <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm mb-4">
+          {enabledReviewFeedbackOverrides} repository{" "}
+          {enabledReviewFeedbackOverrides === 1 ? "override remains" : "overrides remain"} enabled.
+        </p>
+      )}
 
       <div className="mb-4">
         <p className="text-sm font-medium text-foreground mb-2">Repository Scope</p>
@@ -535,8 +595,8 @@ function GlobalSettingsSection({
           <AlertDialogHeader>
             <AlertDialogTitle>Reset to defaults</AlertDialogTitle>
             <AlertDialogDescription>
-              Reset all GitHub bot settings to defaults? The bot will respond to all repos with
-              auto-review enabled.
+              Reset the GitHub bot defaults and repository scope? Auto-review will be enabled and
+              automatic review follow-up disabled. Repository overrides will remain unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -554,11 +614,13 @@ function RepoOverridesSection({
   availableRepos,
   enabledModelOptions,
   defaultAutoReviewOnOpen,
+  defaultAutoAddressReviewFeedback,
 }: {
   overrides: RepoSettingsEntry[];
   availableRepos: EnrichedRepository[];
   enabledModelOptions: ModelCategory[];
   defaultAutoReviewOnOpen: boolean;
+  defaultAutoAddressReviewFeedback: boolean;
 }) {
   const [addingRepo, setAddingRepo] = useState("");
 
@@ -605,12 +667,14 @@ function RepoOverridesSection({
               entry={entry}
               enabledModelOptions={enabledModelOptions}
               defaultAutoReviewOnOpen={defaultAutoReviewOnOpen}
+              defaultAutoAddressReviewFeedback={defaultAutoAddressReviewFeedback}
             />
           ))}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground mb-4">
-          No repository overrides yet. Add one to customize model behavior per repo.
+          No repository overrides yet. Add one to customize behavior, models, or instructions per
+          repository.
         </p>
       )}
 
@@ -639,10 +703,12 @@ function RepoOverrideRow({
   entry,
   enabledModelOptions,
   defaultAutoReviewOnOpen,
+  defaultAutoAddressReviewFeedback,
 }: {
   entry: RepoSettingsEntry;
   enabledModelOptions: ModelCategory[];
   defaultAutoReviewOnOpen: boolean;
+  defaultAutoAddressReviewFeedback: boolean;
 }) {
   const [model, setModel] = useState(entry.settings.model ?? "");
   const [effort, setEffort] = useState(entry.settings.reasoningEffort ?? "");
@@ -670,6 +736,12 @@ function RepoOverrideRow({
   const [autoReviewOnOpen, setAutoReviewOnOpen] = useState(
     entry.settings.autoReviewOnOpen ?? defaultAutoReviewOnOpen
   );
+  const [autoAddressReviewFeedbackMode, setAutoAddressReviewFeedbackMode] = useState<
+    "global" | "override"
+  >(entry.settings.autoAddressReviewFeedback !== undefined ? "override" : "global");
+  const [autoAddressReviewFeedback, setAutoAddressReviewFeedback] = useState(
+    entry.settings.autoAddressReviewFeedback ?? defaultAutoAddressReviewFeedback
+  );
   const [newUsername, setNewUsername] = useState("");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -693,6 +765,14 @@ function RepoOverrideRow({
     setDirty(true);
   };
 
+  const handleAutoAddressReviewFeedbackModeChange = (newMode: "global" | "override") => {
+    setAutoAddressReviewFeedbackMode(newMode);
+    if (newMode === "override" && entry.settings.autoAddressReviewFeedback === undefined) {
+      setAutoAddressReviewFeedback(defaultAutoAddressReviewFeedback);
+    }
+    setDirty(true);
+  };
+
   const handleSave = async () => {
     const repository = parseRepositoryFullName(entry.repo);
     if (!repository) return;
@@ -705,6 +785,8 @@ function RepoOverrideRow({
     if (commentActionMode === "override")
       settings.commentActionInstructions = commentActionInstructions;
     if (autoReviewMode === "override") settings.autoReviewOnOpen = autoReviewOnOpen;
+    if (autoAddressReviewFeedbackMode === "override")
+      settings.autoAddressReviewFeedback = autoAddressReviewFeedback;
 
     try {
       const res = await browserApiFetch(
@@ -827,7 +909,9 @@ function RepoOverrideRow({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="global">Use global default</SelectItem>
+              <SelectItem value="global">
+                Use default ({defaultAutoReviewOnOpen ? "Enabled" : "Disabled"})
+              </SelectItem>
               <SelectItem value="override">Override for this repo</SelectItem>
             </SelectContent>
           </Select>
@@ -841,6 +925,40 @@ function RepoOverrideRow({
                 }}
               />
               <span>{autoReviewOnOpen ? "Enabled" : "Disabled"}</span>
+            </label>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-1">
+          Address review feedback automatically
+        </p>
+        <div className="flex items-center gap-2 mb-1">
+          <Select
+            value={autoAddressReviewFeedbackMode}
+            onValueChange={handleAutoAddressReviewFeedbackModeChange}
+          >
+            <SelectTrigger density="compact" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="global">
+                Use default ({defaultAutoAddressReviewFeedback ? "Enabled" : "Disabled"})
+              </SelectItem>
+              <SelectItem value="override">Override for this repo</SelectItem>
+            </SelectContent>
+          </Select>
+          {autoAddressReviewFeedbackMode === "override" && (
+            <label className="flex items-center gap-2 text-xs text-foreground">
+              <Switch
+                checked={autoAddressReviewFeedback}
+                onCheckedChange={(checked) => {
+                  setAutoAddressReviewFeedback(checked);
+                  setDirty(true);
+                }}
+              />
+              <span>{autoAddressReviewFeedback ? "Enabled" : "Disabled"}</span>
             </label>
           )}
         </div>

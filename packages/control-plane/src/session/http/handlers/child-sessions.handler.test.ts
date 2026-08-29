@@ -136,6 +136,7 @@ function createMessage(overrides: Partial<MessageRow> = {}): MessageRow {
     callback_context: null,
     client_request_id: null,
     request_fingerprint: null,
+    coalescing_key: null,
     status: "completed",
     error_message: null,
     stop_confirmation_deadline: null,

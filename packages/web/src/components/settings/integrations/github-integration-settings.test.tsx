@@ -106,6 +106,10 @@ function autoReviewControls(row: HTMLElement) {
   return within(row).getByText("Auto-review new PRs").parentElement!;
 }
 
+function reviewFeedbackControls(row: HTMLElement) {
+  return within(row).getByText("Address review feedback automatically").parentElement!;
+}
+
 async function selectAutoReviewMode(row: HTMLElement, option: RegExp) {
   const user = userEvent.setup();
   await user.click(within(autoReviewControls(row)).getByRole("combobox"));
@@ -174,6 +178,7 @@ describe("GitHubIntegrationSettings", () => {
           settings: {
             defaults: {
               autoReviewOnOpen: false,
+              autoAddressReviewFeedback: false,
               model: "anthropic/claude-sonnet-4-6",
               reasoningEffort: "high",
             },
@@ -211,6 +216,7 @@ describe("GitHubIntegrationSettings", () => {
           settings: {
             defaults: {
               autoReviewOnOpen: false,
+              autoAddressReviewFeedback: false,
               model: "anthropic/claude-sonnet-4-6",
               codeReviewInstructions: "Focus on security.",
             },
@@ -231,7 +237,44 @@ describe("GitHubIntegrationSettings", () => {
           settings: {
             defaults: {
               autoReviewOnOpen: false,
+              autoAddressReviewFeedback: false,
               codeReviewInstructions: "Focus on security.",
+            },
+          },
+        }),
+      })
+    );
+  });
+
+  it("defaults automatic review follow-up off and saves it when enabled", async () => {
+    const user = userEvent.setup();
+    setupSWR({ global: null });
+    fetchMock.mockResolvedValue(okJson({}));
+
+    render(<GitHubIntegrationSettings />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /address review feedback automatically/i,
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+
+    await user.click(toggle);
+    expect(screen.queryByText(/grouped for about two minutes/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open github app settings/i })).toHaveAttribute(
+      "href",
+      "https://github.com/settings/apps"
+    );
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/integration-settings/github",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          settings: {
+            defaults: {
+              autoReviewOnOpen: true,
+              autoAddressReviewFeedback: true,
             },
           },
         }),
@@ -291,7 +334,7 @@ describe("GitHubIntegrationSettings", () => {
         String(autoReviewOnOpen)
       );
 
-      await selectAutoReviewMode(row, /use global default/i);
+      await selectAutoReviewMode(row, /use default/i);
       await selectAutoReviewMode(row, /override for this repo/i);
       await user.click(within(row).getByRole("button", { name: /^save$/i }));
 
@@ -304,4 +347,44 @@ describe("GitHubIntegrationSettings", () => {
       );
     }
   );
+
+  it("persists a per-repo automatic review follow-up override", async () => {
+    const user = userEvent.setup();
+    setupSWR({
+      global: { defaults: { autoAddressReviewFeedback: false } },
+      repos: [{ repo: "acme/web", settings: {} }],
+      availableRepos: [repo("acme/web")],
+    });
+    fetchMock.mockResolvedValue(okJson({}));
+
+    render(<GitHubIntegrationSettings />);
+
+    const row = repoOverrideRow("acme/web");
+    const controls = reviewFeedbackControls(row);
+    expect(within(controls).getByRole("combobox")).toHaveTextContent("Use default (Disabled)");
+    await user.click(within(controls).getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: /override for this repo/i }));
+    await user.click(within(controls).getByRole("switch"));
+    await user.click(within(row).getByRole("button", { name: /^save$/i }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/integration-settings/github/repos/acme/web",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ settings: { autoAddressReviewFeedback: true } }),
+      })
+    );
+  });
+
+  it("warns when a repository override remains enabled above a disabled default", () => {
+    setupSWR({
+      global: { defaults: { autoAddressReviewFeedback: false } },
+      repos: [{ repo: "acme/web", settings: { autoAddressReviewFeedback: true } }],
+      availableRepos: [repo("acme/web")],
+    });
+
+    render(<GitHubIntegrationSettings />);
+
+    expect(screen.getByText("1 repository override remains enabled.")).toBeInTheDocument();
+  });
 });

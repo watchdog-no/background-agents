@@ -52,6 +52,103 @@ describe("POST /internal/prompt", () => {
     expect(["pending", "processing"]).toContain(messages[0].status);
   });
 
+  it("coalesces a second GitHub review batch into a pending prompt in SQLite", async () => {
+    const { stub } = await initSession();
+    const enqueueReview = (body: Record<string, unknown>) =>
+      stub.fetch("http://internal/internal/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authorId: "user-1",
+          source: "github-review",
+          coalescingKey: "github-review:artifact-1",
+          ...body,
+        }),
+      });
+
+    const first = await enqueueReview({
+      content: "First review batch",
+      pendingAppendContent: "First review append",
+      clientRequestId: "github-review:artifact-1:77",
+    });
+    const firstBody = await first.json<{ messageId: string }>();
+    expect(
+      await queryDO<{ status: string }>(
+        stub,
+        "SELECT status FROM messages WHERE id = ?",
+        firstBody.messageId
+      )
+    ).toEqual([{ status: "pending" }]);
+    const second = await enqueueReview({
+      content: "Second review batch",
+      pendingAppendContent: "Additional review 88",
+      clientRequestId: "github-review:artifact-1:88",
+    });
+    const secondBody = await second.json<{ messageId: string }>();
+
+    expect(secondBody.messageId).toBe(firstBody.messageId);
+    expect(
+      await queryDO<{ content: string; client_request_id: string }>(
+        stub,
+        `SELECT content, client_request_id FROM messages WHERE id = ?`,
+        firstBody.messageId
+      )
+    ).toEqual([
+      {
+        content: "First review batch\n\nAdditional review 88",
+        client_request_id: "github-review:artifact-1:88",
+      },
+    ]);
+  });
+
+  it("queues new GitHub feedback behind a review follow-up already processing", async () => {
+    const name = `review-followup-queue-${Date.now()}`;
+    const { stub } = await initNamedSession(name);
+    await seedSandboxAuth(stub, { authToken: SANDBOX_TOKEN, sandboxId: SANDBOX_ID });
+    const { ws: sandboxWs } = await openSandboxWs(name, {
+      authToken: SANDBOX_TOKEN,
+      sandboxId: SANDBOX_ID,
+    });
+    expect(sandboxWs).not.toBeNull();
+    sandboxWs!.accept();
+
+    const enqueueReview = (content: string, reviewId: number) =>
+      stub.fetch("http://internal/internal/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content,
+          pendingAppendContent: `Additional review ${reviewId}`,
+          authorId: "user-1",
+          source: "github-review",
+          clientRequestId: `github-review:artifact-1:${reviewId}`,
+          coalescingKey: "github-review:artifact-1",
+        }),
+      });
+
+    const firstPrompt = collectMessages(sandboxWs!, {
+      until: (message) => message.type === "prompt",
+    });
+    const first = await enqueueReview("Review 77", 77);
+    const firstBody = await first.json<{ messageId: string }>();
+    await firstPrompt;
+    const second = await enqueueReview("Review 88", 88);
+    const secondBody = await second.json<{ messageId: string }>();
+
+    expect(secondBody.messageId).not.toBe(firstBody.messageId);
+    expect(
+      await queryDO<{ id: string; status: string }>(
+        stub,
+        `SELECT id, status FROM messages WHERE source = 'github-review'
+         ORDER BY created_at, rowid`
+      )
+    ).toEqual([
+      { id: firstBody.messageId, status: "processing" },
+      { id: secondBody.messageId, status: "pending" },
+    ]);
+    sandboxWs!.close();
+  });
+
   it("persists queued prompts in FIFO order", async () => {
     const { stub } = await initSession();
     const enqueue = async (content: string) => {

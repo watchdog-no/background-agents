@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sessionDiffBaselineRepositorySchema } from "./session-diffs";
 import { resolvedSessionAttachmentsSchema } from "./session-attachments";
+import { messageSourceSchema } from "./sessions";
 
 const recordSchema = z.record(z.string(), z.unknown());
 export const gitSyncStatusSchema = z.enum(["pending", "in_progress", "completed", "failed"]);
@@ -198,6 +199,7 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
     content: z.string(),
     messageId: z.string(),
     timestamp: z.number(),
+    source: messageSourceSchema.optional(),
     ackId: z.string().optional(),
     author: z
       .object({

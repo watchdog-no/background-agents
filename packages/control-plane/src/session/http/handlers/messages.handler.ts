@@ -9,6 +9,7 @@ import { parseEventListCursor } from "../../event-cursor";
 import { SessionAttachmentError } from "../../session-attachment-resolver";
 import {
   PromptQueueFullError,
+  PromptCoalescingBusyError,
   PromptRequestConflictError,
   SessionNotPromptableError,
 } from "../../message-queue";
@@ -53,6 +54,12 @@ export function createMessagesHandler(deps: MessagesHandlerDeps): MessagesHandle
           return Response.json(
             { error: error.message, code: "PROMPT_QUEUE_FULL" },
             { status: 429 }
+          );
+        }
+        if (error instanceof PromptCoalescingBusyError) {
+          return Response.json(
+            { error: error.message, code: "PROMPT_COALESCING_BUSY" },
+            { status: 425 }
           );
         }
         if (error instanceof PromptRequestConflictError) {

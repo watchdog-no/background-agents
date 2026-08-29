@@ -211,6 +211,41 @@ describe("POST /webhooks/github", () => {
     expect(rootSettled).toBe(true);
   });
 
+  it("clears delivery dedupe when control-plane forwarding fails", async () => {
+    const body = JSON.stringify({
+      action: "opened",
+      repository: { owner: { login: "test" }, name: "repo" },
+      sender: { login: "alice" },
+      issue: { number: 42, title: "Forward me" },
+    });
+    const signature = await sign(SECRET, body);
+    const ctx = makeCtx();
+    const env = makeEnv();
+    vi.mocked(env.CONTROL_PLANE.fetch).mockResolvedValue(
+      new Response(null, { status: 503 }) as never
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": signature,
+          "X-GitHub-Event": "issues",
+          "X-GitHub-Delivery": "delivery-forward-failure",
+        },
+      }),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    await flushWaitUntil(ctx);
+    expect(
+      (env.GITHUB_KV as unknown as ReturnType<typeof createMockKV>).delete
+    ).toHaveBeenCalledWith("delivery:delivery-forward-failure");
+  });
+
   it("deduplicates repeated deliveries by X-GitHub-Delivery", async () => {
     const body = JSON.stringify({
       action: "review_requested",
@@ -405,6 +440,128 @@ describe("POST /webhooks/github", () => {
         closedAt: Date.parse("2026-07-14T11:00:00Z"),
       },
     });
+  });
+
+  it("forwards submitted reviews and marks the GitHub App bot's own reviews", async () => {
+    const body = JSON.stringify({
+      action: "submitted",
+      repository: { id: 99, owner: { login: "test" }, name: "repo" },
+      sender: { login: "test-bot[bot]" },
+      review: {
+        id: 77,
+        body: "Please address this edge case.",
+        state: "commented",
+        commit_id: "abc123",
+        submitted_at: "2026-08-28T12:00:00Z",
+        user: { login: "test-bot[bot]" },
+      },
+      pull_request: {
+        number: 42,
+        title: "Handle review feedback",
+        body: null,
+        state: "open",
+        draft: false,
+        merged: false,
+        html_url: "https://github.com/test/repo/pull/42",
+        created_at: "2026-08-28T10:00:00Z",
+        updated_at: "2026-08-28T12:00:00Z",
+        merged_at: null,
+        closed_at: null,
+        user: { login: "alice" },
+        labels: [],
+        head: { ref: "feature/reviews", sha: "abc123", repo: { id: 99 } },
+        base: { ref: "main", repo: { id: 99 } },
+      },
+    });
+    const signature = await sign(SECRET, body);
+    const ctx = makeCtx();
+    const env = makeEnv();
+
+    const res = await app.fetch(
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": signature,
+          "X-GitHub-Event": "pull_request_review",
+          "X-GitHub-Delivery": "delivery-review-submitted",
+        },
+      }),
+      env,
+      ctx
+    );
+
+    expect(res.status).toBe(200);
+    await flushWaitUntil(ctx);
+
+    const controlPlaneFetch = (env.CONTROL_PLANE as unknown as { fetch: ReturnType<typeof vi.fn> })
+      .fetch;
+    expect(controlPlaneFetch).toHaveBeenCalledOnce();
+    const [url, init] = controlPlaneFetch.mock.calls[0];
+    expect(url).toBe("https://internal/internal/github-event");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      eventType: "pull_request_review.submitted",
+      actor: "test-bot[bot]",
+      pullRequest: {
+        number: 42,
+        state: "open",
+        repositoryExternalId: "99",
+      },
+      review: {
+        id: 77,
+        state: "commented",
+        isBotActor: true,
+      },
+      meta: {
+        reviewId: 77,
+        reviewState: "commented",
+      },
+    });
+  });
+
+  it("forwards submitted reviews safely when the bot username binding is absent", async () => {
+    const body = JSON.stringify({
+      action: "submitted",
+      repository: { owner: { login: "test" }, name: "repo" },
+      sender: { login: "reviewer" },
+      review: { id: 78, state: "commented", user: { login: "reviewer" } },
+      pull_request: {
+        number: 42,
+        state: "open",
+        draft: false,
+        head: { ref: "feature/reviews", sha: "abc123", repo: { id: 99 } },
+        base: { ref: "main", repo: { id: 99 } },
+      },
+    });
+    const signature = await sign(SECRET, body);
+    const ctx = makeCtx();
+    const env = makeEnv();
+    (env as { GITHUB_BOT_USERNAME?: string }).GITHUB_BOT_USERNAME = undefined;
+
+    const response = await app.fetch(
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": signature,
+          "X-GitHub-Event": "pull_request_review",
+          "X-GitHub-Delivery": "delivery-review-no-username",
+        },
+      }),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    await flushWaitUntil(ctx);
+    const controlPlaneFetch = (env.CONTROL_PLANE as unknown as { fetch: ReturnType<typeof vi.fn> })
+      .fetch;
+    expect(JSON.parse(controlPlaneFetch.mock.calls[0][1].body as string)).toMatchObject({
+      review: { id: 78, state: "commented" },
+    });
+    expect(JSON.parse(controlPlaneFetch.mock.calls[0][1].body as string).review).not.toHaveProperty(
+      "isBotActor"
+    );
   });
 
   it.each(["reopened", "converted_to_draft", "ready_for_review"])(

@@ -208,7 +208,20 @@ async function handleWebhook(
     if (normalizedEvent !== null) {
       try {
         const url = "https://internal/internal/github-event";
-        const body = JSON.stringify(normalizedEvent);
+        const botUsername = env.GITHUB_BOT_USERNAME?.toLowerCase() ?? "";
+        const body = JSON.stringify({
+          ...normalizedEvent,
+          ...(normalizedEvent.review
+            ? {
+                review: {
+                  ...normalizedEvent.review,
+                  ...(botUsername.length > 0
+                    ? { isBotActor: normalizedEvent.actor?.toLowerCase() === botUsername }
+                    : {}),
+                },
+              }
+            : {}),
+        });
         const response = await signedControlPlaneFetch(env, { method: "POST", url, body, traceId });
         if (!response.ok) {
           log.warn("webhook.github_event_forward_failed", {
@@ -217,8 +230,12 @@ async function handleWebhook(
             event_type: event,
             status: response.status,
           });
+          dispatchFailure ??= {
+            error: new Error(`GitHub event forwarding failed with status ${response.status}`),
+          };
         }
       } catch (err) {
+        dispatchFailure ??= { error: err };
         log.warn("webhook.github_event_forward_error", {
           trace_id: traceId,
           delivery_id: deliveryId,

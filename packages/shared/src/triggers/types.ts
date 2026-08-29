@@ -165,6 +165,14 @@ export const githubAutomationEventSchema = z.object({
       closedAt: z.number().optional(),
     })
     .optional(),
+  /** Present on pull_request_review events; bot attribution is added by github-bot. */
+  review: z
+    .object({
+      id: z.number().int().positive(),
+      state: z.string(),
+      isBotActor: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const linearAutomationEventSchema = z.object({

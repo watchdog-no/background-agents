@@ -53,6 +53,7 @@ export const messageSourceSchema = z.enum([
   "linear",
   "extension",
   "github",
+  "github-review",
   "automation",
   "agent",
 ]);

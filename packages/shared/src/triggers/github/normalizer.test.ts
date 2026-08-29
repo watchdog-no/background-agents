@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { normalizeGitHubEvent } from "./normalizer";
+import { GITHUB_WEBHOOK_EVENT_CATALOG } from "./webhook-types";
 
 // ─── Shared fixture data ───────────────────────────────────────────────────────
 
@@ -75,6 +76,34 @@ const reviewCommentPayload = {
     body: "Please fix this line.",
     path: "src/index.ts",
     diff_hunk: "@@ -1,3 +1,4 @@\n+import foo from 'bar';",
+  },
+};
+
+const pullRequestReviewPayload = {
+  action: "submitted",
+  repository: { ...repo, id: 321 },
+  sender,
+  pull_request: {
+    ...basePR,
+    state: "open",
+    draft: false,
+    html_url: "https://github.com/acme-org/my-app/pull/42",
+    head: {
+      ...basePR.head,
+      repo: { id: 321 },
+    },
+    base: {
+      ...basePR.base,
+      repo: { id: 321 },
+    },
+  },
+  review: {
+    id: 8080,
+    body: "Please address the two inline findings.",
+    state: "commented",
+    commit_id: "abc1234def5678",
+    submitted_at: "2026-08-28T10:00:00Z",
+    user: { login: "review-agent[bot]" },
   },
 };
 
@@ -235,6 +264,53 @@ describe("normalizeGitHubEvent", () => {
         prNumber: 42,
         targetBranch: "main",
       });
+    });
+  });
+
+  describe("pull_request_review.submitted", () => {
+    it("stays internal instead of appearing in the automation event catalog", () => {
+      expect(
+        GITHUB_WEBHOOK_EVENT_CATALOG.some(
+          ({ event, action }) => event === "pull_request_review" && action === "submitted"
+        )
+      ).toBe(false);
+    });
+
+    it("normalizes the review and carries canonical PR identity", () => {
+      const event = normalizeGitHubEvent("pull_request_review", pullRequestReviewPayload);
+
+      expect(event).not.toBeNull();
+      expect(event!.eventType).toBe("pull_request_review.submitted");
+      expect(event!.triggerKey).toBe("pr_review:8080");
+      expect(event!.concurrencyKey).toBe("pr:42");
+      expect(event!.actor).toBe("review-agent[bot]");
+      expect(event!.pullRequest).toMatchObject({
+        number: 42,
+        state: "open",
+        draft: false,
+        headSha: "abc1234def5678",
+        isCrossRepository: false,
+        repositoryExternalId: "321",
+      });
+      expect(event!.review).toEqual({ id: 8080, state: "commented" });
+      expect(event!.meta).toMatchObject({
+        reviewId: 8080,
+        reviewState: "commented",
+        reviewCommitId: "abc1234def5678",
+        reviewSubmittedAt: "2026-08-28T10:00:00Z",
+        prNumber: 42,
+      });
+      expect(event!.contextBlock).toContain("pull_request_review.submitted");
+      expect(event!.contextBlock).toContain("Please address the two inline findings.");
+    });
+
+    it("returns null without a numeric review id", () => {
+      expect(
+        normalizeGitHubEvent("pull_request_review", {
+          ...pullRequestReviewPayload,
+          review: { ...pullRequestReviewPayload.review, id: undefined },
+        })
+      ).toBeNull();
     });
   });
 

@@ -377,6 +377,35 @@ describe("applyMigrations", () => {
     }
   });
 
+  it("adds the prompt coalescing key and unfinished-message index", () => {
+    const messagesTable = SCHEMA_SQL.split("CREATE TABLE IF NOT EXISTS messages")[1]?.split(
+      ");"
+    )[0];
+    expect(messagesTable).toContain("coalescing_key TEXT");
+
+    const migration = MIGRATIONS.find((entry) => entry.id === 48);
+    expect(typeof migration?.run).toBe("function");
+    const db = new DatabaseSync(":memory:");
+    const sql = createDatabaseSql(db);
+    try {
+      db.exec("CREATE TABLE messages (id TEXT PRIMARY KEY, status TEXT)");
+      const run = migration!.run as (sql: SqlStorage) => void;
+      run(sql);
+      expect(() => run(sql)).not.toThrow();
+      expect(db.prepare("PRAGMA table_info(messages)").all()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "coalescing_key", type: "TEXT" })])
+      );
+      expect(
+        db
+          .prepare("PRAGMA index_list(messages)")
+          .all()
+          .map((row) => row.name)
+      ).toContain("idx_messages_unfinished_coalescing_key");
+    } finally {
+      db.close();
+    }
+  });
+
   it("initializes a legacy messages table before creating indexes for new columns", () => {
     expect(SCHEMA_SQL).not.toMatch(/\bCREATE (?:UNIQUE )?INDEX\b/);
 
@@ -414,6 +443,7 @@ describe("applyMigrations", () => {
           expect.objectContaining({ name: "client_request_id", type: "TEXT" }),
           expect.objectContaining({ name: "request_fingerprint", type: "TEXT" }),
           expect.objectContaining({ name: "stop_confirmation_deadline", type: "INTEGER" }),
+          expect.objectContaining({ name: "coalescing_key", type: "TEXT" }),
         ])
       );
       expect(
@@ -427,6 +457,7 @@ describe("applyMigrations", () => {
           "idx_messages_author",
           "idx_messages_client_request_id",
           "idx_messages_one_processing",
+          "idx_messages_unfinished_coalescing_key",
         ])
       );
       expectClientRequestIdIndex(db);

@@ -8,6 +8,7 @@ import {
   buildIssueCommentContextBlock,
   buildIssueContextBlock,
   buildPullRequestContextBlock,
+  buildPullRequestReviewContextBlock,
   buildReviewCommentContextBlock,
 } from "./context";
 import {
@@ -17,12 +18,14 @@ import {
   issuesEventSchema,
   pullRequestEventSchema,
   pullRequestReviewCommentEventSchema,
+  pullRequestReviewEventSchema,
   type CheckSuitePayload,
   type GitHubEventBase,
   type IssueCommentPayload,
   type IssuesPayload,
   type PullRequestPayload,
   type PullRequestReviewCommentPayload,
+  type PullRequestReviewPayload,
 } from "./webhook-types";
 
 // ─── Supported event type map ─────────────────────────────────────────────────
@@ -45,6 +48,9 @@ const PULL_REQUEST_LIFECYCLE_ACTIONS = new Set([
   "converted_to_draft",
   "ready_for_review",
 ]);
+const INTERNAL_EVENT_ACTIONS: Record<string, Set<string>> = {
+  pull_request_review: new Set(["submitted"]),
+};
 
 // ─── Payload accessors ────────────────────────────────────────────────────────
 
@@ -82,7 +88,8 @@ export function normalizeGitHubEvent(
   if (typeof action !== "string") return null;
   const isLifecycleAction =
     githubEventHeader === "pull_request" && PULL_REQUEST_LIFECYCLE_ACTIONS.has(action);
-  if (!supportedActions?.has(action) && !isLifecycleAction) return null;
+  const isInternalAction = INTERNAL_EVENT_ACTIONS[githubEventHeader]?.has(action) === true;
+  if (!supportedActions?.has(action) && !isLifecycleAction && !isInternalAction) return null;
 
   const eventType = `${githubEventHeader}.${action}`;
 
@@ -105,6 +112,12 @@ export function normalizeGitHubEvent(
       const parsed = pullRequestReviewCommentEventSchema.safeParse(payload);
       if (!parsed.success) return null;
       return normalizeReviewComment(eventType, parsed.data);
+    }
+
+    case "pull_request_review": {
+      const parsed = pullRequestReviewEventSchema.safeParse(payload);
+      if (!parsed.success) return null;
+      return normalizePullRequestReview(eventType, parsed.data);
     }
 
     case "check_suite": {
@@ -245,6 +258,41 @@ function normalizeReviewComment(
     contextBlock: buildReviewCommentContextBlock(payload),
     meta: {
       commentId,
+      prNumber: pr.number,
+      targetBranch,
+    },
+  };
+}
+
+function normalizePullRequestReview(
+  eventType: string,
+  payload: PullRequestReviewPayload
+): GitHubAutomationEvent {
+  const pr = payload.pull_request;
+  const review = payload.review;
+  const targetBranch = pr.base?.ref;
+
+  return {
+    source: "github",
+    eventType,
+    triggerKey: `pr_review:${review.id}`,
+    concurrencyKey: `pr:${pr.number}`,
+    repoOwner: getRepoOwner(payload),
+    repoName: getRepoName(payload),
+    branch: pr.head?.ref,
+    targetBranch,
+    actor: review.user?.login ?? getActor(payload),
+    pullRequest: getPullRequestFacts(pr),
+    review: {
+      id: review.id,
+      state: review.state,
+    },
+    contextBlock: buildPullRequestReviewContextBlock(payload),
+    meta: {
+      reviewId: review.id,
+      reviewState: review.state,
+      reviewCommitId: review.commit_id,
+      reviewSubmittedAt: review.submitted_at,
       prNumber: pr.number,
       targetBranch,
     },

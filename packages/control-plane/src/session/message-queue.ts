@@ -14,7 +14,7 @@ import {
 import type { SandboxEvent } from "@open-inspect/shared/types/sandbox-events";
 import { isSessionPromptable } from "@open-inspect/shared/types/session-activity";
 import type { MessageSource } from "@open-inspect/shared/types/sessions";
-import { MAX_UNFINISHED_PROMPTS } from "@open-inspect/shared/types/prompts";
+import { MAX_UNFINISHED_PROMPTS, MAX_WEB_PROMPT_CHARS } from "@open-inspect/shared/types/prompts";
 import type { ClientInfo } from "../types";
 import type { SourceControlProviderName } from "../source-control";
 import type { SandboxLifecycle } from "../sandbox/lifecycle/manager";
@@ -65,6 +65,8 @@ interface EnqueuePromptCoreData {
   attachments?: SessionAttachmentReference[];
   callbackContext?: Record<string, unknown>;
   clientRequestId?: string;
+  coalescingKey?: string;
+  requestFingerprint?: string;
 }
 
 interface EnqueuedPrompt {
@@ -90,6 +92,13 @@ export class PromptRequestConflictError extends Error {
   constructor() {
     super("clientRequestId was already used for a different prompt");
     this.name = "PromptRequestConflictError";
+  }
+}
+
+export class PromptCoalescingBusyError extends Error {
+  constructor() {
+    super("A matching prompt cannot accept this update yet");
+    this.name = "PromptCoalescingBusyError";
   }
 }
 
@@ -351,6 +360,7 @@ export class SessionMessageQueue {
       message.content,
       message.id,
       now,
+      message.source,
       parseStoredSessionAttachments(message.attachments, () =>
         this.log.error("prompt.invalid_stored_attachments")
       )
@@ -587,6 +597,7 @@ export class SessionMessageQueue {
     content: string,
     messageId: string,
     now: number,
+    source: MessageSource,
     attachments?: ResolvedSessionAttachment[]
   ): Extract<SandboxEvent, { type: "user_message" }> {
     return {
@@ -594,6 +605,7 @@ export class SessionMessageQueue {
       content,
       messageId,
       timestamp: now / 1000,
+      source,
       author: {
         participantId: participant.id,
         userId: participant.canonical_user_id ?? participant.user_id,
@@ -608,8 +620,15 @@ export class SessionMessageQueue {
     data: EnqueuePromptRequest
   ): Promise<{ messageId: string; status: "queued" }> {
     this.assertPromptableSession();
-    this.assertQueueCapacity();
     let participant = this.participantService.getByUserId(data.authorId);
+    if (!participant && data.canonicalUserId) {
+      participant = this.participantRepository.getParticipantByCanonicalUserId(
+        data.canonicalUserId
+      );
+    }
+    if (!participant && data.source === "github-review") {
+      participant = this.participantRepository.getOwnerParticipant();
+    }
     if (!participant) {
       const name = data.scmEnrichment?.name || data.authorId;
       participant = data.canonicalUserId
@@ -641,6 +660,16 @@ export class SessionMessageQueue {
       participant = this.participantRepository.getParticipantById(participant.id) ?? participant;
     }
 
+    const requestFingerprint =
+      data.coalescingKey && data.clientRequestId
+        ? await fingerprintWebPrompt(participant.id, data)
+        : undefined;
+    const coalesced = this.coalescePendingPrompt(data, participant, requestFingerprint);
+    if (coalesced) {
+      await this.processMessageQueue();
+      return { messageId: coalesced.messageId, status: "queued" };
+    }
+
     const enqueued = await this.enqueuePromptCore({
       participant,
       userId: data.authorId,
@@ -650,6 +679,9 @@ export class SessionMessageQueue {
       reasoningEffort: data.reasoningEffort,
       attachments: data.attachments,
       callbackContext: data.callbackContext,
+      clientRequestId: data.clientRequestId,
+      coalescingKey: data.coalescingKey,
+      requestFingerprint,
     });
 
     await this.processMessageQueue();
@@ -657,12 +689,67 @@ export class SessionMessageQueue {
     return { messageId: enqueued.messageId, status: "queued" };
   }
 
+  private coalescePendingPrompt(
+    data: EnqueuePromptRequest,
+    participant: ParticipantRow,
+    requestFingerprint: string | undefined
+  ): EnqueuedPrompt | null {
+    if (!data.coalescingKey) return null;
+
+    if (data.clientRequestId) {
+      const exact = this.messageRepository.getMessageByClientRequestId(data.clientRequestId);
+      if (exact) {
+        if (
+          exact.author_id !== participant.id ||
+          exact.request_fingerprint !== requestFingerprint
+        ) {
+          throw new PromptRequestConflictError();
+        }
+        return {
+          messageId: exact.id,
+          position: this.messageRepository.getUnfinishedMessagePosition(exact.id),
+        };
+      }
+    }
+
+    const existing = this.messageRepository.getUnfinishedMessageByCoalescingKey(data.coalescingKey);
+    if (!existing) return null;
+    if (existing.author_id !== participant.id) throw new PromptRequestConflictError();
+    // A matching processing prompt keeps running. Queue a fresh prompt behind
+    // it; subsequent review batches will coalesce into that pending prompt.
+    if (existing.status === "processing" || !data.pendingAppendContent) return null;
+
+    const content = `${existing.content}\n\n${data.pendingAppendContent}`;
+    // Preserve both batches by starting a new queued prompt when the existing
+    // one has reached the prompt-size limit.
+    if (content.length > MAX_WEB_PROMPT_CHARS) return null;
+    const updated = this.messageRepository.updatePendingCoalescedMessage({
+      messageId: existing.id,
+      content,
+      clientRequestId: data.clientRequestId ?? null,
+      requestFingerprint: requestFingerprint ?? null,
+    });
+    if (!updated) throw new PromptCoalescingBusyError();
+
+    this.broadcastPromptQueue();
+    this.log.info("prompt.enqueue", {
+      event: "prompt.enqueue",
+      outcome: "coalesced",
+      message_id: existing.id,
+      source: data.source,
+      coalescing_key: data.coalescingKey,
+    });
+    return {
+      messageId: existing.id,
+      position: this.messageRepository.getUnfinishedMessagePosition(existing.id),
+    };
+  }
+
   private async enqueuePromptCore(data: EnqueuePromptCoreData): Promise<EnqueuedPrompt> {
     this.assertPromptableSession();
-    let requestFingerprint: string | undefined;
-    if (data.clientRequestId) {
-      requestFingerprint = await fingerprintWebPrompt(data.participant.id, data);
-    }
+    const requestFingerprint =
+      data.requestFingerprint ??
+      (data.clientRequestId ? await fingerprintWebPrompt(data.participant.id, data) : undefined);
 
     // Keep the idempotency lookup, capacity check, and insert in one synchronous
     // turn so concurrent WebSocket requests cannot race between them.
@@ -734,6 +821,7 @@ export class SessionMessageQueue {
           callbackContext: data.callbackContext ? JSON.stringify(data.callbackContext) : null,
           clientRequestId: data.clientRequestId ?? null,
           requestFingerprint: requestFingerprint ?? null,
+          coalescingKey: data.coalescingKey ?? null,
           status: "pending",
           createdAt: now,
         },
