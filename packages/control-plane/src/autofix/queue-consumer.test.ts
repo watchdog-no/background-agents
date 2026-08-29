@@ -34,7 +34,8 @@ describe("AutofixQueueConsumer", () => {
       markFailed: vi.fn(),
       markSkipped: vi.fn(),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = { ...message(), body: { version: 1 } };
 
     await consumer.consume(input);
@@ -58,17 +59,17 @@ describe("AutofixQueueConsumer", () => {
       markFailed: vi.fn(),
       markSkipped: vi.fn(),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message(5);
 
     await consumer.consume(input);
 
-    expect(input.retry).toHaveBeenCalledWith({
-      delaySeconds: AUTOFIX_DEFERRAL_DELAY_SECONDS,
-    });
-    expect(input.ack).not.toHaveBeenCalled();
-    // Back-pressure is not a delivery failure, so the feedback keeps its
-    // undecided receipt and never counts against the attempt budget.
+    // Re-enqueued rather than retried: a wait must not spend the delivery
+    // budget that exists to catch genuinely broken messages.
+    expect(redeliver).toHaveBeenCalledWith(ENVELOPE, AUTOFIX_DEFERRAL_DELAY_SECONDS);
+    expect(input.retry).not.toHaveBeenCalled();
+    expect(input.ack).toHaveBeenCalledOnce();
     expect(feedbackStore.recordError).not.toHaveBeenCalled();
     expect(feedbackStore.markFailed).not.toHaveBeenCalled();
     expect(feedbackStore.markSkipped).not.toHaveBeenCalled();
@@ -87,7 +88,8 @@ describe("AutofixQueueConsumer", () => {
       recordError: vi.fn(),
       markFailed: vi.fn(),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message();
 
     await consumer.consume(input);
@@ -106,7 +108,8 @@ describe("AutofixQueueConsumer", () => {
       recordError: vi.fn(async () => undefined),
       markFailed: vi.fn(async () => true),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message(2);
 
     await consumer.consume(input);
@@ -130,7 +133,8 @@ describe("AutofixQueueConsumer", () => {
       recordError: vi.fn(async () => undefined),
       markFailed: vi.fn(async () => true),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message(5);
 
     await consumer.consume(input);
@@ -154,7 +158,8 @@ describe("AutofixQueueConsumer", () => {
       recordError: vi.fn(async () => undefined),
       markFailed: vi.fn(async () => false),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message(5);
 
     await consumer.consume(input);
@@ -173,7 +178,8 @@ describe("AutofixQueueConsumer", () => {
       recordError: vi.fn(async () => undefined),
       markFailed: vi.fn(async () => true),
     };
-    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const redeliver = vi.fn(async () => undefined);
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5, redeliver);
     const input = message(1);
 
     await consumer.consume(input);

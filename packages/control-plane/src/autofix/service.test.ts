@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GITHUB_AUTOFIX_DEFAULTS, type GitHubAutofixEnvelope } from "@open-inspect/shared";
 import {
   AUTOFIX_MAX_HOLD_MS,
+  AUTOFIX_OWNERSHIP_GRACE_MS,
   AUTOFIX_QUIET_PERIOD_MS,
   AutofixDeferredError,
   AutofixService,
@@ -50,7 +51,7 @@ function buildService() {
     decision: "received",
     dispatchAttemptedAt: null,
     messageId: null,
-    firstReceivedAt: 1_000,
+    firstReceivedAt: 2_000 - AUTOFIX_QUIET_PERIOD_MS,
   };
   const feedbackStore = {
     receive: vi.fn(
@@ -67,18 +68,27 @@ function buildService() {
     markDispatchAttempted: vi.fn(async () => undefined),
     markQueued: vi.fn(async () => undefined),
     markSkipped: vi.fn(async () => true),
-    newestUndecidedSiblingReceivedAt: vi.fn(async (): Promise<number | null> => null),
+    newestUndecidedSiblingArrival: vi.fn(async (): Promise<number | null> => null),
     markFailed: vi.fn(async () => true),
     recordError: vi.fn(async () => undefined),
   };
+  type PullRequestOwner = {
+    artifactId: string;
+    sessionId: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+  };
   const pullRequests = {
-    getByIdentity: vi.fn(async () => ({
-      artifactId: "artifact-1",
-      sessionId: "session-1",
-      repoOwner: "acme",
-      repoName: "widgets",
-      prNumber: 42,
-    })),
+    getByIdentity: vi.fn(
+      async (): Promise<PullRequestOwner | null> => ({
+        artifactId: "artifact-1",
+        sessionId: "session-1",
+        repoOwner: "acme",
+        repoName: "widgets",
+        prNumber: 42,
+      })
+    ),
   };
   const settings = {
     resolve: vi.fn(async () => ({
@@ -224,7 +234,7 @@ describe("AutofixService", () => {
       dispatchAttemptedAt: 2_000,
       messageId: "message-winner",
       reason: "enqueued",
-      firstReceivedAt: 1_000,
+      firstReceivedAt: 2_000 - AUTOFIX_QUIET_PERIOD_MS,
     });
 
     const result = await h.service.process({
@@ -669,22 +679,74 @@ describe("AutofixService", () => {
     expect(h.sessions.fetch).not.toHaveBeenCalled();
   });
 
-  it("holds feedback while the pull request is still receiving more", async () => {
+  it("waits for a missing ownership record instead of dropping the feedback", async () => {
     const h = buildService();
-    // A sibling arrived inside the quiet window, so the burst has not settled.
-    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValueOnce(
-      2_000 - AUTOFIX_QUIET_PERIOD_MS / 2
+    // The bot enqueues the Autofix envelope before it posts the event that
+    // repairs a missed ownership write, so the consumer can arrive first.
+    h.pullRequests.getByIdentity.mockResolvedValueOnce(null);
+    h.feedbackStore.receive.mockResolvedValueOnce({
+      feedbackKey: "github:pr_comment:1234",
+      decision: "received",
+      dispatchAttemptedAt: null,
+      messageId: null,
+      firstReceivedAt: 2_000 - AUTOFIX_OWNERSHIP_GRACE_MS / 2,
+    });
+
+    await expect(h.service.process(ENVELOPE)).rejects.toBeInstanceOf(AutofixDeferredError);
+
+    expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
+  });
+
+  it("gives up on an untracked pull request once the grace window closes", async () => {
+    const h = buildService();
+    h.pullRequests.getByIdentity.mockResolvedValueOnce(null);
+    h.feedbackStore.receive.mockResolvedValueOnce({
+      feedbackKey: "github:pr_comment:1234",
+      decision: "received",
+      dispatchAttemptedAt: null,
+      messageId: null,
+      firstReceivedAt: 2_000 - AUTOFIX_OWNERSHIP_GRACE_MS,
+    });
+
+    const result = await h.service.process(ENVELOPE);
+
+    expect(result).toMatchObject({ decision: "skipped", reason: "untracked_pull_request" });
+  });
+
+  it("holds the first delivery until the pull request has been quiet", async () => {
+    const h = buildService();
+    h.feedbackStore.receive.mockResolvedValueOnce({
+      feedbackKey: "github:pr_comment:1234",
+      decision: "received",
+      dispatchAttemptedAt: null,
+      messageId: null,
+      firstReceivedAt: 2_000 - AUTOFIX_QUIET_PERIOD_MS / 2,
+    });
+
+    const error = await h.service.process(ENVELOPE).catch((e: unknown) => e);
+
+    // Without this the batching never happens: deliveries arrive one at a time,
+    // and by the second the first is already queued rather than undecided.
+    expect(error).toBeInstanceOf(AutofixDeferredError);
+    expect((error as AutofixDeferredError).delaySeconds).toBe(AUTOFIX_QUIET_PERIOD_MS / 2 / 1000);
+    expect(h.github.getPullRequest).not.toHaveBeenCalled();
+    expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
+  });
+
+  it("keeps holding while a sibling delivery lands inside the window", async () => {
+    const h = buildService();
+    h.feedbackStore.newestUndecidedSiblingArrival.mockResolvedValueOnce(
+      2_000 - AUTOFIX_QUIET_PERIOD_MS / 4
     );
 
     await expect(h.service.process(ENVELOPE)).rejects.toBeInstanceOf(AutofixDeferredError);
 
     expect(h.github.getPullRequest).not.toHaveBeenCalled();
-    expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
   });
 
   it("dispatches once the burst has been quiet for the full window", async () => {
     const h = buildService();
-    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValueOnce(
+    h.feedbackStore.newestUndecidedSiblingArrival.mockResolvedValueOnce(
       2_000 - AUTOFIX_QUIET_PERIOD_MS - 1
     );
 
@@ -703,12 +765,12 @@ describe("AutofixService", () => {
       firstReceivedAt: 2_000 - AUTOFIX_MAX_HOLD_MS,
     });
     // Still busy, but the starvation guard wins.
-    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValue(2_000);
+    h.feedbackStore.newestUndecidedSiblingArrival.mockResolvedValue(2_000);
 
     const result = await h.service.process(ENVELOPE);
 
     expect(result).toMatchObject({ decision: "queued" });
-    expect(h.feedbackStore.newestUndecidedSiblingReceivedAt).not.toHaveBeenCalled();
+    expect(h.feedbackStore.newestUndecidedSiblingArrival).not.toHaveBeenCalled();
   });
 
   it("defers rather than skipping when the session prompt queue is full", async () => {
@@ -741,7 +803,7 @@ describe("AutofixService", () => {
       decision: "received",
       dispatchAttemptedAt: 1_500,
       messageId: null,
-      firstReceivedAt: 1_000,
+      firstReceivedAt: 2_000 - AUTOFIX_QUIET_PERIOD_MS,
     });
     h.sessions.fetch.mockResolvedValueOnce(
       Response.json({ kind: "found", messageId: "message-existing" })

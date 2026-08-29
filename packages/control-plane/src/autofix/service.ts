@@ -12,6 +12,9 @@ import {
 import { SourceControlProviderError } from "../source-control/errors";
 import { SessionInternalPaths, type SessionInternalPath } from "../session/contracts";
 
+/** Default wait before a deferred envelope is redelivered. */
+const AUTOFIX_DEFERRAL_DELAY_SECONDS = 15;
+
 const MAX_GITHUB_AUTOFIX_DIFF_HUNK_CHARS = 4_000;
 const MAX_GITHUB_AUTOFIX_PROMPT_BYTES = 200_000;
 
@@ -28,6 +31,16 @@ export const AUTOFIX_QUIET_PERIOD_MS = 2 * 60 * 1000;
  * request under sustained review would otherwise never reach a quiet moment.
  */
 export const AUTOFIX_MAX_HOLD_MS = 10 * 60 * 1000;
+
+/**
+ * How long to keep waiting for the pull request's ownership record.
+ *
+ * The bot enqueues the Autofix envelope before it posts the normalized event
+ * that repairs a missed ownership write, so the consumer can legitimately run
+ * first. Treating that as "untracked" straight away would drop the feedback for
+ * good, so give the repair a bounded window to land.
+ */
+export const AUTOFIX_OWNERSHIP_GRACE_MS = 2 * 60 * 1000;
 
 interface FeedbackReceipt {
   feedbackKey: string;
@@ -61,7 +74,7 @@ interface FeedbackStore {
     decidedAt: number
   ): Promise<void>;
   markSkipped(feedbackKey: string, reason: string, decidedAt: number): Promise<boolean>;
-  newestUndecidedSiblingReceivedAt(options: {
+  newestUndecidedSiblingArrival(options: {
     repositoryExternalId: string;
     prNumber: number;
     excludeFeedbackKey: string;
@@ -130,7 +143,11 @@ interface SessionClient {
  * receipt.
  */
 export class AutofixDeferredError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Seconds to wait before redelivery; omitted means the consumer's default. */
+    readonly delaySeconds?: number
+  ) {
     super(message);
     this.name = "AutofixDeferredError";
   }
@@ -235,7 +252,15 @@ export class AutofixService {
       repoName: envelope.repository.name,
       prNumber: envelope.pullRequestNumber,
     });
-    if (!owner) return this.skip(receipt.feedbackKey, "untracked_pull_request", now);
+    if (!owner) {
+      if (now - receipt.firstReceivedAt < AUTOFIX_OWNERSHIP_GRACE_MS) {
+        throw new AutofixDeferredError(
+          "Pull request ownership record is not available yet",
+          AUTOFIX_DEFERRAL_DELAY_SECONDS
+        );
+      }
+      return this.skip(receipt.feedbackKey, "untracked_pull_request", now);
+    }
 
     const recovered = await this.recoverPriorDispatch(receipt, owner, now);
     if (recovered) return recovered;
@@ -246,7 +271,7 @@ export class AutofixService {
     if ("decision" in eligibility) return eligibility;
 
     const command = this.createSessionCommand(envelope, receipt, owner, eligibility);
-    return this.dispatchToSession(owner.sessionId, receipt.feedbackKey, command, now);
+    return this.dispatchToSession(owner.sessionId, receipt, command, now);
   }
 
   /**
@@ -262,15 +287,32 @@ export class AutofixService {
   ): Promise<void> {
     if (now - receipt.firstReceivedAt >= AUTOFIX_MAX_HOLD_MS) return;
 
-    const newestSibling = await this.feedbackStore.newestUndecidedSiblingReceivedAt({
+    const newestSibling = await this.feedbackStore.newestUndecidedSiblingArrival({
       repositoryExternalId: envelope.repository.id,
       prNumber: envelope.pullRequestNumber,
       excludeFeedbackKey: receipt.feedbackKey,
     });
-    if (newestSibling === null) return;
-    if (now - newestSibling >= AUTOFIX_QUIET_PERIOD_MS) return;
+    // This feedback's own arrival opens the window, so the first delivery of a
+    // burst waits too. Holding only when a sibling already exists would batch
+    // nothing: deliveries usually arrive one at a time, and by the second the
+    // first is already queued rather than undecided.
+    const newestArrival =
+      newestSibling === null
+        ? receipt.firstReceivedAt
+        : Math.max(receipt.firstReceivedAt, newestSibling);
+    const waited = now - newestArrival;
+    if (waited >= AUTOFIX_QUIET_PERIOD_MS) return;
 
-    throw new AutofixDeferredError("Pull request feedback is still arriving");
+    // Sleep exactly the remainder rather than a fixed tick, so a burst costs a
+    // couple of redeliveries instead of one per polling interval.
+    const remainingMs = Math.min(
+      AUTOFIX_QUIET_PERIOD_MS - waited,
+      AUTOFIX_MAX_HOLD_MS - (now - receipt.firstReceivedAt)
+    );
+    throw new AutofixDeferredError(
+      "Pull request feedback is still arriving",
+      Math.max(1, Math.ceil(remainingMs / 1000))
+    );
   }
 
   private completedReceiptResult(receipt: FeedbackReceipt): AutofixProcessResult | null {
@@ -443,10 +485,11 @@ export class AutofixService {
 
   private async dispatchToSession(
     sessionId: string,
-    feedbackKey: string,
+    receipt: FeedbackReceipt,
     command: EnqueueAutofixCommand,
     decidedAt: number
   ): Promise<AutofixProcessResult> {
+    const feedbackKey = receipt.feedbackKey;
     await this.feedbackStore.markDispatchAttempted(feedbackKey, decidedAt);
     try {
       const response = await this.sessions.fetch(sessionId, SessionInternalPaths.autofix, {
@@ -482,10 +525,18 @@ export class AutofixService {
       }
       if (parsed.data.kind === "rejected") {
         // A full prompt queue is back-pressure, not a verdict on the feedback:
-        // the session drains and admission succeeds later. Skipping here would
-        // drop the review silently, so defer and let the queue redeliver.
-        if (parsed.data.reason === "queue_full") {
-          throw new AutofixDeferredError("Session prompt queue is full");
+        // the session drains and admission succeeds later. Skipping straight
+        // away would drop the review silently, so wait — but only for a bounded
+        // window, after which the outcome is recorded rather than retried
+        // forever.
+        if (
+          parsed.data.reason === "queue_full" &&
+          decidedAt - receipt.firstReceivedAt < AUTOFIX_MAX_HOLD_MS
+        ) {
+          throw new AutofixDeferredError(
+            "Session prompt queue is full",
+            AUTOFIX_DEFERRAL_DELAY_SECONDS
+          );
         }
         return this.skip(feedbackKey, parsed.data.reason, decidedAt);
       }
