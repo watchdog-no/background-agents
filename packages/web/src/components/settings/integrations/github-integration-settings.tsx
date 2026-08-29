@@ -375,13 +375,6 @@ function GlobalSettingsSection({
         />
       </label>
 
-      {autoAddressReviewFeedback && (
-        <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm mb-4">
-          Review events are normally grouped for about two minutes before the original session
-          resumes.
-        </p>
-      )}
-
       {!autoAddressReviewFeedback && enabledReviewFeedbackOverrides > 0 && (
         <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm mb-4">
           {enabledReviewFeedbackOverrides} repository{" "}

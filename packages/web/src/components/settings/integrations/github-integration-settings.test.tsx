@@ -259,7 +259,7 @@ describe("GitHubIntegrationSettings", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
 
     await user.click(toggle);
-    expect(screen.getByText(/grouped for about two minutes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/grouped for about two minutes/i)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /open github app settings/i })).toHaveAttribute(
       "href",
       "https://github.com/settings/apps"
