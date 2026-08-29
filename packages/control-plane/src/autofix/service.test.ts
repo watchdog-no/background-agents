@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { GITHUB_AUTOFIX_DEFAULTS, type GitHubAutofixEnvelope } from "@open-inspect/shared";
-import { AutofixService } from "./service";
+import {
+  AUTOFIX_MAX_HOLD_MS,
+  AUTOFIX_QUIET_PERIOD_MS,
+  AutofixDeferredError,
+  AutofixService,
+} from "./service";
 import type { GitHubPullRequestFeedback } from "../source-control/providers/github-provider";
 import { SourceControlProviderError } from "../source-control/errors";
 
@@ -39,11 +44,13 @@ function buildService() {
     dispatchAttemptedAt: number | null;
     messageId: string | null;
     reason?: string | null;
+    firstReceivedAt: number;
   } = {
     feedbackKey: "github:pr_comment:1234",
     decision: "received",
     dispatchAttemptedAt: null,
     messageId: null,
+    firstReceivedAt: 1_000,
   };
   const feedbackStore = {
     receive: vi.fn(
@@ -52,6 +59,7 @@ function buildService() {
         decision: "received" | "queued" | "skipped" | "failed";
         dispatchAttemptedAt: number | null;
         messageId: string | null;
+        firstReceivedAt: number;
       }> => received
     ),
     get: vi.fn(async () => received),
@@ -59,6 +67,7 @@ function buildService() {
     markDispatchAttempted: vi.fn(async () => undefined),
     markQueued: vi.fn(async () => undefined),
     markSkipped: vi.fn(async () => true),
+    newestUndecidedSiblingReceivedAt: vi.fn(async (): Promise<number | null> => null),
     markFailed: vi.fn(async () => true),
     recordError: vi.fn(async () => undefined),
   };
@@ -80,6 +89,8 @@ function buildService() {
   const github = {
     getPullRequest: vi.fn(async () => ({
       lifecycleState: "open" as const,
+      isDraft: false,
+      isCrossRepository: false,
       repoOwner: "acme",
       repoName: "widgets",
     })),
@@ -109,6 +120,17 @@ function buildService() {
 
   return { service, feedbackStore, pullRequests, settings, github, sessions };
 }
+
+const ENVELOPE = {
+  version: 1 as const,
+  eventType: "issue_comment" as const,
+  action: "created" as const,
+  deliveryId: "delivery-1",
+  providerObject: { kind: "pr_comment" as const, id: "1234" },
+  repository: { id: "99", owner: "acme", name: "widgets" },
+  pullRequestNumber: 42,
+  receivedAt: "2026-07-30T05:00:00.000Z",
+};
 
 describe("AutofixService", () => {
   it("dispatches eligible human PR feedback into the owning session", async () => {
@@ -202,6 +224,7 @@ describe("AutofixService", () => {
       dispatchAttemptedAt: 2_000,
       messageId: "message-winner",
       reason: "enqueued",
+      firstReceivedAt: 1_000,
     });
 
     const result = await h.service.process({
@@ -247,6 +270,34 @@ describe("AutofixService", () => {
       reason: "disabled",
     });
     expect(h.github.getPullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["draft", { isDraft: true, isCrossRepository: false }, "pull_request_draft"],
+    ["fork", { isDraft: false, isCrossRepository: true }, "pull_request_from_fork"],
+  ])("skips feedback on a %s pull request before reading it", async (_label, pr, reason) => {
+    const h = buildService();
+    h.github.getPullRequest.mockResolvedValueOnce({
+      lifecycleState: "open" as const,
+      repoOwner: "acme",
+      repoName: "widgets",
+      ...pr,
+    });
+
+    const result = await h.service.process({
+      version: 1,
+      eventType: "issue_comment",
+      action: "created",
+      deliveryId: "delivery-1",
+      providerObject: { kind: "pr_comment", id: "1234" },
+      repository: { id: "99", owner: "acme", name: "widgets" },
+      pullRequestNumber: 42,
+      receivedAt: "2026-07-30T05:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({ decision: "skipped", reason });
+    expect(h.github.getPullRequestFeedback).not.toHaveBeenCalled();
+    expect(h.sessions.fetch).not.toHaveBeenCalled();
   });
 
   it("rejects human feedback from an author without live write permission", async () => {
@@ -618,6 +669,71 @@ describe("AutofixService", () => {
     expect(h.sessions.fetch).not.toHaveBeenCalled();
   });
 
+  it("holds feedback while the pull request is still receiving more", async () => {
+    const h = buildService();
+    // A sibling arrived inside the quiet window, so the burst has not settled.
+    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValueOnce(
+      2_000 - AUTOFIX_QUIET_PERIOD_MS / 2
+    );
+
+    await expect(h.service.process(ENVELOPE)).rejects.toBeInstanceOf(AutofixDeferredError);
+
+    expect(h.github.getPullRequest).not.toHaveBeenCalled();
+    expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
+  });
+
+  it("dispatches once the burst has been quiet for the full window", async () => {
+    const h = buildService();
+    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValueOnce(
+      2_000 - AUTOFIX_QUIET_PERIOD_MS - 1
+    );
+
+    const result = await h.service.process(ENVELOPE);
+
+    expect(result).toMatchObject({ decision: "queued" });
+  });
+
+  it("stops holding once the feedback has waited out the maximum hold", async () => {
+    const h = buildService();
+    h.feedbackStore.receive.mockResolvedValueOnce({
+      feedbackKey: "github:pr_comment:1234",
+      decision: "received",
+      dispatchAttemptedAt: null,
+      messageId: null,
+      firstReceivedAt: 2_000 - AUTOFIX_MAX_HOLD_MS,
+    });
+    // Still busy, but the starvation guard wins.
+    h.feedbackStore.newestUndecidedSiblingReceivedAt.mockResolvedValue(2_000);
+
+    const result = await h.service.process(ENVELOPE);
+
+    expect(result).toMatchObject({ decision: "queued" });
+    expect(h.feedbackStore.newestUndecidedSiblingReceivedAt).not.toHaveBeenCalled();
+  });
+
+  it("defers rather than skipping when the session prompt queue is full", async () => {
+    const h = buildService();
+    h.sessions.fetch.mockResolvedValueOnce(
+      Response.json({ kind: "rejected", reason: "queue_full" })
+    );
+
+    await expect(
+      h.service.process({
+        version: 1,
+        eventType: "issue_comment",
+        action: "created",
+        deliveryId: "delivery-1",
+        providerObject: { kind: "pr_comment", id: "1234" },
+        repository: { id: "99", owner: "acme", name: "widgets" },
+        pullRequestNumber: 42,
+        receivedAt: "2026-07-30T05:00:00.000Z",
+      })
+    ).rejects.toBeInstanceOf(AutofixDeferredError);
+
+    expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
+    expect(h.feedbackStore.markQueued).not.toHaveBeenCalled();
+  });
+
   it("recovers an ambiguous prior dispatch through the SessionDO lookup", async () => {
     const h = buildService();
     h.feedbackStore.receive.mockResolvedValueOnce({
@@ -625,6 +741,7 @@ describe("AutofixService", () => {
       decision: "received",
       dispatchAttemptedAt: 1_500,
       messageId: null,
+      firstReceivedAt: 1_000,
     });
     h.sessions.fetch.mockResolvedValueOnce(
       Response.json({ kind: "found", messageId: "message-existing" })

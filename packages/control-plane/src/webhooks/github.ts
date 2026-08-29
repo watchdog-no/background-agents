@@ -9,20 +9,12 @@
 import type { GitHubAutomationEvent } from "@open-inspect/shared/triggers";
 import { SessionIndexStore } from "../db/session-index";
 import { SessionPullRequestStore } from "../db/session-pull-request-store";
-import { GitHubReviewFollowupStore } from "../db/github-review-followups";
-import { IntegrationSettingsStore } from "../db/integration-settings";
 import { createLogger, parseLogLevel } from "../logger";
 import { SessionInternalPaths } from "../session/contracts";
 import { createSessionRuntimeClient } from "../session/runtime-client";
 import type { Env } from "../types";
 import type { RequestContext, Route } from "../routes/shared";
-import {
-  defineRoute,
-  error,
-  GITHUB_USER_OR_SERVICE_ROUTE,
-  json,
-  parsePattern,
-} from "../routes/shared";
+import { defineRoute, error, GITHUB_USER_OR_SERVICE_ROUTE, parsePattern } from "../routes/shared";
 import { requireEventPoster } from "../auth/identity-enforcement";
 import {
   forwardAutomationEventToScheduler,
@@ -35,7 +27,6 @@ import {
   type PullRequestLifecycleDeps,
   type SessionArtifactSummary,
 } from "./pull-request-lifecycle";
-import { admitGitHubReviewFollowup } from "./github-review-followup";
 
 /**
  * Best-effort PR lifecycle tracking for one normalized event. Submitted
@@ -135,66 +126,9 @@ async function handleGitHubAutomationEvent(
     return validated.response;
   }
 
-  const isSubmittedReview = validated.event.eventType === "pull_request_review.submitted";
-  if (isSubmittedReview) {
-    // Review follow-up admission depends on the PR ownership record. Repair the
-    // best-effort creation write first when this webhook can supply it.
-    await trackPullRequestLifecycle(env, validated.event, ctx);
-  }
-
-  const settings = new IntegrationSettingsStore(ctx.db);
-  const followupLog = createLogger(
-    "webhook:github-review-followup",
-    { trace_id: ctx.trace_id, request_id: ctx.request_id },
-    parseLogLevel(env.LOG_LEVEL)
-  );
-  let followupOutcome: Awaited<ReturnType<typeof admitGitHubReviewFollowup>> = "not_review";
-  let followupAdmissionFailed = false;
-  try {
-    followupOutcome = await admitGitHubReviewFollowup(
-      {
-        settings: {
-          resolve: (repo) => settings.getResolvedConfig("github", repo),
-        },
-        followups: new GitHubReviewFollowupStore(ctx.db),
-        pullRequests: new SessionPullRequestStore(ctx.db),
-        sessions: new SessionIndexStore(ctx.db),
-        log: followupLog,
-        now: () => Date.now(),
-      },
-      validated.event
-    );
-  } catch (admissionError) {
-    followupAdmissionFailed = true;
-    followupLog.error("github_review_followup.admission_failed", {
-      repo_owner: validated.event.repoOwner,
-      repo_name: validated.event.repoName,
-      pr_number: validated.event.pullRequest?.number,
-      error: admissionError instanceof Error ? admissionError : new Error(String(admissionError)),
-    });
-  }
-
-  if (!isSubmittedReview) {
-    ctx.executionCtx.submit(() => trackPullRequestLifecycle(env, validated.event, ctx), {
-      name: "github_webhook.lifecycle",
-    });
-  }
-
-  if (followupOutcome !== "not_review" && followupOutcome !== "queued") {
-    followupLog.info("github_review_followup.skipped", {
-      outcome: followupOutcome,
-      repo_owner: validated.event.repoOwner,
-      repo_name: validated.event.repoName,
-      pr_number: validated.event.pullRequest?.number,
-    });
-  }
-
-  if (isSubmittedReview) {
-    if (followupAdmissionFailed) {
-      return error("GitHub review follow-up admission unavailable", 503);
-    }
-    return json({ ok: true, triggered: 0, skipped: 0 });
-  }
+  ctx.executionCtx.submit(() => trackPullRequestLifecycle(env, validated.event, ctx), {
+    name: "github_webhook.lifecycle",
+  });
 
   return forwardAutomationEventToScheduler(env, validated.event, ctx);
 }

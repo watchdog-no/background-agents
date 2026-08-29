@@ -1,7 +1,10 @@
 import { githubAutofixEnvelopeSchema, type GitHubAutofixEnvelope } from "@open-inspect/shared";
 import { githubAutofixFeedbackKey } from "../db/pr-autofix-feedback-store";
 import { SourceControlProviderError } from "../source-control/errors";
-import type { AutofixProcessResult } from "./service";
+import { AutofixDeferredError, type AutofixProcessResult } from "./service";
+
+/** How long to wait before retrying feedback the session could not accept yet. */
+export const AUTOFIX_DEFERRAL_DELAY_SECONDS = 60;
 
 interface AutofixProcessor {
   process(body: GitHubAutofixEnvelope): Promise<AutofixProcessResult>;
@@ -21,7 +24,7 @@ interface QueueMessage {
   body: unknown;
   attempts: number;
   ack(): void;
-  retry(): void;
+  retry(options?: { delaySeconds?: number }): void;
 }
 
 function errorMessage(error: unknown): string {
@@ -49,6 +52,13 @@ export class AutofixQueueConsumer {
     } catch (error) {
       const feedbackKey = githubAutofixFeedbackKey(parsed.data);
       const detail = errorMessage(error);
+      if (error instanceof AutofixDeferredError) {
+        // Back-pressure, not a failure: leave the receipt undecided and retry
+        // later. Exhausting the platform's retries sends the message to the DLQ,
+        // which is visible, rather than dropping the feedback silently.
+        message.retry({ delaySeconds: AUTOFIX_DEFERRAL_DELAY_SECONDS });
+        return;
+      }
       if (error instanceof SourceControlProviderError && error.errorType === "permanent") {
         await this.feedbackStore.markFailed(
           feedbackKey,

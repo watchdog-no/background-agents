@@ -15,12 +15,28 @@ import { SessionInternalPaths, type SessionInternalPath } from "../session/contr
 const MAX_GITHUB_AUTOFIX_DIFF_HUNK_CHARS = 4_000;
 const MAX_GITHUB_AUTOFIX_PROMPT_BYTES = 200_000;
 
+/**
+ * How long a pull request must go without new feedback before the feedback
+ * already received is dispatched. A review and the comments around it arrive as
+ * separate deliveries, so holding briefly lets one session prompt carry the
+ * whole burst instead of waking the session once per delivery.
+ */
+export const AUTOFIX_QUIET_PERIOD_MS = 2 * 60 * 1000;
+
+/**
+ * The longest a single piece of feedback waits for the burst to settle. A pull
+ * request under sustained review would otherwise never reach a quiet moment.
+ */
+export const AUTOFIX_MAX_HOLD_MS = 10 * 60 * 1000;
+
 interface FeedbackReceipt {
   feedbackKey: string;
   decision: "received" | "queued" | "skipped" | "failed";
   dispatchAttemptedAt: number | null;
   messageId: string | null;
   reason?: string | null;
+  /** First arrival of this feedback; bounds the quiet-window hold. */
+  firstReceivedAt: number;
 }
 
 interface FeedbackStore {
@@ -45,6 +61,11 @@ interface FeedbackStore {
     decidedAt: number
   ): Promise<void>;
   markSkipped(feedbackKey: string, reason: string, decidedAt: number): Promise<boolean>;
+  newestUndecidedSiblingReceivedAt(options: {
+    repositoryExternalId: string;
+    prNumber: number;
+    excludeFeedbackKey: string;
+  }): Promise<number | null>;
 }
 
 interface PullRequestOwner {
@@ -79,6 +100,8 @@ interface GitHubAutofixProvider {
     repositoryExternalId: string;
   }): Promise<{
     lifecycleState: "open" | "closed" | "merged";
+    isDraft: boolean;
+    isCrossRepository?: boolean;
     repoOwner: string;
     repoName: string;
   }>;
@@ -99,6 +122,18 @@ interface SessionClient {
     init?: RequestInit,
     search?: string
   ): Promise<Response>;
+}
+
+/**
+ * Raised when the feedback is fine but the session cannot take it right now.
+ * The queue consumer redelivers after a delay instead of writing a terminal
+ * receipt.
+ */
+export class AutofixDeferredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AutofixDeferredError";
+  }
 }
 
 export type AutofixProcessResult =
@@ -205,11 +240,37 @@ export class AutofixService {
     const recovered = await this.recoverPriorDispatch(receipt, owner, now);
     if (recovered) return recovered;
 
+    await this.holdForQuietWindow(envelope, receipt, now);
+
     const eligibility = await this.resolveEligibleFeedback(envelope, receipt, owner, now);
     if ("decision" in eligibility) return eligibility;
 
     const command = this.createSessionCommand(envelope, receipt, owner, eligibility);
     return this.dispatchToSession(owner.sessionId, receipt.feedbackKey, command, now);
+  }
+
+  /**
+   * Defer while the pull request is still receiving feedback, so one prompt
+   * carries the whole burst. The hold is bounded by {@link AUTOFIX_MAX_HOLD_MS}
+   * measured from this feedback's own first arrival, so sustained review
+   * traffic cannot starve it.
+   */
+  private async holdForQuietWindow(
+    envelope: GitHubAutofixEnvelope,
+    receipt: FeedbackReceipt,
+    now: number
+  ): Promise<void> {
+    if (now - receipt.firstReceivedAt >= AUTOFIX_MAX_HOLD_MS) return;
+
+    const newestSibling = await this.feedbackStore.newestUndecidedSiblingReceivedAt({
+      repositoryExternalId: envelope.repository.id,
+      prNumber: envelope.pullRequestNumber,
+      excludeFeedbackKey: receipt.feedbackKey,
+    });
+    if (newestSibling === null) return;
+    if (now - newestSibling >= AUTOFIX_QUIET_PERIOD_MS) return;
+
+    throw new AutofixDeferredError("Pull request feedback is still arriving");
   }
 
   private completedReceiptResult(receipt: FeedbackReceipt): AutofixProcessResult | null {
@@ -288,6 +349,17 @@ export class AutofixService {
     });
     if (pullRequest.lifecycleState !== "open") {
       return this.skip(receipt.feedbackKey, "pull_request_not_open", decidedAt);
+    }
+    // A draft is still being shaped, so review feedback on it is not yet a
+    // request to change anything.
+    if (pullRequest.isDraft) {
+      return this.skip(receipt.feedbackKey, "pull_request_draft", decidedAt);
+    }
+    // Feedback on a fork PR is authored around an untrusted contributor's
+    // branch. The author gates below cover who may speak; this covers whose
+    // pull request the agent would be pushing to.
+    if (pullRequest.isCrossRepository) {
+      return this.skip(receipt.feedbackKey, "pull_request_from_fork", decidedAt);
     }
 
     const feedbackLocation = {
@@ -390,7 +462,11 @@ export class AutofixService {
         throw new Error("Session Autofix admission returned an invalid response");
       }
 
-      if (parsed.data.kind === "enqueued" || parsed.data.kind === "duplicate") {
+      if (
+        parsed.data.kind === "enqueued" ||
+        parsed.data.kind === "coalesced" ||
+        parsed.data.kind === "duplicate"
+      ) {
         await this.feedbackStore.markQueued(
           feedbackKey,
           parsed.data.messageId,
@@ -405,10 +481,17 @@ export class AutofixService {
         };
       }
       if (parsed.data.kind === "rejected") {
+        // A full prompt queue is back-pressure, not a verdict on the feedback:
+        // the session drains and admission succeeds later. Skipping here would
+        // drop the review silently, so defer and let the queue redeliver.
+        if (parsed.data.reason === "queue_full") {
+          throw new AutofixDeferredError("Session prompt queue is full");
+        }
         return this.skip(feedbackKey, parsed.data.reason, decidedAt);
       }
       throw new Error(`Unexpected Session Autofix response: ${parsed.data.kind}`);
     } catch (error) {
+      if (error instanceof AutofixDeferredError) throw error;
       const recovered = await this.recoverDispatch(sessionId, feedbackKey, decidedAt);
       if (recovered) return recovered;
       throw error;

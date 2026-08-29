@@ -165,6 +165,30 @@ export class PrAutofixFeedbackStore {
     return row ? toRecord(row) : null;
   }
 
+  /**
+   * The newest arrival time among still-undecided feedback for one pull
+   * request, excluding `feedbackKey` itself. Drives the quiet-window hold that
+   * batches a burst of reviews into a single session prompt.
+   */
+  async newestUndecidedSiblingReceivedAt(options: {
+    repositoryExternalId: string;
+    prNumber: number;
+    excludeFeedbackKey: string;
+  }): Promise<number | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT MAX(last_received_at) AS newest
+           FROM pr_autofix_feedback
+          WHERE repository_external_id = ?
+            AND pr_number = ?
+            AND decision = 'received'
+            AND feedback_key != ?`
+      )
+      .bind(options.repositoryExternalId, options.prNumber, options.excludeFeedbackKey)
+      .first<{ newest: number | null }>();
+    return row?.newest ?? null;
+  }
+
   async listActivity(options: {
     limit: number;
     cursor: string | null;

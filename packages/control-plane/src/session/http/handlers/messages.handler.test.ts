@@ -148,8 +148,8 @@ describe("MessagesHandler", () => {
           content: "Review feedback",
           pendingAppendContent: "Additional feedback",
           authorId: "user-1",
-          source: "github-review",
-          coalescingKey: "github-review:artifact-1",
+          source: "github",
+          coalescingKey: "autofix:artifact-1",
         }),
       }),
       log

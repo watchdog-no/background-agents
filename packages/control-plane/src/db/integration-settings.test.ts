@@ -470,15 +470,6 @@ describe("IntegrationSettingsStore", () => {
       expect(result?.autoReviewOnOpen).toBe(false);
     });
 
-    it("supports autoAddressReviewFeedback as per-repo override", async () => {
-      await store.setRepoSettings("github", "acme/widgets", {
-        autoAddressReviewFeedback: true,
-      });
-
-      const result = await store.getRepoSettings("github", "acme/widgets");
-      expect(result?.autoAddressReviewFeedback).toBe(true);
-    });
-
     it("normalizes per-repo allowedTriggerUsers to lowercase", async () => {
       await store.setRepoSettings("github", "acme/widgets", {
         allowedTriggerUsers: ["Alice", "BOB"],
@@ -640,18 +631,6 @@ describe("IntegrationSettingsStore", () => {
 
       const config = await store.getResolvedConfig("github", "acme/widgets");
       expect(config.settings.autoReviewOnOpen).toBe(false);
-    });
-
-    it("per-repo automatic review follow-up overrides the global default", async () => {
-      await store.setGlobal("github", {
-        defaults: { autoAddressReviewFeedback: false },
-      });
-      await store.setRepoSettings("github", "acme/widgets", {
-        autoAddressReviewFeedback: true,
-      });
-
-      const config = await store.getResolvedConfig("github", "acme/widgets");
-      expect(config.settings.autoAddressReviewFeedback).toBe(true);
     });
 
     it("global default model is used when no repo override", async () => {

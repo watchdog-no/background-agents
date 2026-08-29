@@ -489,12 +489,10 @@ function UserMessageEvent({
   if (event.type !== "user_message") return null;
   const attachments = event.attachments ?? [];
 
-  const isGitHubReviewFollowup = event.source === "github-review";
   const isCurrentUser =
-    !isGitHubReviewFollowup &&
-    (event.author?.participantId && currentParticipantId
+    event.author?.participantId && currentParticipantId
       ? event.author.participantId === currentParticipantId
-      : !event.author);
+      : !event.author;
   const profile = event.author?.userId ? participantProfiles[event.author.userId] : undefined;
   const display = resolveParticipantDisplay(
     {
@@ -503,18 +501,14 @@ function UserMessageEvent({
     },
     profile
   );
-  const authorName = isGitHubReviewFollowup
-    ? "GitHub review follow-up"
-    : isCurrentUser
-      ? "You"
-      : display.name;
+  const authorName = isCurrentUser ? "You" : display.name;
   const avatar = display.avatar;
 
   return (
     <MessageFrame
       label={
         <div className="flex min-w-0 items-center gap-2">
-          {!isCurrentUser && !isGitHubReviewFollowup && avatar && (
+          {!isCurrentUser && avatar && (
             <img src={avatar} alt={authorName} className="w-5 h-5 rounded-full" />
           )}
           <span className="text-xs text-accent">{authorName}</span>

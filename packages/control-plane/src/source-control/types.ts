@@ -283,6 +283,8 @@ export interface PullRequestSnapshot {
   /** Base (target) branch name */
   baseBranch: string;
   headSha?: string;
+  /** True when the head branch lives in a fork rather than the base repository */
+  isCrossRepository?: boolean;
   /** Canonical current owner (refreshed when a rename/transfer is detected) */
   repoOwner: string;
   /** Canonical current name (refreshed when a rename/transfer is detected) */

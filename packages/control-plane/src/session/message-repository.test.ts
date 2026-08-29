@@ -207,9 +207,10 @@ describe("MessageRepository", () => {
   });
 
   it("atomically deduplicates Autofix feedback before other admission checks", () => {
-    mock.setData(`SELECT id FROM messages WHERE autofix_feedback_key = ? LIMIT 1`, [
-      { id: "msg-existing" },
-    ]);
+    mock.setData(
+      `SELECT message_id AS id FROM autofix_message_feedback WHERE feedback_key = ? LIMIT 1`,
+      [{ id: "msg-existing" }]
+    );
 
     expect(
       repository.admitAutofixMessage({
@@ -231,6 +232,56 @@ describe("MessageRepository", () => {
     ).toEqual({ kind: "duplicate", messageId: "msg-existing" });
     expect(transactionSyncCalls).toBe(1);
     expect(mock.calls).toHaveLength(1);
+  });
+
+  it("folds later feedback into a prompt still pending for the same pull request", () => {
+    mock.setData(
+      `SELECT * FROM messages
+       WHERE coalescing_key = ? AND status IN ('processing', 'pending')
+       ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC, rowid DESC
+       LIMIT 1`,
+      [
+        {
+          id: "msg-pending",
+          status: "pending",
+          content: "First review",
+          coalescing_key: "github:99:42",
+          client_request_id: null,
+          request_fingerprint: null,
+        },
+      ]
+    );
+    mock.setMatchingData(/UPDATE messages[\s\S]*RETURNING id/, [{ id: "msg-pending" }]);
+    mock.setOne({ count: 0 });
+
+    expect(
+      repository.admitAutofixMessage({
+        message: {
+          id: "msg-new",
+          authorId: "p-1",
+          content: "Second review",
+          source: "github",
+          status: "pending",
+          createdAt: 2000,
+        },
+        feedbackKey: "github:review:2",
+        pullRequestKey: "github:99:42",
+        originContext: "{}",
+        attemptLimit: null,
+        windowStart: 1000,
+        sessionClosed: false,
+        appendContent: "Second review",
+      })
+    ).toEqual({ kind: "coalesced", messageId: "msg-pending" });
+
+    const update = mock.calls.find(({ query }) => query.includes("UPDATE messages"));
+    expect(update?.params).toContain("First review\n\nSecond review");
+    // The coalesced key still resolves to the carrying message on redelivery.
+    const link = mock.calls.find(({ query }) =>
+      query.includes("INSERT OR IGNORE INTO autofix_message_feedback")
+    );
+    expect(link?.params).toEqual(["github:review:2", "msg-pending"]);
+    expect(mock.calls.some(({ query }) => query.includes("INSERT INTO messages"))).toBe(false);
   });
 
   it("rejects new Autofix feedback for a closed session", () => {

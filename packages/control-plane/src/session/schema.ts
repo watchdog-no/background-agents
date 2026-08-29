@@ -133,6 +133,15 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (author_id) REFERENCES participants(id)
 );
 
+-- Every provider feedback key carried by a message. messages.autofix_feedback_key
+-- only records the key that created a message, so coalesced feedback needs a row
+-- here for admission to stay idempotent across webhook redeliveries.
+CREATE TABLE IF NOT EXISTS autofix_message_feedback (
+  feedback_key TEXT PRIMARY KEY,
+  message_id   TEXT NOT NULL,
+  FOREIGN KEY (message_id) REFERENCES messages(id)
+);
+
 -- Agent event log (tool calls, tokens, errors)
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
@@ -229,6 +238,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_autofix_feedback
 ON messages(autofix_feedback_key) WHERE autofix_feedback_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_autofix_pr_created
 ON messages(autofix_pr_key, created_at) WHERE autofix_pr_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_autofix_message_feedback_message
+ON autofix_message_feedback(message_id);
 CREATE INDEX IF NOT EXISTS idx_events_message ON events(message_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, id);
@@ -667,6 +678,22 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
         ON messages(autofix_feedback_key) WHERE autofix_feedback_key IS NOT NULL`);
       sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_autofix_pr_created
         ON messages(autofix_pr_key, created_at) WHERE autofix_pr_key IS NOT NULL`);
+    },
+  },
+  {
+    id: 50,
+    description: "Link every Autofix feedback key to its carrying message",
+    run: (sql) => {
+      sql.exec(`CREATE TABLE IF NOT EXISTS autofix_message_feedback (
+        feedback_key TEXT PRIMARY KEY,
+        message_id   TEXT NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(id)
+      )`);
+      sql.exec(`CREATE INDEX IF NOT EXISTS idx_autofix_message_feedback_message
+        ON autofix_message_feedback(message_id)`);
+      // Backfill the keys already recorded inline so lookups are single-source.
+      sql.exec(`INSERT OR IGNORE INTO autofix_message_feedback (feedback_key, message_id)
+        SELECT autofix_feedback_key, id FROM messages WHERE autofix_feedback_key IS NOT NULL`);
     },
   },
 ];

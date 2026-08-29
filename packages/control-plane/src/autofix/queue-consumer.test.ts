@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GitHubAutofixEnvelope } from "@open-inspect/shared";
-import { AutofixQueueConsumer } from "./queue-consumer";
+import { AUTOFIX_DEFERRAL_DELAY_SECONDS, AutofixQueueConsumer } from "./queue-consumer";
+import { AutofixDeferredError } from "./service";
 import { SourceControlProviderError } from "../source-control/errors";
 
 const ENVELOPE: GitHubAutofixEnvelope = {
@@ -41,6 +42,33 @@ describe("AutofixQueueConsumer", () => {
     expect(input.retry).toHaveBeenCalledOnce();
     expect(input.ack).not.toHaveBeenCalled();
     expect(service.process).not.toHaveBeenCalled();
+    expect(feedbackStore.recordError).not.toHaveBeenCalled();
+    expect(feedbackStore.markFailed).not.toHaveBeenCalled();
+    expect(feedbackStore.markSkipped).not.toHaveBeenCalled();
+  });
+
+  it("defers a full session queue without writing a terminal decision", async () => {
+    const service = {
+      process: vi.fn(async () => {
+        throw new AutofixDeferredError("Session prompt queue is full");
+      }),
+    };
+    const feedbackStore = {
+      recordError: vi.fn(),
+      markFailed: vi.fn(),
+      markSkipped: vi.fn(),
+    };
+    const consumer = new AutofixQueueConsumer(service, feedbackStore, () => 2_000, 5);
+    const input = message(5);
+
+    await consumer.consume(input);
+
+    expect(input.retry).toHaveBeenCalledWith({
+      delaySeconds: AUTOFIX_DEFERRAL_DELAY_SECONDS,
+    });
+    expect(input.ack).not.toHaveBeenCalled();
+    // Back-pressure is not a delivery failure, so the feedback keeps its
+    // undecided receipt and never counts against the attempt budget.
     expect(feedbackStore.recordError).not.toHaveBeenCalled();
     expect(feedbackStore.markFailed).not.toHaveBeenCalled();
     expect(feedbackStore.markSkipped).not.toHaveBeenCalled();

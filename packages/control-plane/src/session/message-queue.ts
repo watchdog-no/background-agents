@@ -84,7 +84,7 @@ const STUCK_PROCESSING_ERROR = "Execution timed out (stuck processing)";
 
 type EnqueueAutofixResponse = Extract<
   GitHubAutofixSessionResponse,
-  { kind: "enqueued" | "duplicate" | "rejected" }
+  { kind: "enqueued" | "coalesced" | "duplicate" | "rejected" }
 >;
 type LookupAutofixResponse = Extract<GitHubAutofixSessionResponse, { kind: "found" | "not_found" }>;
 
@@ -212,13 +212,15 @@ export class SessionMessageQueue {
       attemptLimit: command.attemptLimit,
       windowStart: now - AUTOFIX_ATTEMPT_WINDOW_MS,
       sessionClosed: !session || session.status === "archived" || session.status === "cancelled",
+      appendContent: command.prompt,
     });
     if (admission.kind === "rejected") return admission;
 
-    if (admission.kind === "enqueued") {
+    if (admission.kind === "enqueued" || admission.kind === "coalesced") {
       this.broadcastPromptQueue();
       this.log.info("autofix.enqueue", {
         event: "autofix.enqueue",
+        outcome: admission.kind,
         feedback_key: command.feedbackKey,
         message_id: admission.messageId,
         pull_request_number: command.pullRequest.number,
@@ -719,9 +721,6 @@ export class SessionMessageQueue {
       participant = this.participantRepository.getParticipantByCanonicalUserId(
         data.canonicalUserId
       );
-    }
-    if (!participant && data.source === "github-review") {
-      participant = this.participantRepository.getOwnerParticipant();
     }
     if (!participant) {
       const name = data.scmEnrichment?.name || data.authorId;

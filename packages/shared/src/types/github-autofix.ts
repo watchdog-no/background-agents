@@ -90,6 +90,11 @@ export const githubAutofixSessionResponseSchema = z.discriminatedUnion("kind", [
     messageId: z.string().min(1),
   }),
   z.object({
+    /** Folded into a prompt already pending for the same pull request. */
+    kind: z.literal("coalesced"),
+    messageId: z.string().min(1),
+  }),
+  z.object({
     kind: z.literal("rejected"),
     reason: z.enum(["session_closed", "queue_full", "attempt_limit"]),
   }),

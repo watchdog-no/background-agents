@@ -21,8 +21,6 @@ import {
   supportsEnvironmentSettings,
 } from "../db/integration-settings";
 import { EnvironmentStore } from "../db/environments";
-import { GitHubReviewFollowupStore } from "../db/github-review-followups";
-import { isGitHubReviewFollowupRepoEnabled } from "../webhooks/github-review-followup";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
 import { createLogger } from "../logger";
@@ -39,78 +37,6 @@ import {
 } from "./shared";
 
 const logger = createLogger("router:integration-settings");
-
-async function cancelIneligibleGitHubReviewFollowups(
-  settingsStore: IntegrationSettingsStore,
-  db: SqlDatabase
-): Promise<number> {
-  const followups = new GitHubReviewFollowupStore(db);
-  const [pending, globalSettings, repoSettings] = await Promise.all([
-    followups.listPendingTargets(),
-    settingsStore.getGlobal("github"),
-    settingsStore.listRepoSettings("github"),
-  ]);
-  let canceled = 0;
-  const targetsByRepo = new Map<string, typeof pending>();
-  const overridesByRepo = new Map(repoSettings.map((entry) => [entry.repo, entry.settings]));
-  const enabledRepos = globalSettings?.enabledRepos ?? null;
-  const defaults = globalSettings?.defaults ?? {};
-
-  for (const target of pending) {
-    const repo = `${target.repoOwner}/${target.repoName}`;
-    const targets = targetsByRepo.get(repo) ?? [];
-    targets.push(target);
-    targetsByRepo.set(repo, targets);
-  }
-
-  for (const [repo, targets] of targetsByRepo) {
-    const settings: GitHubBotSettings = {
-      ...defaults,
-      ...(overridesByRepo.get(repo.toLowerCase()) ?? {}),
-    };
-    const config = { enabledRepos, settings };
-    if (
-      config.settings.autoAddressReviewFeedback === true &&
-      isGitHubReviewFollowupRepoEnabled(config, repo)
-    ) {
-      continue;
-    }
-
-    for (const target of targets) {
-      await followups.delete(target.artifactId, target.generation);
-      canceled += 1;
-    }
-  }
-
-  return canceled;
-}
-
-async function reconcileGitHubReviewFollowups(
-  integrationId: IntegrationId,
-  settingsStore: IntegrationSettingsStore,
-  ctx: RequestContext
-): Promise<void> {
-  if (integrationId !== "github") return;
-  try {
-    const canceled = await cancelIneligibleGitHubReviewFollowups(settingsStore, ctx.db);
-    if (canceled > 0) {
-      logger.info("github_review_followup.pending_canceled", {
-        event: "github_review_followup.pending_canceled",
-        canceled,
-        request_id: ctx.request_id,
-        trace_id: ctx.trace_id,
-      });
-    }
-  } catch (reconcileError) {
-    // The settings write has already committed. Reconciliation is best-effort
-    // cleanup and must not report a successful save as failed.
-    logger.error("github_review_followup.reconcile_failed", {
-      error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
-      request_id: ctx.request_id,
-      trace_id: ctx.trace_id,
-    });
-  }
-}
 
 function extractIntegrationId(match: RegExpMatchArray): IntegrationId | null {
   const id = match.groups?.id;
@@ -186,7 +112,6 @@ async function handleSetIntegrationSettings(
 
   try {
     await store.setGlobal(id, body.settings);
-    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_settings.updated", {
       event: "integration_settings.updated",
@@ -222,7 +147,6 @@ async function handleDeleteIntegrationSettings(
 
   try {
     await store.deleteGlobal(id);
-    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_settings.deleted", {
       event: "integration_settings.deleted",
@@ -301,7 +225,6 @@ async function handleSetRepoSettings(
 
   try {
     await store.setRepoSettings(id, repo, body.settings);
-    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_repo_settings.updated", {
       event: "integration_repo_settings.updated",
@@ -343,7 +266,6 @@ async function handleDeleteRepoSettings(
 
   try {
     await store.deleteRepoSettings(id, repo);
-    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_repo_settings.deleted", {
       event: "integration_repo_settings.deleted",
@@ -485,7 +407,6 @@ async function handleGetResolvedConfig(
         model: githubSettings.model ?? null,
         reasoningEffort,
         autoReviewOnOpen: githubSettings.autoReviewOnOpen ?? true,
-        autoAddressReviewFeedback: githubSettings.autoAddressReviewFeedback ?? false,
         enabledRepos,
         allowedTriggerUsers: githubSettings.allowedTriggerUsers ?? null,
         codeReviewInstructions: githubSettings.codeReviewInstructions ?? null,

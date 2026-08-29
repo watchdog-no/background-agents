@@ -45,14 +45,12 @@ export function RepoOverridesSection({
   availableRepos,
   enabledModelOptions,
   defaultAutoReviewOnOpen,
-  defaultAutoAddressReviewFeedback,
   defaultAutofix,
 }: {
   overrides: RepoSettingsEntry[];
   availableRepos: EnrichedRepository[];
   enabledModelOptions: ModelCategory[];
   defaultAutoReviewOnOpen: boolean;
-  defaultAutoAddressReviewFeedback: boolean;
   defaultAutofix: ResolvedGitHubAutofixSettings;
 }) {
   const [addingRepo, setAddingRepo] = useState("");
@@ -100,7 +98,6 @@ export function RepoOverridesSection({
               entry={entry}
               enabledModelOptions={enabledModelOptions}
               defaultAutoReviewOnOpen={defaultAutoReviewOnOpen}
-              defaultAutoAddressReviewFeedback={defaultAutoAddressReviewFeedback}
               defaultAutofix={defaultAutofix}
             />
           ))}
@@ -136,13 +133,11 @@ function RepoOverrideRow({
   entry,
   enabledModelOptions,
   defaultAutoReviewOnOpen,
-  defaultAutoAddressReviewFeedback,
   defaultAutofix,
 }: {
   entry: RepoSettingsEntry;
   enabledModelOptions: ModelCategory[];
   defaultAutoReviewOnOpen: boolean;
-  defaultAutoAddressReviewFeedback: boolean;
   defaultAutofix: ResolvedGitHubAutofixSettings;
 }) {
   const [model, setModel] = useState(entry.settings.model ?? "");
@@ -170,12 +165,6 @@ function RepoOverrideRow({
   );
   const [autoReviewOnOpen, setAutoReviewOnOpen] = useState(
     entry.settings.autoReviewOnOpen ?? defaultAutoReviewOnOpen
-  );
-  const [autoAddressReviewFeedbackMode, setAutoAddressReviewFeedbackMode] = useState<
-    "global" | "override"
-  >(entry.settings.autoAddressReviewFeedback !== undefined ? "override" : "global");
-  const [autoAddressReviewFeedback, setAutoAddressReviewFeedback] = useState(
-    entry.settings.autoAddressReviewFeedback ?? defaultAutoAddressReviewFeedback
   );
   const [autofixMode, setAutofixMode] = useState<"global" | "override">(
     entry.settings.autofix === undefined ? "global" : "override"
@@ -210,14 +199,6 @@ function RepoOverrideRow({
     setDirty(true);
   };
 
-  const handleAutoAddressReviewFeedbackModeChange = (newMode: "global" | "override") => {
-    setAutoAddressReviewFeedbackMode(newMode);
-    if (newMode === "override" && entry.settings.autoAddressReviewFeedback === undefined) {
-      setAutoAddressReviewFeedback(defaultAutoAddressReviewFeedback);
-    }
-    setDirty(true);
-  };
-
   const handleSave = async () => {
     const repository = parseRepositoryFullName(entry.repo);
     if (!repository) return;
@@ -230,8 +211,6 @@ function RepoOverrideRow({
     if (commentActionMode === "override")
       settings.commentActionInstructions = commentActionInstructions;
     if (autoReviewMode === "override") settings.autoReviewOnOpen = autoReviewOnOpen;
-    if (autoAddressReviewFeedbackMode === "override")
-      settings.autoAddressReviewFeedback = autoAddressReviewFeedback;
     if (autofixMode === "override") settings.autofix = autofixOverrides;
 
     try {
@@ -369,40 +348,6 @@ function RepoOverrideRow({
                 }}
               />
               <span>{autoReviewOnOpen ? "Enabled" : "Disabled"}</span>
-            </label>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <p className="text-xs font-medium text-muted-foreground mb-1">
-          Address review feedback automatically
-        </p>
-        <div className="flex items-center gap-2 mb-1">
-          <Select
-            value={autoAddressReviewFeedbackMode}
-            onValueChange={handleAutoAddressReviewFeedbackModeChange}
-          >
-            <SelectTrigger density="compact" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="global">
-                Use default ({defaultAutoAddressReviewFeedback ? "Enabled" : "Disabled"})
-              </SelectItem>
-              <SelectItem value="override">Override for this repo</SelectItem>
-            </SelectContent>
-          </Select>
-          {autoAddressReviewFeedbackMode === "override" && (
-            <label className="flex items-center gap-2 text-xs text-foreground">
-              <Switch
-                checked={autoAddressReviewFeedback}
-                onCheckedChange={(checked) => {
-                  setAutoAddressReviewFeedback(checked);
-                  setDirty(true);
-                }}
-              />
-              <span>{autoAddressReviewFeedback ? "Enabled" : "Disabled"}</span>
             </label>
           )}
         </div>

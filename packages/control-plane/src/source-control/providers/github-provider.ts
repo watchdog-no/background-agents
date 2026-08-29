@@ -65,6 +65,26 @@ interface GitHubPullRequestStateFields {
  * stale draft flag (isDraft is only meaningful while open). Shared by
  * createPullRequest (user-authed) and getPullRequest (app-authed).
  */
+/**
+ * Whether the pull request is opened from a fork.
+ *
+ * A deleted head repository reports `head.repo: null`, which GitHub only does
+ * for cross-repository pulls, so a missing head id is treated as a fork. An
+ * absent id on a present repo object is schema drift rather than a same-repo
+ * signal, so it stays on the safe side too.
+ */
+function isCrossRepositoryPull(
+  data: GitHubPullRequestStateFields & {
+    head: { repo?: { id?: number } | null };
+    base: { repo?: { id?: number } | null };
+  }
+): boolean {
+  const headId = data.head.repo?.id;
+  const baseId = data.base.repo?.id;
+  if (headId === undefined || baseId === undefined) return true;
+  return headId !== baseId;
+}
+
 export function deriveGitHubPullRequestStatus(
   data: GitHubPullRequestStateFields
 ): PullRequestStatus {
@@ -89,7 +109,11 @@ const githubPullResponseSchema = z.object({
   updated_at: z.string().optional(),
   merged_at: z.string().nullable().optional(),
   closed_at: z.string().nullable().optional(),
-  head: z.object({ ref: z.string(), sha: z.string().optional() }),
+  head: z.object({
+    ref: z.string(),
+    sha: z.string().optional(),
+    repo: z.object({ id: z.number().optional() }).nullable().optional(),
+  }),
   base: z.object({
     ref: z.string(),
     repo: z
@@ -588,6 +612,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
       headBranch: data.head.ref,
       baseBranch: data.base.ref,
       headSha: data.head.sha,
+      isCrossRepository: isCrossRepositoryPull(data),
       // The response's base repo is authoritative for the current location.
       repoOwner: data.base.repo?.owner?.login ?? config.owner,
       repoName: data.base.repo?.name ?? config.name,
