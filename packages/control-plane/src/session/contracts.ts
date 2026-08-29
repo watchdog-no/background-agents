@@ -1,7 +1,16 @@
 /**
- * Contract constants for Session Durable Object internal endpoints.
+ * Contract constants and schemas for Session Durable Object internal endpoints.
  * Router and SessionDO must both import these to prevent path drift.
  */
+
+import { z } from "zod";
+
+/** SCM display fields forwarded from the authenticated route to the Session runtime. */
+export const sessionScmDisplayFieldsSchema = z.object({
+  scmLogin: z.string().nullable().optional(),
+  scmName: z.string().nullable().optional(),
+  scmEmail: z.string().nullable().optional(),
+});
 
 export const SessionInternalPaths = {
   init: "/internal/init",
@@ -9,8 +18,10 @@ export const SessionInternalPaths = {
   snapshot: "/internal/snapshot",
   sandboxAccess: "/internal/sandbox-access",
   prompt: "/internal/prompt",
+  autofix: "/internal/autofix",
   stop: "/internal/stop",
   sandboxEvent: "/internal/sandbox-event",
+  sandboxError: "/internal/sandbox-error",
   createMediaArtifact: "/internal/create-media-artifact",
   attachments: "/internal/attachments",
   participants: "/internal/participants",

@@ -30,12 +30,6 @@ export interface Env {
   CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.6-luna)
   CLASSIFICATION_DEFAULT_REPOSITORY?: string; // deterministic fallback after rules, channels, and explicit mentions
   APP_NAME?: string;
-  /**
-   * Kill switch for Slack channel-message automation triggers. The bot only
-   * ingests/forwards channel messages when this is exactly "true". Dark by
-   * default — any other value (or unset) disables the feature entirely.
-   */
-  SLACK_TRIGGERS_ENABLED?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;

@@ -14,7 +14,12 @@ import type { McpServerConfig, SandboxSettings } from "@open-inspect/shared/type
 import { extractProviderAndModel } from "@open-inspect/shared/models";
 import type { ServerMessage } from "@open-inspect/shared/types/server-messages";
 import type { SandboxStatus } from "@open-inspect/shared/types/sessions";
-import { sessionHasRepository, type SandboxRow, type SessionRow } from "../../session/types";
+import {
+  sessionHasRepository,
+  type SandboxAccessKind,
+  type SandboxRow,
+  type SessionRow,
+} from "../../session/types";
 import {
   SandboxProviderError,
   type SandboxProvider,
@@ -84,13 +89,12 @@ interface SandboxCircuitBreakerInfo {
 }
 
 /**
- * Storage adapter for sandbox data operations.
+ * The session context a spawn needs alongside sandbox storage. A separate
+ * port from `SandboxStorage`: sandbox-row persistence is one collaborator's
+ * contract, these reads belong to others, and conflating them forced every
+ * implementer to bridge unrelated objects.
  */
-export interface SandboxStorage {
-  /** Get current sandbox state */
-  getSandbox(): SandboxRow | null;
-  /** Get sandbox with circuit breaker state (subset of fields) */
-  getSandboxWithCircuitBreaker(): SandboxCircuitBreakerInfo | null;
+export interface SessionContextReader {
   /** Get current session */
   getSession(): SessionRow | null;
   /**
@@ -102,20 +106,40 @@ export interface SandboxStorage {
   getSessionRepositories(): SessionRepositoryInfo[];
   /** Get user env vars for sandbox injection */
   getUserEnvVars(): Promise<Record<string, string> | undefined>;
+}
+
+/**
+ * Storage adapter for sandbox data operations — the sandbox repository's
+ * contract, satisfied by it structurally.
+ */
+export interface SandboxStorage {
+  /** Get current sandbox state */
+  getSandbox(): SandboxRow | null;
+  /** Get sandbox with circuit breaker state (subset of fields) */
+  getSandboxWithCircuitBreaker(): SandboxCircuitBreakerInfo | null;
   /** Update sandbox status */
   updateSandboxStatus(status: SandboxStatus): void;
   /**
-   * Update sandbox for spawn (status, auth token, sandbox ID, created_at).
+   * Reserve a replacement sandbox identity (status, sandbox ID, created_at).
    * Clears every field describing the previous sandbox instance, runtime
-   * version included.
+   * version included, and invalidates the stored credentials — phase 1 of
+   * the two-phase spawn write (#1589). No token can match the row until
+   * `updateSandboxAuthTokenHash` publishes the new hash.
    */
   updateSandboxForSpawn(data: {
     status: SandboxStatus;
     createdAt: number;
-    authTokenHash: string;
     modalSandboxId: string;
     preserveProviderObjectId?: boolean;
   }): void;
+  /**
+   * Publish the auth-token hash for the identity reserved by
+   * `updateSandboxForSpawn` (phase 2 of the two-phase spawn write, #1589).
+   * Applies only while that identity is still the persisted sandbox, and
+   * reports whether it was — a delayed publisher must not attach its hash
+   * to a newer reservation.
+   */
+  updateSandboxAuthTokenHash(modalSandboxId: string, authTokenHash: string): boolean;
   /** Update sandbox state for in-place resume without rotating auth/token identity */
   updateSandboxForResume(data: { status: SandboxStatus; createdAt: number }): void;
   /** Update sandbox Modal object ID (for snapshot API) */
@@ -139,26 +163,16 @@ export interface SandboxStorage {
   resetCircuitBreaker(): void;
   /** Persist last spawn error */
   setLastSpawnError(error: string | null, timestamp: number | null): void;
-  /** Update code-server URL and (encrypted) password on the sandbox row */
-  updateSandboxCodeServer(url: string, password: string): void | Promise<void>;
-  /** Clear stale code-server URL and password (e.g. on sandbox teardown) */
-  clearSandboxCodeServer(): void;
-  /** Clear the code-server URL while preserving the stored password */
-  clearSandboxCodeServerUrl?(): void;
-  /** Update VNC URL and (encrypted) password on the sandbox row */
-  updateSandboxVnc(url: string, password: string): void | Promise<void>;
-  /** Clear stale VNC URL and password */
-  clearSandboxVnc(): void;
-  /** Clear the VNC URL while preserving the stored password */
-  clearSandboxVncUrl?(): void;
+  /** Set one access artifact's URL and (encrypted) secret on the sandbox row */
+  updateSandboxAccess(kind: SandboxAccessKind, url: string, secret: string): void | Promise<void>;
+  /** Clear one access artifact's URL and secret (e.g. on sandbox teardown) */
+  clearSandboxAccess(kind: SandboxAccessKind): void;
+  /** Clear one access artifact's URL while preserving its stored secret */
+  clearSandboxAccessUrl?(kind: SandboxAccessKind): void;
   /** Update tunnel URLs for extra ports on the sandbox row */
   updateSandboxTunnelUrls(urls: Record<string, string>): void | Promise<void>;
   /** Clear stale tunnel URLs (e.g. on sandbox teardown) */
   clearSandboxTunnelUrls(): void;
-  /** Update ttyd proxy URL and (encrypted) JWT token on the sandbox row */
-  updateSandboxTtyd(url: string, token: string): void | Promise<void>;
-  /** Clear stale ttyd URL and token (e.g. on sandbox teardown) */
-  clearSandboxTtyd(): void;
 }
 
 /**
@@ -297,6 +311,7 @@ export interface SandboxLifecycle {
   spawnSandbox(): Promise<void>;
   updateLastActivity(timestamp: number): void;
   terminateUnresponsiveSandbox(trigger: UnresponsiveSandboxTrigger): Promise<void>;
+  terminateFailedSandbox(reason: string): Promise<boolean>;
   reportSandboxError(reason: string): void;
 }
 
@@ -313,6 +328,19 @@ export type SandboxAlarmResult = "no_action" | "sandbox_failed" | "sandbox_termi
  * Uses dependency injection for all external interactions, enabling unit testing
  * with mocked dependencies.
  */
+/**
+ * A spawn attempt discovered at hash publication that a newer reservation
+ * had replaced its identity. The attempt must abandon without failure
+ * writes: the sandbox row and circuit breaker now describe the newer
+ * attempt, and marking them failed would clobber it.
+ */
+class SpawnSupersededError extends Error {
+  constructor() {
+    super("Spawn reservation superseded before its auth hash was published");
+    this.name = "SpawnSupersededError";
+  }
+}
+
 export class SandboxLifecycleManager implements SandboxLifecycle {
   /**
    * In-memory flag to prevent concurrent spawn attempts within the same request.
@@ -320,6 +348,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    * The persisted sandbox status ("spawning", "connecting") handles cross-request protection.
    */
   private isSpawningSandbox = false;
+  private isTerminatingSandbox = false;
   private providerStartupPending = false;
 
   /** Memoized session-scoped logger, keyed by the resolved session id. */
@@ -346,6 +375,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
   constructor(
     private readonly provider: SandboxProvider,
     private readonly storage: SandboxStorage,
+    private readonly sessionContext: SessionContextReader,
     private readonly broadcaster: SandboxBroadcaster,
     private readonly wsManager: WebSocketManager,
     private readonly alarmScheduler: AlarmScheduler,
@@ -406,7 +436,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
       spawnState,
       this.config.spawn,
       now,
-      this.isSpawningSandbox,
+      this.isSpawningSandbox || this.isTerminatingSandbox,
       !!this.provider.capabilities.supportsPersistentResume
     );
 
@@ -457,6 +487,37 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
   }
 
   /**
+   * Allocate and persist a replacement spawn identity with the two-phase
+   * write from #1589. Phase 1, before the first non-storage await: persist
+   * the new sandbox ID with credentials invalidated, so a stale bridge that
+   * authenticates while the token hashes below fails the sandbox-id and
+   * token checks instead of matching the old row. Phase 2: publish the hash,
+   * scoped to the reserved identity — the hash-less gap is unobservable
+   * because the provider has not been invoked yet.
+   */
+  private async reserveSpawnIdentity(
+    session: SessionRow,
+    createdAt: number,
+    opts: { preserveProviderObjectId: boolean }
+  ): Promise<{ sandboxAuthToken: string; expectedSandboxId: string }> {
+    const sandboxAuthToken = this.idGenerator.generateId();
+    const expectedSandboxId = buildSandboxIdForSession(session, createdAt);
+    await this.enterProviderStartup("spawning", createdAt, () =>
+      this.storage.updateSandboxForSpawn({
+        status: "spawning",
+        createdAt,
+        modalSandboxId: expectedSandboxId,
+        preserveProviderObjectId: opts.preserveProviderObjectId,
+      })
+    );
+    const authTokenHash = await hashToken(sandboxAuthToken);
+    if (!this.storage.updateSandboxAuthTokenHash(expectedSandboxId, authTokenHash)) {
+      throw new SpawnSupersededError();
+    }
+    return { sandboxAuthToken, expectedSandboxId };
+  }
+
+  /**
    * Execute a fresh sandbox spawn.
    */
   private async doSpawn(): Promise<void> {
@@ -466,7 +527,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     let session: SessionRow | null = null;
 
     try {
-      session = this.storage.getSession();
+      session = this.sessionContext.getSession();
       if (!session) {
         this.log.error("Cannot spawn sandbox: no session");
         return;
@@ -476,21 +537,10 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
 
       const now = Date.now();
       const sessionId = session.session_name || session.id;
-      let sandboxAuthToken = this.idGenerator.generateId();
       const hasRepository = sessionHasRepository(session);
-      let expectedSandboxId = buildSandboxIdForSession(session, now);
-      const authTokenHash = await hashToken(sandboxAuthToken);
-
-      // Store expected sandbox ID and auth token BEFORE calling provider
-      await this.enterProviderStartup("spawning", now, () =>
-        this.storage.updateSandboxForSpawn({
-          status: "spawning",
-          createdAt: now,
-          authTokenHash,
-          modalSandboxId: expectedSandboxId,
-          preserveProviderObjectId: true,
-        })
-      );
+      let { sandboxAuthToken, expectedSandboxId } = await this.reserveSpawnIdentity(session, now, {
+        preserveProviderObjectId: true,
+      });
 
       await this.stopPriorProviderSandbox();
 
@@ -501,9 +551,9 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         repo_name: session.repo_name,
       });
 
-      const sandboxEnv = prepareSandboxOAuthEnv(await this.storage.getUserEnvVars());
+      const sandboxEnv = prepareSandboxOAuthEnv(await this.sessionContext.getUserEnvVars());
       const { provider, model: modelId } = this.resolveProviderAndModel(session);
-      const repositories = this.storage.getSessionRepositories();
+      const repositories = this.sessionContext.getSessionRepositories();
       const multiRepoFields = multiRepoSpawnFields(repositories);
       const vncEnabled = session.vnc_enabled === 1;
 
@@ -584,18 +634,12 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         // indistinguishable here), and rotating the token hash and sandbox id
         // locks such an orphan out of this DO exactly like the next
         // user-initiated respawn would.
-        sandboxAuthToken = this.idGenerator.generateId();
-        const retryAuthTokenHash = await hashToken(sandboxAuthToken);
         const retryNow = Math.max(Date.now(), now + 1);
-        expectedSandboxId = buildSandboxIdForSession(session, retryNow);
-        await this.enterProviderStartup("spawning", retryNow, () =>
-          this.storage.updateSandboxForSpawn({
-            status: "spawning",
-            createdAt: retryNow,
-            authTokenHash: retryAuthTokenHash,
-            modalSandboxId: expectedSandboxId,
-          })
-        );
+        ({ sandboxAuthToken, expectedSandboxId } = await this.reserveSpawnIdentity(
+          session,
+          retryNow,
+          { preserveProviderObjectId: false }
+        ));
         result = await this.provider.createSandbox({
           ...createConfig,
           sandboxId: expectedSandboxId,
@@ -635,6 +679,12 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         repo_name: session.repo_name,
       });
     } catch (error) {
+      if (error instanceof SpawnSupersededError) {
+        this.log.warn("Spawn attempt superseded; abandoning", {
+          event: "sandbox.spawn_superseded",
+        });
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : "Failed to spawn sandbox";
       this.log.error("Sandbox spawn completed", {
         event: "sandbox.spawn",
@@ -795,7 +845,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    * changing state, and that distinction is theirs to make.
    */
   reportSandboxError(reason: string): void {
-    // Persisting is best effort. `updateSandboxSpawnError` is a bare synchronous
+    // Persisting is best effort. `setLastSpawnError` is a bare synchronous
     // sql.exec, so a storage failure would otherwise also cost the broadcast —
     // the one signal an already-open tab gets — and, from the message queue's
     // spawn catch, would replace the spawn error being reported with the
@@ -831,7 +881,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     let session: SessionRow | null = null;
 
     try {
-      session = this.storage.getSession();
+      session = this.sessionContext.getSession();
       if (!session) {
         this.log.error("Cannot restore: no session");
         return;
@@ -840,19 +890,10 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
       this.storage.setLastSpawnError(null, null);
 
       const now = Date.now();
-      const sandboxAuthToken = this.idGenerator.generateId();
-      const sandboxAuthTokenHash = await hashToken(sandboxAuthToken);
-      const expectedSandboxId = buildSandboxIdForSession(session, now);
-
-      // Store expected sandbox ID and auth token
-      await this.enterProviderStartup("spawning", now, () =>
-        this.storage.updateSandboxForSpawn({
-          status: "spawning",
-          createdAt: now,
-          authTokenHash: sandboxAuthTokenHash,
-          modalSandboxId: expectedSandboxId,
-          preserveProviderObjectId: true,
-        })
+      const { sandboxAuthToken, expectedSandboxId } = await this.reserveSpawnIdentity(
+        session,
+        now,
+        { preserveProviderObjectId: true }
       );
 
       // A restored sandbox runs the snapshot's binaries whatever the provider
@@ -868,10 +909,10 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         snapshot_image_id: snapshotImageId,
       });
 
-      const sandboxEnv = prepareSandboxOAuthEnv(await this.storage.getUserEnvVars());
+      const sandboxEnv = prepareSandboxOAuthEnv(await this.sessionContext.getUserEnvVars());
       const { provider, model: modelId } = this.resolveProviderAndModel(session);
 
-      const repositories = this.storage.getSessionRepositories();
+      const repositories = this.sessionContext.getSessionRepositories();
       const codeServerEnabled = session.code_server_enabled === 1;
       const vncEnabled = session.vnc_enabled === 1;
       const agentSlackNotifyEnabled = await this.resolveAgentSlackNotifyEnabled(session);
@@ -951,6 +992,12 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         this.reportSandboxError(result.error || "Failed to restore from snapshot");
       }
     } catch (error) {
+      if (error instanceof SpawnSupersededError) {
+        this.log.warn("Restore attempt superseded; abandoning", {
+          event: "sandbox.spawn_superseded",
+        });
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : "Failed to restore sandbox";
       this.log.error("Sandbox restore completed", {
         event: "sandbox.restore",
@@ -982,7 +1029,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     this.providerStartupPending = true;
 
     try {
-      const session = this.storage.getSession();
+      const session = this.sessionContext.getSession();
       const sandbox = this.storage.getSandbox();
       if (!session || !sandbox?.modal_sandbox_id) {
         this.log.error("Cannot resume sandbox: missing session or logical sandbox ID");
@@ -1063,7 +1110,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     }
 
     const sandbox = this.storage.getSandbox();
-    const session = this.storage.getSession();
+    const session = this.sessionContext.getSession();
 
     if (!sandbox?.modal_object_id || !session) {
       this.log.debug("Cannot snapshot: no modal_object_id or session");
@@ -1198,23 +1245,15 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    * removed.
    */
   private clearSandboxAccessState(): void {
-    if (this.usesProviderManagedStop() && this.storage.clearSandboxCodeServerUrl) {
-      this.storage.clearSandboxCodeServerUrl();
-      if (this.storage.clearSandboxVncUrl) {
-        this.storage.clearSandboxVncUrl();
-      } else {
-        this.storage.clearSandboxVnc();
-      }
-      this.storage.clearSandboxTunnelUrls();
-      this.storage.clearSandboxTtyd();
-      this.broadcaster.broadcast({ type: "sandbox_access_changed" });
-      return;
+    if (this.usesProviderManagedStop() && this.storage.clearSandboxAccessUrl) {
+      this.storage.clearSandboxAccessUrl("codeServer");
+      this.storage.clearSandboxAccessUrl("vnc");
+    } else {
+      this.storage.clearSandboxAccess("codeServer");
+      this.storage.clearSandboxAccess("vnc");
     }
-
-    this.storage.clearSandboxCodeServer();
-    this.storage.clearSandboxVnc();
     this.storage.clearSandboxTunnelUrls();
-    this.storage.clearSandboxTtyd();
+    this.storage.clearSandboxAccess("ttyd");
     this.broadcaster.broadcast({ type: "sandbox_access_changed" });
   }
 
@@ -1231,7 +1270,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     }
 
     const sandbox = providerObjectId ? null : this.storage.getSandbox();
-    const session = this.storage.getSession();
+    const session = this.sessionContext.getSession();
     const objectId = providerObjectId ?? sandbox?.modal_object_id;
     if (!objectId || !session) {
       return;
@@ -1465,6 +1504,41 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     }
   }
 
+  async terminateFailedSandbox(reason: string): Promise<boolean> {
+    const sandbox = this.storage.getSandbox();
+    if (
+      !sandbox ||
+      sandbox.status === "stopped" ||
+      sandbox.status === "stale" ||
+      this.isTerminatingSandbox
+    ) {
+      return false;
+    }
+
+    this.isTerminatingSandbox = true;
+    if (sandbox.status !== "failed") {
+      this.storage.updateSandboxStatus("failed");
+      this.broadcaster.broadcast({ type: "sandbox_status", status: "failed" });
+    }
+    this.reportSandboxError(reason);
+    this.clearSandboxAccessState();
+
+    const canStopProvider = this.canStopProviderSandbox();
+    if (!canStopProvider) this.wsManager.sendToSandbox({ type: "shutdown" });
+    this.wsManager.detachSandboxWebSocket(1011, "Fatal sandbox runtime error");
+
+    try {
+      if (canStopProvider) await this.stopProviderSandbox("fatal_runtime_error");
+    } catch (error) {
+      this.log.warn("Provider stop failed after fatal runtime error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.isTerminatingSandbox = false;
+    }
+    return true;
+  }
+
   /**
    * Warm sandbox proactively (e.g., when user starts typing).
    */
@@ -1557,12 +1631,12 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
 
   private async storeCodeServer(url: string, password: string): Promise<void> {
     this.log.info("Storing code-server info", { url });
-    await this.storage.updateSandboxCodeServer(url, password);
+    await this.storage.updateSandboxAccess("codeServer", url, password);
   }
 
   private async storeVnc(url: string, password: string): Promise<void> {
     this.log.info("Storing VNC info", { url });
-    await this.storage.updateSandboxVnc(url, password);
+    await this.storage.updateSandboxAccess("vnc", url, password);
   }
 
   private parseSandboxSettings(session: SessionRow): SandboxSettings {
@@ -1615,7 +1689,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     );
 
     this.log.info("Storing ttyd info", { url });
-    await this.storage.updateSandboxTtyd(url, token);
+    await this.storage.updateSandboxAccess("ttyd", url, token);
   }
 
   private async finishProviderStartup(): Promise<void> {
@@ -1648,7 +1722,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    * Used by SessionDO to coordinate spawn decisions.
    */
   isSpawning(): boolean {
-    return this.isSpawningSandbox;
+    return this.isSpawningSandbox || this.isTerminatingSandbox;
   }
 
   isProviderStartupPending(): boolean {

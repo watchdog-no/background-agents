@@ -100,7 +100,8 @@ jobs:
 
       - name: Terraform Tests
         id: test
-        run: terraform test -filter=tests/auth_provider_configuration.tftest.hcl
+        run: |
+          terraform test -filter=tests/auth_provider_configuration.tftest.hcl
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       - name: Post Validation Results
