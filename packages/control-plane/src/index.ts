@@ -24,6 +24,7 @@ import { IntegrationSettingsStore } from "./db/integration-settings";
 import { SessionInternalPaths } from "./session/contracts";
 import { createSessionRuntimeClient } from "./session/runtime-client";
 import { GitHubReviewFollowupSweep } from "./webhooks/github-review-followup";
+import { createGitHubReviewContentLoader } from "./webhooks/github-review-content";
 
 const logger = createLogger("worker");
 
@@ -89,6 +90,7 @@ export default {
       new GitHubReviewFollowupSweep({
         store: new GitHubReviewFollowupStore(db),
         settings: { resolve: (repo) => settings.getResolvedConfig("github", repo) },
+        reviews: createGitHubReviewContentLoader(env),
         enqueue: (sessionId, prompt) =>
           runtime.fetch(sessionId, SessionInternalPaths.prompt, {
             method: "POST",

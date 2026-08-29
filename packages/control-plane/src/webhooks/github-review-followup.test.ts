@@ -142,6 +142,29 @@ describe("GitHubReviewFollowupSweep", () => {
       delete: vi.fn().mockResolvedValue(undefined),
     };
     const enqueue = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    const reviews = {
+      load: vi.fn().mockResolvedValue([
+        {
+          id: 77,
+          author: "review-agent",
+          body: "Please handle <edge cases>.",
+          state: "COMMENTED",
+          url: "https://github.com/acme/web/pull/12#pullrequestreview-77",
+          submittedAt: "2026-08-29T08:00:00Z",
+          inlineComments: [
+            {
+              id: 901,
+              author: "review-agent",
+              body: "This should be guarded.",
+              path: "src/index.ts",
+              line: 42,
+              side: "RIGHT",
+              url: "https://github.com/acme/web/pull/12#discussion_r901",
+            },
+          ],
+        },
+      ]),
+    };
     const sweep = new GitHubReviewFollowupSweep({
       store,
       settings: {
@@ -150,6 +173,7 @@ describe("GitHubReviewFollowupSweep", () => {
           settings: { autoAddressReviewFeedback: true },
         }),
       },
+      reviews,
       enqueue,
       log: logger(),
       now: () => 10_000,
@@ -164,11 +188,17 @@ describe("GitHubReviewFollowupSweep", () => {
         canonicalUserId: "user-1",
         source: "github-review",
         clientRequestId: "github-review:artifact-1:3",
+        coalescingKey: "github-review:artifact-1",
+        pendingAppendContent: expect.stringContaining('<review id="77"'),
         content: expect.stringMatching(
           /Github review was posted to the PR you published: acme\/web#12\.[\s\S]*Review IDs: 77, 88/
         ),
       })
     );
+    const prompt = enqueue.mock.calls[0]?.[1]?.content as string;
+    expect(prompt).toContain("Please handle &lt;edge cases&gt;.");
+    expect(prompt).toContain('<inline-comment id="901" path="src/index.ts" line="42" side="RIGHT"');
+    expect(prompt).not.toContain('untrusted="true"');
     expect(store.complete).toHaveBeenCalledWith({
       artifactId: "artifact-1",
       generation: 3,
@@ -194,6 +224,7 @@ describe("GitHubReviewFollowupSweep", () => {
           settings: { autoAddressReviewFeedback: false },
         }),
       },
+      reviews: { load: vi.fn() },
       enqueue,
       log: logger(),
       now: () => 10_000,
@@ -204,4 +235,42 @@ describe("GitHubReviewFollowupSweep", () => {
     expect(store.delete).toHaveBeenCalledWith("artifact-1", 3);
     expect(enqueue).not.toHaveBeenCalled();
   });
+
+  it.each([425, 429])(
+    "defers queue contention without consuming retry attempts (%s)",
+    async (status) => {
+      const store = {
+        listDue: vi.fn().mockResolvedValue([dueRow]),
+        listPendingReviewIds: vi.fn().mockResolvedValue([77]),
+        complete: vi.fn(),
+        retry: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn(),
+      };
+      const sweep = new GitHubReviewFollowupSweep({
+        store,
+        settings: {
+          resolve: vi.fn().mockResolvedValue({
+            enabledRepos: null,
+            settings: { autoAddressReviewFeedback: true },
+          }),
+        },
+        reviews: { load: vi.fn().mockResolvedValue([]) },
+        enqueue: vi.fn().mockResolvedValue(new Response(null, { status })),
+        log: logger(),
+        now: () => 10_000,
+      });
+
+      await sweep.run();
+
+      expect(store.retry).toHaveBeenCalledWith({
+        artifactId: "artifact-1",
+        generation: 3,
+        attemptCount: 0,
+        dueAt: 70_000,
+        now: 10_000,
+      });
+      expect(store.complete).not.toHaveBeenCalled();
+      expect(store.delete).not.toHaveBeenCalled();
+    }
+  );
 });

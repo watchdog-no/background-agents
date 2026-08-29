@@ -155,8 +155,38 @@ describe("MessageRepository", () => {
       '{"channel":"C123"}',
       null,
       null,
+      null,
       "pending",
       1000,
+    ]);
+  });
+
+  it("finds and updates an unfinished coalesced message", () => {
+    const lookup = `SELECT * FROM messages
+       WHERE coalescing_key = ? AND status IN ('processing', 'pending')
+       ORDER BY CASE status WHEN 'processing' THEN 0 ELSE 1 END, created_at, rowid
+       LIMIT 1`;
+    mock.setData(lookup, [{ id: "msg-1", status: "pending", coalescing_key: "review:1" }]);
+    mock.setRowsWritten(1);
+
+    expect(repository.getUnfinishedMessageByCoalescingKey("review:1")).toMatchObject({
+      id: "msg-1",
+      status: "pending",
+    });
+    expect(
+      repository.updatePendingCoalescedMessage({
+        messageId: "msg-1",
+        content: "first\n\nsecond",
+        clientRequestId: "request-2",
+        requestFingerprint: "fingerprint-2",
+      })
+    ).toBe(true);
+    expect(mock.calls[1].query).toContain("WHERE id = ? AND status = 'pending'");
+    expect(mock.calls[1].params).toEqual([
+      "first\n\nsecond",
+      "request-2",
+      "fingerprint-2",
+      "msg-1",
     ]);
   });
 

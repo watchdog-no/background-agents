@@ -74,7 +74,14 @@ When **Address review feedback automatically** is enabled, a submitted review wi
 requested changes on an agent-created PR resumes the session that created that PR. Feedback is
 batched after about two quiet minutes so several review agents normally produce one clearly labeled
 follow-up turn in that same session. A continuing stream is dispatched after about ten minutes at
-most. Submitted reviews are internal to this workflow and do not also fire user-created automations.
+most. The follow-up embeds each review body and its inline comments, while the agent still refreshes
+GitHub before acting so it sees the current thread state. Submitted reviews are internal to this
+workflow and do not also fire user-created automations.
+
+Review feedback never interrupts a running turn. New feedback is merged into a matching follow-up
+that is still queued; if a matching follow-up is already running, the new batch remains durable and
+is retried after that turn completes. Temporary session queue pressure is retried rather than
+discarded.
 
 Before dispatch, Open-Inspect rechecks that the setting is enabled, the repository remains in scope,
 the PR is open, and the original session can accept another prompt. Approved and dismissed reviews,

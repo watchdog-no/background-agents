@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../../logger";
 import { createMessagesHandler } from "./messages.handler";
 import type { MessageService } from "../../services/message.service";
+import { PromptCoalescingBusyError } from "../../message-queue";
 
 function createHandler() {
   const messageService = {
@@ -135,6 +136,32 @@ describe("createMessagesHandler", () => {
 
     expect(response.status).toBe(400);
     expect(messageService.enqueuePrompt).not.toHaveBeenCalled();
+  });
+
+  it("returns 425 when a matching coalesced prompt is processing", async () => {
+    const { handler, messageService, log } = createHandler();
+    vi.mocked(messageService.enqueuePrompt).mockRejectedValue(new PromptCoalescingBusyError());
+
+    const response = await handler.enqueuePrompt(
+      new Request("http://internal/internal/prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          content: "Review feedback",
+          pendingAppendContent: "Additional feedback",
+          authorId: "user-1",
+          source: "github-review",
+          coalescingKey: "github-review:artifact-1",
+        }),
+      }),
+      log
+    );
+
+    expect(response.status).toBe(425);
+    expect(await response.json()).toEqual({
+      error: "A matching prompt cannot accept this update yet",
+      code: "PROMPT_COALESCING_BUSY",
+    });
   });
 
   it("logs and rethrows when enqueue prompt parsing fails", async () => {

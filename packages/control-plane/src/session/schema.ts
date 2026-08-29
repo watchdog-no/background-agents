@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS messages (
   callback_context TEXT,                            -- JSON callback context for Slack follow-up notifications
   client_request_id TEXT,                           -- Web-client idempotency key
   request_fingerprint TEXT,                         -- Participant-scoped canonical request hash
+  coalescing_key TEXT,                              -- Optional key for merging compatible pending prompts
   status TEXT DEFAULT 'pending',                    -- 'pending', 'processing', 'completed', 'failed'
   error_message TEXT,                               -- If status='failed'
   stop_confirmation_deadline INTEGER,               -- Blocks dispatch until stop is confirmed or times out
@@ -218,6 +219,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_request_id
 ON messages(client_request_id) WHERE client_request_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_processing
 ON messages(status) WHERE status = 'processing';
+CREATE INDEX IF NOT EXISTS idx_messages_unfinished_coalescing_key
+ON messages(coalescing_key, status)
+WHERE coalescing_key IS NOT NULL AND status IN ('pending', 'processing');
 CREATE INDEX IF NOT EXISTS idx_events_message ON events(message_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, id);
@@ -618,6 +622,16 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
     run: (sql) => {
       runMigration(sql, `ALTER TABLE sandbox ADD COLUMN runtime_version TEXT`);
       runMigration(sql, `ALTER TABLE sandbox ADD COLUMN snapshot_runtime_version TEXT`);
+    },
+  },
+  {
+    id: 48,
+    description: "Add prompt coalescing key",
+    run: (sql) => {
+      runMigration(sql, `ALTER TABLE messages ADD COLUMN coalescing_key TEXT`);
+      sql.exec(`CREATE INDEX IF NOT EXISTS idx_messages_unfinished_coalescing_key
+        ON messages(coalescing_key, status)
+        WHERE coalescing_key IS NOT NULL AND status IN ('pending', 'processing')`);
     },
   },
 ];
