@@ -55,7 +55,6 @@ export const GITHUB_AUTOFIX_DEFAULTS: ResolvedGitHubAutofixSettings = {
 /** Overridable behavior settings for the GitHub bot. Used at both global and repo levels. */
 export const githubBotSettingsSchema = z.strictObject({
   autoReviewOnOpen: z.boolean().optional(),
-  autoAddressReviewFeedback: z.boolean().optional(),
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
   allowedTriggerUsers: z.array(z.string()).optional(),

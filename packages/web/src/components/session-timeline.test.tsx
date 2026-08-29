@@ -69,21 +69,6 @@ function toolCall(callId: string, tool: string, filePath: string): SandboxEvent 
 }
 
 describe("user message authors", () => {
-  it("labels an automatic review follow-up without attributing it to the current user", () => {
-    render(
-      <EventItem
-        event={{ ...event("user-1"), source: "github-review" }}
-        sessionId="session-1"
-        currentParticipantId="participant-2"
-        participantProfiles={{}}
-        onOpenMedia={() => {}}
-      />
-    );
-
-    expect(screen.getByText("GitHub review follow-up")).toBeInTheDocument();
-    expect(screen.queryByText("You")).not.toBeInTheDocument();
-  });
-
   it("presents Autofix provenance and links to the originating review", () => {
     render(
       <EventItem

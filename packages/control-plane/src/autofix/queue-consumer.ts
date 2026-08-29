@@ -1,7 +1,13 @@
 import { githubAutofixEnvelopeSchema, type GitHubAutofixEnvelope } from "@open-inspect/shared";
 import { githubAutofixFeedbackKey } from "../db/pr-autofix-feedback-store";
 import { SourceControlProviderError } from "../source-control/errors";
-import type { AutofixProcessResult } from "./service";
+import { AutofixDeferredError, type AutofixProcessResult } from "./service";
+
+/** How long to wait before retrying feedback the session could not accept yet. */
+export const AUTOFIX_DEFERRAL_DELAY_SECONDS = 60;
+
+/** Re-enqueues an envelope for a later delivery. */
+type Redeliver = (envelope: GitHubAutofixEnvelope, delaySeconds: number) => Promise<void>;
 
 interface AutofixProcessor {
   process(body: GitHubAutofixEnvelope): Promise<AutofixProcessResult>;
@@ -21,7 +27,7 @@ interface QueueMessage {
   body: unknown;
   attempts: number;
   ack(): void;
-  retry(): void;
+  retry(options?: { delaySeconds?: number }): void;
 }
 
 function errorMessage(error: unknown): string {
@@ -33,7 +39,8 @@ export class AutofixQueueConsumer {
     private readonly service: AutofixProcessor,
     private readonly feedbackStore: FailureStore,
     private readonly now: () => number,
-    private readonly maxDeliveryAttempts: number
+    private readonly maxDeliveryAttempts: number,
+    private readonly redeliver: Redeliver
   ) {}
 
   async consume(message: QueueMessage): Promise<void> {
@@ -49,6 +56,15 @@ export class AutofixQueueConsumer {
     } catch (error) {
       const feedbackKey = githubAutofixFeedbackKey(parsed.data);
       const detail = errorMessage(error);
+      if (error instanceof AutofixDeferredError) {
+        // Waiting, not failing: the receipt stays undecided. Re-enqueue rather
+        // than retry so a hold does not spend the delivery-attempt budget that
+        // exists to catch genuinely broken messages. The service bounds how
+        // long it will keep deferring, so this cannot loop forever.
+        await this.redeliver(parsed.data, error.delaySeconds ?? AUTOFIX_DEFERRAL_DELAY_SECONDS);
+        message.ack();
+        return;
+      }
       if (error instanceof SourceControlProviderError && error.errorType === "permanent") {
         await this.feedbackStore.markFailed(
           feedbackKey,

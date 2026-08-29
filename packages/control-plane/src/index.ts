@@ -22,12 +22,6 @@ import { SessionIndexStore } from "./db/session-index";
 import type { SqlDatabase } from "./db/sql-database";
 import { createCloudflareBackgroundTasks } from "./cloudflare/background-tasks";
 import { Scheduler } from "./scheduler/scheduler";
-import { GitHubReviewFollowupStore } from "./db/github-review-followups";
-import { IntegrationSettingsStore } from "./db/integration-settings";
-import { SessionInternalPaths } from "./session/contracts";
-import { createSessionRuntimeClient } from "./session/runtime-client";
-import { GitHubReviewFollowupSweep } from "./webhooks/github-review-followup";
-import { createGitHubReviewContentLoader } from "./webhooks/github-review-content";
 import { isAutofixQueue } from "./queue-routing";
 
 const logger = createLogger("worker");
@@ -79,50 +73,10 @@ export default {
       return;
     }
     ctx.waitUntil(checkAutofixQueueHealth(env, logger));
-    // The minute cron runs recovery/automation work and GitHub review follow-ups.
-    // Each task is isolated so an optional integration cannot block recovery.
-    const requestId = crypto.randomUUID();
-    const requestContext = { request_id: requestId, trace_id: requestId };
-    // eslint-disable-next-line no-restricted-syntax -- scheduled composition root: the one minute-cron env.DB read
-    const db: SqlDatabase = env.DB;
-    const runtime = createSessionRuntimeClient(env, requestContext);
-    const settings = new IntegrationSettingsStore(db);
-    const scheduledTasks: Array<{ name: string; run: () => Promise<unknown> }> = [
-      {
-        name: "scheduler",
-        run: () => new Scheduler(db, env, createCloudflareBackgroundTasks(ctx)).tick(),
-      },
-      {
-        name: "github_review_followup",
-        run: () =>
-          new GitHubReviewFollowupSweep({
-            store: new GitHubReviewFollowupStore(db),
-            settings: { resolve: (repo) => settings.getResolvedConfig("github", repo) },
-            reviews: createGitHubReviewContentLoader(env),
-            enqueue: (sessionId, prompt) =>
-              runtime.fetch(sessionId, SessionInternalPaths.prompt, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(prompt),
-              }),
-            log: logger,
-            now: () => Date.now(),
-          }).run(),
-      },
-    ];
-    const outcomes = await Promise.allSettled(
-      scheduledTasks.map((task) => Promise.resolve().then(task.run))
-    );
-    outcomes.forEach((outcome, index) => {
-      if (outcome.status === "rejected") {
-        logger.error("scheduled.task_failed", {
-          task: scheduledTasks[index]?.name ?? "unknown",
-          error:
-            outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason)),
-          ...requestContext,
-        });
-      }
-    });
+    // The tick runs both the recovery sweep (orphaned/timed-out runs) and
+    // processes overdue automations.
+    // eslint-disable-next-line no-restricted-syntax -- scheduled composition root: construct the scheduler's database dependency
+    await new Scheduler(env.DB, env, createCloudflareBackgroundTasks(ctx)).tick();
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {

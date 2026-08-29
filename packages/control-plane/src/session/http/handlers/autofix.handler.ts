@@ -8,7 +8,7 @@ import type { Logger } from "../../../logger";
 type EnqueueAutofixCommand = Extract<GitHubAutofixSessionCommand, { type: "enqueue_feedback" }>;
 type EnqueueAutofixResponse = Extract<
   GitHubAutofixSessionResponse,
-  { kind: "enqueued" | "duplicate" | "rejected" }
+  { kind: "enqueued" | "coalesced" | "duplicate" | "rejected" }
 >;
 type LookupAutofixResponse = Extract<GitHubAutofixSessionResponse, { kind: "found" | "not_found" }>;
 

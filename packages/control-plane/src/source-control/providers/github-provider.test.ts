@@ -787,6 +787,24 @@ describe("getPullRequest", () => {
     expect((err as SourceControlProviderError).errorType).toBe("permanent");
   });
 
+  it.each([
+    ["a fork head repository", { id: 4242 }, true],
+    ["a deleted head repository", null, true],
+    ["the same repository", { id: 9001 }, false],
+  ])("reports %s as isCrossRepository=%s", async (_label, headRepo, expected) => {
+    mockFetchWithTimeout.mockResolvedValueOnce(
+      makeJsonResponse({
+        ...basePullResponse,
+        head: { ...basePullResponse.head, repo: headRepo },
+      })
+    );
+
+    const provider = new GitHubSourceControlProvider({ appConfig: fakeAppConfig });
+    const snapshot = await provider.getPullRequest({ owner: "acme", name: "web", number: 7 });
+
+    expect(snapshot.isCrossRepository).toBe(expected);
+  });
+
   it("reads with app auth and maps the response to a snapshot", async () => {
     mockFetchWithTimeout.mockResolvedValueOnce(
       makeJsonResponse({ ...basePullResponse, draft: true })
@@ -803,6 +821,7 @@ describe("getPullRequest", () => {
       headBranch: "open-inspect/session-1",
       baseBranch: "main",
       headSha: "abc123",
+      isCrossRepository: false,
       repoOwner: "acme",
       repoName: "web",
       repositoryExternalId: "9001",

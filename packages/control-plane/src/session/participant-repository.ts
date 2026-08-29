@@ -44,13 +44,6 @@ export class ParticipantRepository {
     return (result.toArray() as ParticipantRow[])[0] ?? null;
   }
 
-  getOwnerParticipant(): ParticipantRow | null {
-    const result = this.sql.exec(
-      `SELECT * FROM participants WHERE role = 'owner' ORDER BY joined_at LIMIT 1`
-    );
-    return (result.toArray() as ParticipantRow[])[0] ?? null;
-  }
-
   getParticipantByWsTokenHash(tokenHash: string): ParticipantRow | null {
     const result = this.sql.exec(`SELECT * FROM participants WHERE ws_auth_token = ?`, tokenHash);
     return (result.toArray() as ParticipantRow[])[0] ?? null;

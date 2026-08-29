@@ -40,20 +40,15 @@ export function GlobalSettingsSection({
   settings,
   availableRepos,
   enabledModelOptions,
-  enabledReviewFeedbackOverrides,
 }: {
   settings: GitHubGlobalConfig | null | undefined;
   availableRepos: EnrichedRepository[];
   enabledModelOptions: ModelCategory[];
-  enabledReviewFeedbackOverrides: number;
 }) {
   const [model, setModel] = useState(settings?.defaults?.model ?? "");
   const [effort, setEffort] = useState(settings?.defaults?.reasoningEffort ?? "");
   const [autoReviewOnOpen, setAutoReviewOnOpen] = useState(
     settings?.defaults?.autoReviewOnOpen ?? true
-  );
-  const [autoAddressReviewFeedback, setAutoAddressReviewFeedback] = useState(
-    settings?.defaults?.autoAddressReviewFeedback ?? false
   );
   const [enabledRepos, setEnabledRepos] = useState<string[]>(settings?.enabledRepos ?? []);
   const [repoScopeMode, setRepoScopeMode] = useState<"all" | "selected">(
@@ -89,7 +84,6 @@ export function GlobalSettingsSection({
         setModel(settings.defaults?.model ?? "");
         setEffort(settings.defaults?.reasoningEffort ?? "");
         setAutoReviewOnOpen(settings.defaults?.autoReviewOnOpen ?? true);
-        setAutoAddressReviewFeedback(settings.defaults?.autoAddressReviewFeedback ?? false);
         setEnabledRepos(settings.enabledRepos ?? []);
         setRepoScopeMode(settings.enabledRepos === undefined ? "all" : "selected");
         setAllowedTriggerUsers(settings.defaults?.allowedTriggerUsers ?? []);
@@ -124,7 +118,6 @@ export function GlobalSettingsSection({
         setModel("");
         setEffort("");
         setAutoReviewOnOpen(true);
-        setAutoAddressReviewFeedback(false);
         setEnabledRepos([]);
         setRepoScopeMode("all");
         setAllowedTriggerUsers([]);
@@ -154,7 +147,6 @@ export function GlobalSettingsSection({
     const body: GitHubGlobalConfig = {
       defaults: {
         autoReviewOnOpen,
-        autoAddressReviewFeedback,
         ...(model ? { model } : {}),
         ...(effort ? { reasoningEffort: effort } : {}),
         ...(triggerUserMode === "specific" ? { allowedTriggerUsers } : {}),
@@ -248,37 +240,6 @@ export function GlobalSettingsSection({
           }}
         />
       </label>
-
-      <label
-        htmlFor="auto-address-review-feedback-toggle"
-        className="flex items-center justify-between px-4 py-3 border border-border hover:bg-muted/50 transition cursor-pointer mb-4 rounded-sm"
-      >
-        <div>
-          <span className="text-sm font-medium text-foreground">
-            Address review feedback automatically
-          </span>
-          <span className="text-sm text-muted-foreground ml-2">
-            After submitted reviews settle, resume the session that published the PR to evaluate
-            feedback and push fixes when needed
-          </span>
-        </div>
-        <Switch
-          id="auto-address-review-feedback-toggle"
-          checked={autoAddressReviewFeedback}
-          onCheckedChange={(checked) => {
-            setAutoAddressReviewFeedback(checked);
-            setDirty(true);
-            setError("");
-          }}
-        />
-      </label>
-
-      {!autoAddressReviewFeedback && enabledReviewFeedbackOverrides > 0 && (
-        <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm mb-4">
-          {enabledReviewFeedbackOverrides} repository{" "}
-          {enabledReviewFeedbackOverrides === 1 ? "override remains" : "overrides remain"} enabled.
-        </p>
-      )}
 
       <div className="mb-4">
         <p className="text-sm font-medium text-foreground mb-2">Repository Scope</p>

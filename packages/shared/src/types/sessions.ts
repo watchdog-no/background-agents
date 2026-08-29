@@ -53,6 +53,11 @@ export const messageSourceSchema = z.enum([
   "linear",
   "extension",
   "github",
+  // Retired: the fork's GitHub review follow-up, replaced by Autofix. Nothing
+  // writes it any more, but sessions from before the switch have persisted
+  // `user_message` events carrying it, and dropping the value would make
+  // sandboxEventSchema reject those events and quietly erase them from the
+  // timeline.
   "github-review",
   "automation",
   "agent",

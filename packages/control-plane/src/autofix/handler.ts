@@ -75,7 +75,12 @@ export async function handleAutofixQueue(
     service,
     feedbackStore,
     () => Date.now(),
-    MAX_DELIVERY_ATTEMPTS
+    MAX_DELIVERY_ATTEMPTS,
+    async (envelope, delaySeconds) => {
+      const queue = env.AUTOFIX_QUEUE;
+      if (!queue) throw new Error("AUTOFIX_QUEUE binding is not configured");
+      await queue.send(envelope, { delaySeconds });
+    }
   );
 
   for (const message of batch.messages) {

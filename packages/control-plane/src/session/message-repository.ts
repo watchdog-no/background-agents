@@ -47,12 +47,21 @@ export interface AdmitAutofixMessageData {
   attemptLimit: number | null;
   windowStart: number;
   sessionClosed: boolean;
+  /** Text to fold into a prompt still pending for this pull request. */
+  appendContent?: string;
 }
 
 export type AutofixMessageAdmission =
   | { kind: "enqueued"; messageId: string }
+  | { kind: "coalesced"; messageId: string }
   | { kind: "duplicate"; messageId: string }
   | { kind: "rejected"; reason: "session_closed" | "queue_full" | "attempt_limit" };
+
+/**
+ * Prompt-size ceiling for a coalesced Autofix batch. Matches the web prompt
+ * limit so a merged prompt stays within what the sandbox accepts.
+ */
+const MAX_AUTOFIX_PROMPT_CHARS = 64_000;
 
 /** Options for listing messages. */
 export interface ListMessagesOptions {
@@ -184,9 +193,13 @@ export class MessageRepository {
     return this.rows<{ id: string }>(result).length === 1;
   }
 
+  /**
+   * Resolve the message carrying a feedback key. Migration 50 backfills every
+   * key already recorded on `messages`, so the link table is the single source.
+   */
   getAutofixMessageId(feedbackKey: string): string | null {
     const result = this.sql.exec(
-      `SELECT id FROM messages WHERE autofix_feedback_key = ? LIMIT 1`,
+      `SELECT message_id AS id FROM autofix_message_feedback WHERE feedback_key = ? LIMIT 1`,
       feedbackKey
     );
     return (result.toArray() as Array<{ id: string }>)[0]?.id ?? null;
@@ -224,14 +237,52 @@ export class MessageRepository {
         }
       }
 
+      // A burst that settles at once dispatches back to back. Fold the later
+      // feedback into the prompt still waiting for this pull request so the
+      // session wakes once, and record the extra key so a redelivery of it
+      // resolves to the same message.
+      const pending = this.getUnfinishedMessageByCoalescingKey(data.pullRequestKey);
+      if (pending && pending.status === "pending" && data.appendContent) {
+        const content = `${pending.content}\n\n${data.appendContent}`;
+        if (content.length <= MAX_AUTOFIX_PROMPT_CHARS) {
+          const merged = this.updatePendingCoalescedMessage({
+            messageId: pending.id,
+            content,
+            clientRequestId: pending.client_request_id,
+            requestFingerprint: pending.request_fingerprint,
+          });
+          if (merged) {
+            this.linkAutofixFeedback(data.feedbackKey, pending.id);
+            return { kind: "coalesced", messageId: pending.id };
+          }
+        }
+      }
+
       this.createMessage({
         ...data.message,
+        coalescingKey: data.pullRequestKey,
         autofixFeedbackKey: data.feedbackKey,
         autofixPrKey: data.pullRequestKey,
         originContext: data.originContext,
       });
+      this.linkAutofixFeedback(data.feedbackKey, data.message.id);
       return { kind: "enqueued", messageId: data.message.id };
     });
+  }
+
+  /**
+   * Record that one piece of provider feedback is carried by a message.
+   *
+   * `messages.autofix_feedback_key` only holds the key that created a message,
+   * so coalesced feedback needs its own row for {@link getAutofixMessageId} to
+   * stay idempotent across redeliveries.
+   */
+  private linkAutofixFeedback(feedbackKey: string, messageId: string): void {
+    this.sql.exec(
+      `INSERT OR IGNORE INTO autofix_message_feedback (feedback_key, message_id) VALUES (?, ?)`,
+      feedbackKey,
+      messageId
+    );
   }
 
   getUnfinishedMessagePosition(messageId: string): number | null {

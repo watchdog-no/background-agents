@@ -52,7 +52,7 @@ describe("POST /internal/prompt", () => {
     expect(["pending", "processing"]).toContain(messages[0].status);
   });
 
-  it("coalesces a second GitHub review batch into a pending prompt in SQLite", async () => {
+  it("coalesces a second GitHub feedback batch into a pending prompt in SQLite", async () => {
     const { stub } = await initSession();
     const enqueueReview = (body: Record<string, unknown>) =>
       stub.fetch("http://internal/internal/prompt", {
@@ -60,8 +60,8 @@ describe("POST /internal/prompt", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           authorId: "user-1",
-          source: "github-review",
-          coalescingKey: "github-review:artifact-1",
+          source: "github",
+          coalescingKey: "autofix:artifact-1",
           ...body,
         }),
       });
@@ -69,7 +69,7 @@ describe("POST /internal/prompt", () => {
     const first = await enqueueReview({
       content: "First review batch",
       pendingAppendContent: "First review append",
-      clientRequestId: "github-review:artifact-1:77",
+      clientRequestId: "autofix:artifact-1:77",
     });
     const firstBody = await first.json<{ messageId: string }>();
     expect(
@@ -82,7 +82,7 @@ describe("POST /internal/prompt", () => {
     const second = await enqueueReview({
       content: "Second review batch",
       pendingAppendContent: "Additional review 88",
-      clientRequestId: "github-review:artifact-1:88",
+      clientRequestId: "autofix:artifact-1:88",
     });
     const secondBody = await second.json<{ messageId: string }>();
 
@@ -96,12 +96,12 @@ describe("POST /internal/prompt", () => {
     ).toEqual([
       {
         content: "First review batch\n\nAdditional review 88",
-        client_request_id: "github-review:artifact-1:88",
+        client_request_id: "autofix:artifact-1:88",
       },
     ]);
   });
 
-  it("queues new GitHub feedback behind a review follow-up already processing", async () => {
+  it("queues new GitHub feedback behind a batch already processing", async () => {
     const name = `review-followup-queue-${Date.now()}`;
     const { stub } = await initNamedSession(name);
     await seedSandboxAuth(stub, { authToken: SANDBOX_TOKEN, sandboxId: SANDBOX_ID });
@@ -120,9 +120,9 @@ describe("POST /internal/prompt", () => {
           content,
           pendingAppendContent: `Additional review ${reviewId}`,
           authorId: "user-1",
-          source: "github-review",
-          clientRequestId: `github-review:artifact-1:${reviewId}`,
-          coalescingKey: "github-review:artifact-1",
+          source: "github",
+          clientRequestId: `autofix:artifact-1:${reviewId}`,
+          coalescingKey: "autofix:artifact-1",
         }),
       });
 
@@ -139,7 +139,7 @@ describe("POST /internal/prompt", () => {
     expect(
       await queryDO<{ id: string; status: string }>(
         stub,
-        `SELECT id, status FROM messages WHERE source = 'github-review'
+        `SELECT id, status FROM messages WHERE source = 'github'
          ORDER BY created_at, rowid`
       )
     ).toEqual([

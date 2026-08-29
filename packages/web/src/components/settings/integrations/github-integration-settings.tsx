@@ -44,10 +44,6 @@ export function GitHubIntegrationSettings() {
   const repoOverrides = repoSettingsData?.repos ?? [];
   const availableRepos = reposData?.repos ?? [];
   const defaultAutoReviewOnOpen = settings?.defaults?.autoReviewOnOpen ?? true;
-  const defaultAutoAddressReviewFeedback = settings?.defaults?.autoAddressReviewFeedback ?? false;
-  const enabledReviewFeedbackOverrides = repoOverrides.filter(
-    (entry) => entry.settings.autoAddressReviewFeedback === true
-  ).length;
   const defaultAutofix = {
     ...GITHUB_AUTOFIX_DEFAULTS,
     ...settings?.defaults?.autofix,
@@ -64,31 +60,16 @@ export function GitHubIntegrationSettings() {
         title="Connection"
         description="GitHub App access used for repo discovery and scope."
       >
-        <div className="space-y-3">
-          {availableRepos.length > 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Repository access is available. You can limit the bot to selected repositories below.
-            </p>
-          ) : (
-            <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm">
-              GitHub App is not configured or has no accessible repositories. Repository filtering
-              is currently unavailable.
-            </p>
-          )}
+        {availableRepos.length > 0 ? (
           <p className="text-sm text-muted-foreground">
-            Automatic review follow-up requires the <strong>Pull request reviews</strong> webhook
-            event.{" "}
-            <a
-              href="https://github.com/settings/apps"
-              target="_blank"
-              rel="noreferrer"
-              className="underline hover:text-foreground"
-            >
-              Open GitHub App settings
-            </a>
-            .
+            Repository access is available. You can limit the bot to selected repositories below.
           </p>
-        </div>
+        ) : (
+          <p className="text-sm text-warning bg-warning-muted border border-warning/20 px-4 py-3 rounded-sm">
+            GitHub App is not configured or has no accessible repositories. Repository filtering is
+            currently unavailable.
+          </p>
+        )}
       </IntegrationSettingsSection>
 
       <CommitSigningSettings />
@@ -97,7 +78,6 @@ export function GitHubIntegrationSettings() {
         settings={settings}
         availableRepos={availableRepos}
         enabledModelOptions={enabledModelOptions}
-        enabledReviewFeedbackOverrides={enabledReviewFeedbackOverrides}
       />
 
       <IntegrationSettingsSection
@@ -109,7 +89,6 @@ export function GitHubIntegrationSettings() {
           availableRepos={availableRepos}
           enabledModelOptions={enabledModelOptions}
           defaultAutoReviewOnOpen={defaultAutoReviewOnOpen}
-          defaultAutoAddressReviewFeedback={defaultAutoAddressReviewFeedback}
           defaultAutofix={defaultAutofix}
         />
       </IntegrationSettingsSection>

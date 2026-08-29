@@ -175,7 +175,6 @@ function buildQueue(options?: { session?: SessionRow }) {
     updateMessageToPending: vi.fn(),
     getParticipantById: vi.fn(() => createParticipant()),
     getParticipantByCanonicalUserId: vi.fn(() => null as ParticipantRow | null),
-    getOwnerParticipant: vi.fn(() => null as ParticipantRow | null),
     getSession: vi.fn(() => options?.session ?? createSession()),
     updateParticipantCoalesce: vi.fn(),
     recordMessageCompletion: vi.fn((event: { messageId: string }, completedAt: number) => ({
@@ -323,6 +322,7 @@ describe("SessionMessageQueue", () => {
       attemptLimit: 10,
       windowStart: expect.any(Number),
       sessionClosed: false,
+      appendContent: command.prompt,
     });
     expect(h.repository.createEvent).not.toHaveBeenCalled();
     expect(h.sessionStatus.transition).toHaveBeenCalledWith("active");
@@ -817,7 +817,7 @@ describe("SessionMessageQueue", () => {
   it("materializes the user_message at processing start", async () => {
     const h = buildQueue();
     const sandboxWs = { readyState: 1 } as WebSocket;
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ source: "github-review" }));
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ source: "github" }));
     h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
 
     await h.queue.processMessageQueue();
@@ -829,7 +829,7 @@ describe("SessionMessageQueue", () => {
         type: "user_message",
         messageId: "msg-1",
         content: "hello",
-        source: "github-review",
+        source: "github",
       })
     );
     const event = h.repository.startMessageProcessing.mock.calls[0][2];
@@ -1628,58 +1628,33 @@ describe("SessionMessageQueue", () => {
       );
     });
 
-    it("reuses the session owner for a GitHub review follow-up without a canonical user", async () => {
-      const h = buildQueue();
-      const owner = createParticipant({
-        id: "part-owner",
-        user_id: "linear:usr_9",
-        role: "owner",
-        scm_access_token_encrypted: "encrypted-token",
-      });
-      h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
-      h.repository.getOwnerParticipant.mockReturnValue(owner);
-
-      await h.queue.enqueuePromptFromApi({
-        content: "Address review feedback",
-        authorId: "github-review-followup",
-        source: "github-review",
-      });
-
-      expect(h.repository.getOwnerParticipant).toHaveBeenCalledOnce();
-      expect(h.participantService.create).not.toHaveBeenCalled();
-      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
-        expect.objectContaining({ authorId: "part-owner", source: "github-review" }),
-        []
-      );
-    });
-
-    it("appends a review batch to a matching pending prompt", async () => {
+    it("appends a feedback batch to a matching pending prompt", async () => {
       const h = buildQueue();
       h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
         createMessage({
           id: "msg-review",
           author_id: "part-1",
-          content: "First review batch",
-          source: "github-review",
+          content: "First feedback batch",
+          source: "github",
           status: "pending",
-          coalescing_key: "github-review:artifact-1",
+          coalescing_key: "autofix:artifact-1",
         })
       );
 
       const result = await h.queue.enqueuePromptFromApi({
-        content: "Second review batch",
+        content: "Second feedback batch",
         pendingAppendContent: "Additional reviews",
         authorId: "user-1",
-        source: "github-review",
-        clientRequestId: "github-review:artifact-1:2",
-        coalescingKey: "github-review:artifact-1",
+        source: "github",
+        clientRequestId: "autofix:artifact-1:2",
+        coalescingKey: "autofix:artifact-1",
       });
 
       expect(result).toEqual({ messageId: "msg-review", status: "queued" });
       expect(h.repository.updatePendingCoalescedMessage).toHaveBeenCalledWith({
         messageId: "msg-review",
-        content: "First review batch\n\nAdditional reviews",
-        clientRequestId: "github-review:artifact-1:2",
+        content: "First feedback batch\n\nAdditional reviews",
+        clientRequestId: "autofix:artifact-1:2",
         requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
       });
       expect(h.repository.createMessageWithAttachments).not.toHaveBeenCalled();
@@ -1690,51 +1665,51 @@ describe("SessionMessageQueue", () => {
         createMessage({
           id: "msg-review",
           author_id: "part-1",
-          source: "github-review",
+          source: "github",
           status: "pending",
-          client_request_id: "github-review:artifact-1:2",
+          client_request_id: "autofix:artifact-1:2",
           request_fingerprint: requestFingerprint,
-          coalescing_key: "github-review:artifact-1",
+          coalescing_key: "autofix:artifact-1",
         })
       );
 
       await h.queue.enqueuePromptFromApi({
-        content: "Second review batch",
+        content: "Second feedback batch",
         pendingAppendContent: "Additional reviews",
         authorId: "user-1",
-        source: "github-review",
-        clientRequestId: "github-review:artifact-1:2",
-        coalescingKey: "github-review:artifact-1",
+        source: "github",
+        clientRequestId: "autofix:artifact-1:2",
+        coalescingKey: "autofix:artifact-1",
       });
 
       expect(h.repository.updatePendingCoalescedMessage).toHaveBeenCalledOnce();
     });
 
-    it("queues a review batch behind a matching prompt that is processing", async () => {
+    it("queues a feedback batch behind a matching prompt that is processing", async () => {
       const h = buildQueue();
       h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
         createMessage({
           id: "msg-review",
-          source: "github-review",
+          source: "github",
           status: "processing",
-          coalescing_key: "github-review:artifact-1",
+          coalescing_key: "autofix:artifact-1",
         })
       );
 
       await h.queue.enqueuePromptFromApi({
-        content: "Second review batch",
+        content: "Second feedback batch",
         pendingAppendContent: "Additional reviews",
         authorId: "user-1",
-        source: "github-review",
-        clientRequestId: "github-review:artifact-1:88",
-        coalescingKey: "github-review:artifact-1",
+        source: "github",
+        clientRequestId: "autofix:artifact-1:88",
+        coalescingKey: "autofix:artifact-1",
       });
 
       expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
       expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: "Second review batch",
-          coalescingKey: "github-review:artifact-1",
+          content: "Second feedback batch",
+          coalescingKey: "autofix:artifact-1",
         }),
         []
       );
@@ -1747,24 +1722,24 @@ describe("SessionMessageQueue", () => {
           id: "msg-review",
           author_id: "part-1",
           content: "x".repeat(64_000),
-          source: "github-review",
+          source: "github",
           status: "pending",
-          coalescing_key: "github-review:artifact-1",
+          coalescing_key: "autofix:artifact-1",
         })
       );
 
       await h.queue.enqueuePromptFromApi({
-        content: "Next review batch",
+        content: "Next feedback batch",
         pendingAppendContent: "Additional reviews",
         authorId: "user-1",
-        source: "github-review",
-        clientRequestId: "github-review:artifact-1:99",
-        coalescingKey: "github-review:artifact-1",
+        source: "github",
+        clientRequestId: "autofix:artifact-1:99",
+        coalescingKey: "autofix:artifact-1",
       });
 
       expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
       expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
-        expect.objectContaining({ content: "Next review batch" }),
+        expect.objectContaining({ content: "Next feedback batch" }),
         []
       );
     });
@@ -1775,23 +1750,23 @@ describe("SessionMessageQueue", () => {
         createMessage({
           id: "msg-old-review",
           author_id: "part-1",
-          content: "Old review batch",
-          source: "github-review",
+          content: "Old feedback batch",
+          source: "github",
           status: "completed",
-          client_request_id: "github-review:artifact-1:77",
+          client_request_id: "autofix:artifact-1:77",
           request_fingerprint: "different-fingerprint",
-          coalescing_key: "github-review:artifact-1",
+          coalescing_key: "autofix:artifact-1",
         })
       );
 
       await expect(
         h.queue.enqueuePromptFromApi({
-          content: "New review batch",
+          content: "New feedback batch",
           pendingAppendContent: "Additional reviews",
           authorId: "user-1",
-          source: "github-review",
-          clientRequestId: "github-review:artifact-1:77",
-          coalescingKey: "github-review:artifact-1",
+          source: "github",
+          clientRequestId: "autofix:artifact-1:77",
+          coalescingKey: "autofix:artifact-1",
         })
       ).rejects.toMatchObject({ name: "PromptRequestConflictError" });
     });
@@ -1803,12 +1778,12 @@ describe("SessionMessageQueue", () => {
         content: "Address review feedback",
         authorId: "user-1",
         source: "github",
-        clientRequestId: "github-review:artifact-1:3",
+        clientRequestId: "autofix:artifact-1:3",
       });
 
       expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
         expect.objectContaining({
-          clientRequestId: "github-review:artifact-1:3",
+          clientRequestId: "autofix:artifact-1:3",
           requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
         }),
         []
