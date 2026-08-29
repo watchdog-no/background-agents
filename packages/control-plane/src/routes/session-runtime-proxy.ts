@@ -1,4 +1,5 @@
 import { applyIdentityEnforcement } from "../auth/identity-enforcement";
+import { readBodyCapped } from "@open-inspect/shared/http-body";
 import type {
   SessionParticipantProfilesResponse,
   SessionParticipantProfile,
@@ -17,6 +18,7 @@ import {
   parseJsonBody,
   parsePattern,
   SCM_AGNOSTIC_SANDBOX_FALLBACK_ROUTE,
+  SCM_AGNOSTIC_HANDLER_AUTHENTICATED_ROUTE,
   SCM_AGNOSTIC_SANDBOX_ROUTE,
   SCM_AGNOSTIC_HUMAN_USER_ROUTE,
   SCM_AGNOSTIC_USER_OR_SERVICE_ROUTE,
@@ -34,6 +36,8 @@ const participantsResponseSchema = z.object({
     })
   ),
 });
+
+const SANDBOX_ERROR_BODY_MAX_BYTES = 2 * 1024;
 
 type SimpleProxyRouteConfig = {
   policy: RoutePolicy;
@@ -123,6 +127,34 @@ async function handleAddParticipant(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+async function handleSandboxError(
+  request: Request,
+  _env: Env,
+  match: RegExpMatchArray,
+  ctx: SessionRouteContext
+): Promise<Response> {
+  const sessionId = getSessionId(match);
+  if (sessionId instanceof Response) return sessionId;
+  const authorization = request.headers.get("Authorization");
+  const sandboxId = request.headers.get("X-Sandbox-ID");
+  if (!authorization?.startsWith("Bearer ") || !sandboxId) {
+    return error("Unauthorized", 401);
+  }
+  const body = await readBodyCapped(request.body, SANDBOX_ERROR_BODY_MAX_BYTES);
+  if (body === null) return error("Sandbox error body is too large", 413);
+  if (body.byteLength === 0) return error("Sandbox error body is required", 400);
+
+  return ctx.sessionRuntime.fetch(sessionId, SessionInternalPaths.sandboxError, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authorization,
+      "X-Sandbox-ID": sandboxId,
+    },
+    body,
   });
 }
 
@@ -294,6 +326,14 @@ export const sessionRuntimeProxyRoutes: Route[] = [
     internalPath: SessionInternalPaths.stop,
     runtimeMethod: "POST",
   }),
+  defineRoute(
+    SCM_AGNOSTIC_HANDLER_AUTHENTICATED_ROUTE,
+    sessionRoute({
+      method: "POST",
+      pattern: parsePattern("/sessions/:id/sandbox-error"),
+      handler: handleSandboxError,
+    })
+  ),
   simpleProxyRoute({
     policy: GITHUB_USER_OR_SERVICE_ROUTE,
     method: "GET",

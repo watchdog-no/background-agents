@@ -1,6 +1,7 @@
 import type { SandboxEvent } from "@open-inspect/shared/types/sandbox-events";
 import type { PromptQueueItem } from "@open-inspect/shared/types/server-messages";
 import type { MessageSource, MessageStatus } from "@open-inspect/shared/types/sessions";
+import { MAX_UNFINISHED_PROMPTS } from "@open-inspect/shared/types/prompts";
 import type { CreateEventData, EventRepository } from "./event-repository";
 import type { SessionAttachmentRepository } from "./session-attachment-repository";
 import type { SqlResult, SqlStorage, TransactionSync } from "./sql-storage";
@@ -31,9 +32,27 @@ export interface CreateMessageData {
   clientRequestId?: string | null;
   requestFingerprint?: string | null;
   coalescingKey?: string | null;
+  autofixFeedbackKey?: string | null;
+  autofixPrKey?: string | null;
+  originContext?: string | null;
   status: MessageStatus;
   createdAt: number;
 }
+
+export interface AdmitAutofixMessageData {
+  message: CreateMessageData;
+  feedbackKey: string;
+  pullRequestKey: string;
+  originContext: string;
+  attemptLimit: number | null;
+  windowStart: number;
+  sessionClosed: boolean;
+}
+
+export type AutofixMessageAdmission =
+  | { kind: "enqueued"; messageId: string }
+  | { kind: "duplicate"; messageId: string }
+  | { kind: "rejected"; reason: "session_closed" | "queue_full" | "attempt_limit" };
 
 /** Options for listing messages. */
 export interface ListMessagesOptions {
@@ -165,6 +184,56 @@ export class MessageRepository {
     return this.rows<{ id: string }>(result).length === 1;
   }
 
+  getAutofixMessageId(feedbackKey: string): string | null {
+    const result = this.sql.exec(
+      `SELECT id FROM messages WHERE autofix_feedback_key = ? LIMIT 1`,
+      feedbackKey
+    );
+    return (result.toArray() as Array<{ id: string }>)[0]?.id ?? null;
+  }
+
+  getMessageStatus(messageId: string): MessageStatus | null {
+    const result = this.sql.exec(`SELECT status FROM messages WHERE id = ? LIMIT 1`, messageId);
+    return (result.toArray() as Array<{ status: MessageStatus }>)[0]?.status ?? null;
+  }
+
+  admitAutofixMessage(data: AdmitAutofixMessageData): AutofixMessageAdmission {
+    return this.transactionSync(() => {
+      const existingMessageId = this.getAutofixMessageId(data.feedbackKey);
+      if (existingMessageId) {
+        return { kind: "duplicate", messageId: existingMessageId };
+      }
+      if (data.sessionClosed) {
+        return { kind: "rejected", reason: "session_closed" };
+      }
+      if (this.getPendingOrProcessingCount() >= MAX_UNFINISHED_PROMPTS) {
+        return { kind: "rejected", reason: "queue_full" };
+      }
+
+      if (data.attemptLimit !== null) {
+        const count = this.sql
+          .exec(
+            `SELECT COUNT(*) AS count FROM messages
+           WHERE autofix_pr_key = ? AND created_at >= ?`,
+            data.pullRequestKey,
+            data.windowStart
+          )
+          .one() as { count: number };
+        if (count.count >= data.attemptLimit) {
+          return { kind: "rejected", reason: "attempt_limit" };
+        }
+      }
+
+      this.createMessage({
+        ...data.message,
+        autofixFeedbackKey: data.feedbackKey,
+        autofixPrKey: data.pullRequestKey,
+        originContext: data.originContext,
+      });
+      return { kind: "enqueued", messageId: data.message.id };
+    });
+  }
+
   getUnfinishedMessagePosition(messageId: string): number | null {
     const result = this.sql.exec(
       `SELECT id FROM messages WHERE status IN ('pending', 'processing')
@@ -239,8 +308,11 @@ export class MessageRepository {
 
   createMessage(data: CreateMessageData): void {
     this.sql.exec(
-      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, attachments, callback_context, client_request_id, request_fingerprint, coalescing_key, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (
+         id, author_id, content, source, model, reasoning_effort, attachments,
+         callback_context, client_request_id, request_fingerprint, coalescing_key,
+         autofix_feedback_key, autofix_pr_key, origin_context, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.id,
       data.authorId,
       data.content,
@@ -252,6 +324,9 @@ export class MessageRepository {
       data.clientRequestId ?? null,
       data.requestFingerprint ?? null,
       data.coalescingKey ?? null,
+      data.autofixFeedbackKey ?? null,
+      data.autofixPrKey ?? null,
+      data.originContext ?? null,
       data.status,
       data.createdAt
     );

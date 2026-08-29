@@ -75,9 +75,6 @@ module "slack_bot_worker" {
     # OPENAI_API_KEY path because ChatGPT subscription OAuth is blocked from Workers.
     { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.6-luna" },
     { name = "CLASSIFICATION_DEFAULT_REPOSITORY", value = "watchdog-no/watchdog-monorepo" },
-    # Kill switch for Slack channel-message triggers; the bot only ingests/
-    # forwards channel messages when this is exactly "true" (dark by default).
-    { name = "SLACK_TRIGGERS_ENABLED", value = var.slack_triggers_enabled ? "true" : "false" },
   ]
 
   secrets = [

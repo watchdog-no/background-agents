@@ -5,6 +5,11 @@ import type {
   SessionAttachmentReference,
   ResolvedSessionAttachment,
 } from "@open-inspect/shared/types/session-attachments";
+import type {
+  GitHubAutofixOrigin,
+  GitHubAutofixSessionCommand,
+  GitHubAutofixSessionResponse,
+} from "@open-inspect/shared";
 import {
   DEFAULT_MODEL,
   getDefaultReasoningEffort,
@@ -73,6 +78,19 @@ interface EnqueuedPrompt {
   messageId: string;
   position: number | null;
 }
+
+const AUTOFIX_ATTEMPT_WINDOW_MS = 24 * 60 * 60 * 1_000;
+const STUCK_PROCESSING_ERROR = "Execution timed out (stuck processing)";
+
+type EnqueueAutofixResponse = Extract<
+  GitHubAutofixSessionResponse,
+  { kind: "enqueued" | "duplicate" | "rejected" }
+>;
+type LookupAutofixResponse = Extract<GitHubAutofixSessionResponse, { kind: "found" | "not_found" }>;
+
+type UserMessageEventWithOrigin = Extract<SandboxEvent, { type: "user_message" }> & {
+  origin?: GitHubAutofixOrigin;
+};
 
 export class SessionNotPromptableError extends Error {
   constructor(readonly sessionStatus: SessionRow["status"]) {
@@ -162,6 +180,72 @@ export class SessionMessageQueue {
     /** Resolved per use so it honors settings persisted after construction. */
     private readonly getExecutionTimeoutMs: () => number
   ) {}
+
+  async enqueueAutofix(
+    command: Extract<GitHubAutofixSessionCommand, { type: "enqueue_feedback" }>
+  ): Promise<EnqueueAutofixResponse> {
+    const session = this.repository.getSession();
+    const userId = `github:${command.author.id}`;
+    let participant = this.participantService.getByUserId(userId);
+    if (!participant) {
+      participant = this.participantService.create(userId, command.author.login);
+    }
+    this.participantRepository.updateParticipantCoalesce(participant.id, {
+      scmUserId: command.author.id,
+      scmLogin: command.author.login,
+      scmName: command.author.login,
+    });
+
+    const now = Date.now();
+    const admission = this.messageRepository.admitAutofixMessage({
+      message: {
+        id: generateId(),
+        authorId: participant.id,
+        content: command.prompt,
+        source: "github",
+        status: "pending",
+        createdAt: now,
+      },
+      feedbackKey: command.feedbackKey,
+      pullRequestKey: `github:${command.pullRequest.repositoryId}:${command.pullRequest.number}`,
+      originContext: JSON.stringify(command.origin),
+      attemptLimit: command.attemptLimit,
+      windowStart: now - AUTOFIX_ATTEMPT_WINDOW_MS,
+      sessionClosed: !session || session.status === "archived" || session.status === "cancelled",
+    });
+    if (admission.kind === "rejected") return admission;
+
+    if (admission.kind === "enqueued") {
+      this.broadcastPromptQueue();
+      this.log.info("autofix.enqueue", {
+        event: "autofix.enqueue",
+        feedback_key: command.feedbackKey,
+        message_id: admission.messageId,
+        pull_request_number: command.pullRequest.number,
+        artifact_id: command.pullRequest.artifactId,
+      });
+    }
+    await this.redrivePendingAutofix(admission.messageId);
+    return admission;
+  }
+
+  async lookupAutofix(feedbackKey: string): Promise<LookupAutofixResponse> {
+    const messageId = this.messageRepository.getAutofixMessageId(feedbackKey);
+    if (!messageId) return { kind: "not_found" };
+
+    await this.redrivePendingAutofix(messageId);
+    return { kind: "found", messageId };
+  }
+
+  private async redrivePendingAutofix(messageId: string): Promise<void> {
+    if (this.messageRepository.getMessageStatus(messageId) !== "pending") return;
+
+    const session = this.repository.getSession();
+    if (!session || session.status === "archived" || session.status === "cancelled") return;
+
+    await this.sessionStatus.transition("active");
+    await this.processMessageQueue();
+  }
 
   async handlePromptMessage(
     ws: WebSocket,
@@ -363,7 +447,8 @@ export class SessionMessageQueue {
       message.source,
       parseStoredSessionAttachments(message.attachments, () =>
         this.log.error("prompt.invalid_stored_attachments")
-      )
+      ),
+      message.origin_context
     );
     const gitIdentity = resolveParticipantGitIdentity(author, this.scmProvider);
     const requestedEffort =
@@ -497,6 +582,12 @@ export class SessionMessageQueue {
     await this.processMessageQueue();
   }
 
+  async handleFatalSandboxFailure(reason: string): Promise<void> {
+    const termination = this.sandboxLifecycle.terminateFailedSandbox(reason);
+    await this.failStuckProcessingMessage(reason);
+    if (await termination) await this.resumeAfterSandboxTermination();
+  }
+
   /** Close every unfinished message synchronously; status projection happens afterwards. */
   cancelExecution(): void {
     const now = Date.now();
@@ -516,25 +607,18 @@ export class SessionMessageQueue {
   }
 
   /**
-   * Fail a stuck processing message (defense-in-depth for execution timeout).
+   * Fail a processing message that its sandbox can no longer complete.
    *
    * Only marks the message as failed and broadcasts — does NOT send a stop command
    * to the sandbox or call processMessageQueue(). This avoids races where a new
    * prompt could be dispatched to a sandbox being shut down.
    */
-  async failStuckProcessingMessage(): Promise<void> {
+  async failStuckProcessingMessage(error = STUCK_PROCESSING_ERROR): Promise<void> {
     const now = Date.now();
     const processingMessage = this.messageRepository.getProcessingMessageWithCreatedAt();
     if (!processingMessage) return;
 
-    if (
-      !this.failMessage(
-        processingMessage,
-        "Execution timed out (stuck processing)",
-        now,
-        "processing"
-      )
-    ) {
+    if (!this.failMessage(processingMessage, error, now, "processing")) {
       return;
     }
     this.messenger.broadcast({ type: "processing_status", isProcessing: false });
@@ -598,8 +682,17 @@ export class SessionMessageQueue {
     messageId: string,
     now: number,
     source: MessageSource,
-    attachments?: ResolvedSessionAttachment[]
-  ): Extract<SandboxEvent, { type: "user_message" }> {
+    attachments?: ResolvedSessionAttachment[],
+    originContext?: string | null
+  ): UserMessageEventWithOrigin {
+    let origin: GitHubAutofixOrigin | undefined;
+    if (originContext) {
+      try {
+        origin = JSON.parse(originContext) as GitHubAutofixOrigin;
+      } catch {
+        this.log.error("prompt.invalid_origin_context", { message_id: messageId });
+      }
+    }
     return {
       type: "user_message",
       content,
@@ -610,9 +703,10 @@ export class SessionMessageQueue {
         participantId: participant.id,
         userId: participant.canonical_user_id ?? participant.user_id,
         name: resolveParticipantName(participant),
-        avatar: getAvatarUrl(participant.scm_login, this.scmProvider),
+        avatar: getAvatarUrl(participant.scm_login, this.scmProvider, participant.scm_user_id),
       },
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(origin ? { origin } : {}),
     };
   }
 

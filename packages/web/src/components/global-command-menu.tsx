@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
-import type { Session } from "@open-inspect/shared/types/sessions";
+import { useEffect, useMemo, useState } from "react";
 import { formatRelativeTime } from "@/lib/time";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { formatRepoLabel } from "@/lib/repo-label";
-import { buildSessionSearchValue } from "@/lib/session-list";
+import { buildSessionSearchValue, type SessionListItem } from "@/lib/session-list";
 import { AutomationsIcon, BranchIcon, PlusIcon, SettingsIcon } from "@/components/ui/icons";
 import { AppIcon } from "@/components/ui/app-icon";
+import { DEFAULT_SETTINGS_QUERY, getSettingsGroups } from "@/components/settings/settings-registry";
 import {
   Command,
   CommandDialog,
@@ -26,10 +26,10 @@ interface GlobalCommandMenuProps {
   onOpenChange: (open: boolean) => void;
   onNavigate: (href: string) => void;
   onNewSession: () => void;
-  sessions: Session[];
+  sessions: SessionListItem[];
 }
 
-function buildSessionUrl(session: Session): string {
+function buildSessionUrl(session: SessionListItem): string {
   const searchParams = new URLSearchParams();
   if (session.repoOwner && session.repoName) {
     searchParams.set("repoOwner", session.repoOwner);
@@ -52,10 +52,16 @@ export function GlobalCommandMenu({
   sessions,
 }: GlobalCommandMenuProps) {
   const { labels } = useKeyboardShortcuts();
+  const [query, setQuery] = useState(DEFAULT_SETTINGS_QUERY);
   const searchableSessions = useMemo(
     () => sessions.filter((session) => session.status !== "archived"),
     [sessions]
   );
+  const settingsGroups = getSettingsGroups({ query, includeGlobalAliases: true });
+
+  useEffect(() => {
+    if (!open) setQuery(DEFAULT_SETTINGS_QUERY);
+  }, [open]);
 
   const handleSelect = (callback: () => void) => {
     onOpenChange(false);
@@ -69,7 +75,10 @@ export function GlobalCommandMenu({
         Search and jump to sessions, settings, automations, and other destinations.
       </DialogDescription>
       <Command>
-        <CommandInput placeholder="Type a command or search sessions..." />
+        <CommandInput
+          placeholder="Search sessions, settings, and commands..."
+          onValueChange={setQuery}
+        />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
 
@@ -91,6 +100,33 @@ export function GlobalCommandMenu({
               <AutomationsIcon className="h-4 w-4" />
               <span>Automations</span>
             </CommandItem>
+          </CommandGroup>
+
+          <CommandSeparator />
+          <CommandGroup heading="Settings">
+            {settingsGroups.flatMap((group) =>
+              group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <CommandItem
+                    key={item.id}
+                    forceMount
+                    value={`settings ${group.label} ${item.label} ${item.description} ${item.keywords}`}
+                    onSelect={() => handleSelect(() => onNavigate(`/settings?tab=${item.id}`))}
+                    className="items-start"
+                  >
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{item.label}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {item.description}
+                      </div>
+                    </div>
+                    <CommandShortcut>{group.label}</CommandShortcut>
+                  </CommandItem>
+                );
+              })
+            )}
           </CommandGroup>
 
           {searchableSessions.length > 0 && (

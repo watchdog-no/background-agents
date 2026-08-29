@@ -108,6 +108,9 @@ export interface MessageRow {
   client_request_id: string | null;
   request_fingerprint: string | null;
   coalescing_key: string | null;
+  autofix_feedback_key: string | null;
+  autofix_pr_key: string | null;
+  origin_context: string | null;
   status: MessageStatus;
   error_message: string | null;
   stop_confirmation_deadline: number | null;
@@ -172,6 +175,13 @@ export interface SandboxRow {
   ttyd_token: string | null;
   created_at: number;
 }
+
+/**
+ * The sandbox access artifacts that pair a URL with an encrypted secret:
+ * code-server and VNC carry passwords, ttyd carries a minted JWT. Tunnel URLs
+ * are not a kind — they are a single JSON column with no secret.
+ */
+export type SandboxAccessKind = "codeServer" | "vnc" | "ttyd";
 
 // Command types for sandbox communication
 

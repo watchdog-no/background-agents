@@ -38,7 +38,7 @@ function getHandler(method: string, path: string) {
   for (const route of sessionRuntimeProxyRoutes) {
     if (route.method !== method) continue;
     const match = path.match(route.pattern);
-    if (match) return { handler: route.handler, match };
+    if (match) return { handler: route.handler, match, route };
   }
   throw new Error(`No route found for ${method} ${path}`);
 }
@@ -86,6 +86,102 @@ describe("session runtime proxy routes", () => {
     expect(fetch).toHaveBeenCalledOnce();
     expect(new URL(requests[0].url).pathname).toBe(SessionInternalPaths.events);
     expect(new URL(requests[0].url).search).toBe("?limit=10");
+  });
+
+  it("forwards sandbox fatal errors to the session runtime", async () => {
+    const requests: Request[] = [];
+    const fetch = vi.fn(async (request: Request) => {
+      requests.push(request);
+      return Response.json({ status: "ok" });
+    });
+    const path = "/sessions/session-1/sandbox-error";
+    const { handler, match, route } = getHandler("POST", path);
+
+    const response = await handler(
+      new Request(`https://test.local${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: "Bearer sandbox-token",
+          "X-Sandbox-ID": "sandbox-1",
+        },
+        body: JSON.stringify({ error: "Bridge repeatedly crashed", fatal: true }),
+      }),
+      createEnv(fetch),
+      match,
+      createCtx()
+    );
+
+    expect(response.status).toBe(200);
+    expect(route.authentication.kind).toBe("handler-authenticated");
+    expect(new URL(requests[0].url).pathname).toBe(SessionInternalPaths.sandboxError);
+    expect(requests[0].headers.get("Authorization")).toBe("Bearer sandbox-token");
+    expect(requests[0].headers.get("X-Sandbox-ID")).toBe("sandbox-1");
+    await expect(requests[0].json()).resolves.toEqual({
+      error: "Bridge repeatedly crashed",
+      fatal: true,
+    });
+  });
+
+  it("rejects oversized sandbox errors before forwarding them", async () => {
+    const fetch = vi.fn(async () => Response.json({ status: "ok" }));
+    const path = "/sessions/session-1/sandbox-error";
+    const { handler, match } = getHandler("POST", path);
+
+    const response = await handler(
+      new Request(`https://test.local${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sandbox-token",
+          "X-Sandbox-ID": "sandbox-1",
+        },
+        body: "x".repeat(2049),
+      }),
+      createEnv(fetch),
+      match,
+      createCtx()
+    );
+
+    expect(response.status).toBe(413);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing sandbox credentials before reading or forwarding the body", async () => {
+    const fetch = vi.fn(async () => Response.json({ status: "ok" }));
+    const path = "/sessions/session-1/sandbox-error";
+    const { handler, match } = getHandler("POST", path);
+
+    const response = await handler(
+      new Request(`https://test.local${path}`, { method: "POST", body: "not json" }),
+      createEnv(fetch),
+      match,
+      createCtx()
+    );
+
+    expect(response.status).toBe(401);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty sandbox error before forwarding it", async () => {
+    const fetch = vi.fn(async () => Response.json({ status: "ok" }));
+    const path = "/sessions/session-1/sandbox-error";
+    const { handler, match } = getHandler("POST", path);
+
+    const response = await handler(
+      new Request(`https://test.local${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sandbox-token",
+          "X-Sandbox-ID": "sandbox-1",
+        },
+      }),
+      createEnv(fetch),
+      match,
+      createCtx()
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("returns deduplicated canonical participant profiles with safe fields only", async () => {

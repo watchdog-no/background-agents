@@ -70,6 +70,7 @@ The bot is deployed via Terraform as a standalone Cloudflare Worker alongside th
 | Binding                      | Type                  | Description                                                                         |
 | ---------------------------- | --------------------- | ----------------------------------------------------------------------------------- |
 | `GITHUB_KV`                  | KV namespace          | Delivery dedupe store keyed by `X-GitHub-Delivery`                                  |
+| `AUTOFIX_QUEUE`              | Queue                 | Durable handoff for pull request feedback eligible for Autofix                      |
 | `CONTROL_PLANE`              | Service binding       | Fetcher to the control plane worker                                                 |
 | `DEPLOYMENT_NAME`            | Plain text            | Deployment identifier for logging                                                   |
 | `DEFAULT_MODEL`              | Plain text            | Model ID for new sessions (e.g., `openai/gpt-5.6-luna`)                             |
