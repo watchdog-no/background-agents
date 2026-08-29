@@ -351,6 +351,7 @@ export class SessionMessageQueue {
       message.content,
       message.id,
       now,
+      message.source,
       parseStoredSessionAttachments(message.attachments, () =>
         this.log.error("prompt.invalid_stored_attachments")
       )
@@ -587,6 +588,7 @@ export class SessionMessageQueue {
     content: string,
     messageId: string,
     now: number,
+    source: MessageSource,
     attachments?: ResolvedSessionAttachment[]
   ): Extract<SandboxEvent, { type: "user_message" }> {
     return {
@@ -594,6 +596,7 @@ export class SessionMessageQueue {
       content,
       messageId,
       timestamp: now / 1000,
+      source,
       author: {
         participantId: participant.id,
         userId: participant.canonical_user_id ?? participant.user_id,
@@ -608,8 +611,15 @@ export class SessionMessageQueue {
     data: EnqueuePromptRequest
   ): Promise<{ messageId: string; status: "queued" }> {
     this.assertPromptableSession();
-    this.assertQueueCapacity();
     let participant = this.participantService.getByUserId(data.authorId);
+    if (!participant && data.canonicalUserId) {
+      participant = this.participantRepository.getParticipantByCanonicalUserId(
+        data.canonicalUserId
+      );
+    }
+    if (!participant && data.source === "github-review") {
+      participant = this.participantRepository.getOwnerParticipant();
+    }
     if (!participant) {
       const name = data.scmEnrichment?.name || data.authorId;
       participant = data.canonicalUserId
@@ -650,6 +660,7 @@ export class SessionMessageQueue {
       reasoningEffort: data.reasoningEffort,
       attachments: data.attachments,
       callbackContext: data.callbackContext,
+      clientRequestId: data.clientRequestId,
     });
 
     await this.processMessageQueue();

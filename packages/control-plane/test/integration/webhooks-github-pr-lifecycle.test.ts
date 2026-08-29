@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { SessionIndexStore } from "../../src/db/session-index";
 import { SessionPullRequestStore } from "../../src/db/session-pull-request-store";
+import { GitHubReviewFollowupStore } from "../../src/db/github-review-followups";
+import { IntegrationSettingsStore } from "../../src/db/integration-settings";
 import type { SessionPullRequestRecord } from "../../src/db/session-pull-request-store";
 import { cleanD1Tables } from "./cleanup";
 import { initNamedSessionDO, queryDO, serviceFetch } from "./helpers";
@@ -235,6 +237,46 @@ describe("PR lifecycle tracking on /internal/github-event", () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ ok: boolean }>();
     expect(body.ok).toBe(true);
+  });
+
+  it("admits a submitted review for the original session without forwarding an automation", async () => {
+    const sessionName = `review-followup-${Date.now()}`;
+    await createIndexedSession(sessionName);
+    await new SessionPullRequestStore(env.DB).upsert(makeRecord(sessionName));
+    await new IntegrationSettingsStore(env.DB).setGlobal("github", {
+      defaults: { autoAddressReviewFeedback: true },
+    });
+
+    const response = await postGitHubEvent({
+      source: "github",
+      eventType: "pull_request_review.submitted",
+      triggerKey: "pr_review:8080",
+      concurrencyKey: "pr:7",
+      contextBlock: "",
+      actor: "review-agent[bot]",
+      meta: { reviewId: 8080, reviewState: "commented", isBotActor: false },
+      repoOwner: "acme",
+      repoName: "web-app",
+      branch: `open-inspect/${sessionName}`,
+      targetBranch: "main",
+      pullRequest: {
+        number: 7,
+        state: "open",
+        draft: false,
+        merged: false,
+        headSha: "abc123",
+        isCrossRepository: false,
+        url: "https://github.com/acme/web-app/pull/7",
+        repositoryExternalId: "12345",
+        providerUpdatedAt: 5000,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, triggered: 0, skipped: 0 });
+    expect(
+      await new GitHubReviewFollowupStore(env.DB).listPendingReviewIds("artifact-pr-1")
+    ).toEqual([8080]);
   });
 });
 

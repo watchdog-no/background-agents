@@ -46,6 +46,15 @@ describe("ParticipantRepository", () => {
     expect(repository.getParticipantById("unknown")).toBeNull();
   });
 
+  it("gets the session owner", () => {
+    const owner = { id: "p-owner", user_id: "linear:usr_9", role: "owner" };
+    mock.setRows(`SELECT * FROM participants WHERE role = 'owner' ORDER BY joined_at LIMIT 1`, [
+      owner,
+    ]);
+
+    expect(repository.getOwnerParticipant()).toEqual(owner);
+  });
+
   it("creates a participant with all fields", () => {
     repository.createParticipant({
       id: "p-1",

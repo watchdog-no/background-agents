@@ -1,12 +1,14 @@
 # GitHub Bot
 
 A stateless Cloudflare Worker that translates GitHub webhook events into Open-Inspect coding agent
-sessions. It provides two capabilities:
+sessions. It provides three capabilities:
 
 1. **Code Review** — Review newly opened PRs when auto-review is enabled and submit structured
    feedback.
 2. **Comment-Triggered Actions** — @mention the bot in a PR comment; it reads the PR context and
    responds with analysis, a summary comment, or a review-thread reply.
+3. **Review Follow-up** — Forward submitted reviews so the control plane can resume the session that
+   created the PR when automatic feedback handling is enabled.
 
 For day-to-day usage, see the user-facing
 [GitHub integration guide](../../docs/integrations/GITHUB.md).
@@ -49,8 +51,8 @@ Key design decisions:
 - **Unidirectional service binding**: The bot calls the control plane to create sessions and send
   prompts. There is no reverse binding — the agent posts results to GitHub directly from the
   sandbox.
-- **No session reuse**: Every non-duplicate webhook delivery creates a fresh session. Delivery
-  dedupe is handled separately in KV using `X-GitHub-Delivery`.
+- **Explicit session reuse**: Auto-review and `@mention` handlers create fresh sessions. Submitted
+  review feedback is the exception: the control plane resumes the session that owns the PR.
 - **No PR context fetching**: The bot only uses metadata already in the webhook payload. The agent
   gathers additional context (diffs, prior comments, file contents) itself using `gh` CLI.
 
@@ -91,7 +93,8 @@ required `Pull requests: Read & write` permission authorizes those label operati
 [GitHub App setup](../../docs/GETTING_STARTED.md#step-3-create-github-app) for the complete
 permission list.
 
-**Event subscriptions**: `Pull request`, `Issue comment`, `Pull request review comment`
+**Event subscriptions**: `Pull request`, `Issue comment`, `Pull request review`,
+`Pull request review comment`
 
 **Webhook URL**: `https://open-inspect-github-bot-{suffix}.{account}.workers.dev/webhooks/github`
 
@@ -119,6 +122,7 @@ access model and can authenticate auxiliary private repos on the configured SCM 
 | `pull_request`                | `opened`           | Non-draft PR opened         | `handlePullRequestOpened` |
 | `pull_request`                | `review_requested` | Compatibility event path    | `handleReviewRequested`   |
 | `issue_comment`               | `created`          | @mention in a PR comment    | `handleIssueComment`      |
+| `pull_request_review`         | `submitted`        | Feedback on an agent PR     | Control-plane follow-up   |
 | `pull_request_review_comment` | `created`          | @mention in a review thread | `handleReviewComment`     |
 
 All events are processed asynchronously via `executionCtx.waitUntil()`. The webhook endpoint returns
@@ -155,6 +159,11 @@ people to request the GitHub App bot through the PR reviewer picker.
 
 **Review Comment:** Same as issue comment, but the prompt additionally includes `filePath`,
 `diffHunk`, and `commentId` for thread-specific context and reply threading.
+
+**Review Submitted:** The bot normalizes and forwards this internal event without starting a new
+session or exposing it as a user-created automation trigger. The control plane applies the
+integration setting, agent-PR ownership, lifecycle, and debounce gates before enqueueing one
+follow-up turn into the original session.
 
 ### Session Target
 

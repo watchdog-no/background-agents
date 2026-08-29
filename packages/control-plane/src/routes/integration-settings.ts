@@ -21,6 +21,7 @@ import {
   supportsEnvironmentSettings,
 } from "../db/integration-settings";
 import { EnvironmentStore } from "../db/environments";
+import { GitHubReviewFollowupStore } from "../db/github-review-followups";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
 import { createLogger } from "../logger";
@@ -37,6 +38,45 @@ import {
 } from "./shared";
 
 const logger = createLogger("router:integration-settings");
+
+async function cancelIneligibleGitHubReviewFollowups(
+  settingsStore: IntegrationSettingsStore,
+  db: SqlDatabase
+): Promise<number> {
+  const followups = new GitHubReviewFollowupStore(db);
+  const pending = await followups.listPendingTargets();
+  let canceled = 0;
+
+  for (const target of pending) {
+    const repo = `${target.repoOwner}/${target.repoName}`;
+    const config = await settingsStore.getResolvedConfig("github", repo);
+    const repoEnabled =
+      config.enabledRepos === null || config.enabledRepos.includes(repo.toLowerCase());
+    if (config.settings.autoAddressReviewFeedback === true && repoEnabled) continue;
+
+    await followups.delete(target.artifactId, target.generation);
+    canceled += 1;
+  }
+
+  return canceled;
+}
+
+async function reconcileGitHubReviewFollowups(
+  integrationId: IntegrationId,
+  settingsStore: IntegrationSettingsStore,
+  ctx: RequestContext
+): Promise<void> {
+  if (integrationId !== "github") return;
+  const canceled = await cancelIneligibleGitHubReviewFollowups(settingsStore, ctx.db);
+  if (canceled > 0) {
+    logger.info("github_review_followup.pending_canceled", {
+      event: "github_review_followup.pending_canceled",
+      canceled,
+      request_id: ctx.request_id,
+      trace_id: ctx.trace_id,
+    });
+  }
+}
 
 function extractIntegrationId(match: RegExpMatchArray): IntegrationId | null {
   const id = match.groups?.id;
@@ -112,6 +152,7 @@ async function handleSetIntegrationSettings(
 
   try {
     await store.setGlobal(id, body.settings);
+    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_settings.updated", {
       event: "integration_settings.updated",
@@ -147,6 +188,7 @@ async function handleDeleteIntegrationSettings(
 
   try {
     await store.deleteGlobal(id);
+    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_settings.deleted", {
       event: "integration_settings.deleted",
@@ -225,6 +267,7 @@ async function handleSetRepoSettings(
 
   try {
     await store.setRepoSettings(id, repo, body.settings);
+    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_repo_settings.updated", {
       event: "integration_repo_settings.updated",
@@ -266,6 +309,7 @@ async function handleDeleteRepoSettings(
 
   try {
     await store.deleteRepoSettings(id, repo);
+    await reconcileGitHubReviewFollowups(id, store, ctx);
 
     logger.info("integration_repo_settings.deleted", {
       event: "integration_repo_settings.deleted",
@@ -407,6 +451,7 @@ async function handleGetResolvedConfig(
         model: githubSettings.model ?? null,
         reasoningEffort,
         autoReviewOnOpen: githubSettings.autoReviewOnOpen ?? true,
+        autoAddressReviewFeedback: githubSettings.autoAddressReviewFeedback ?? false,
         enabledRepos,
         allowedTriggerUsers: githubSettings.allowedTriggerUsers ?? null,
         codeReviewInstructions: githubSettings.codeReviewInstructions ?? null,

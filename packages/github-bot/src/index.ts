@@ -208,7 +208,14 @@ async function handleWebhook(
     if (normalizedEvent !== null) {
       try {
         const url = "https://internal/internal/github-event";
-        const body = JSON.stringify(normalizedEvent);
+        const body = JSON.stringify({
+          ...normalizedEvent,
+          meta: {
+            ...normalizedEvent.meta,
+            isBotActor:
+              normalizedEvent.actor?.toLowerCase() === env.GITHUB_BOT_USERNAME.toLowerCase(),
+          },
+        });
         const response = await signedControlPlaneFetch(env, { method: "POST", url, body, traceId });
         if (!response.ok) {
           log.warn("webhook.github_event_forward_failed", {

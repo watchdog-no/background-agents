@@ -19,6 +19,11 @@ import { SessionIndexStore } from "./db/session-index";
 import type { SqlDatabase } from "./db/sql-database";
 import { createCloudflareBackgroundTasks } from "./cloudflare/background-tasks";
 import { Scheduler } from "./scheduler/scheduler";
+import { GitHubReviewFollowupStore } from "./db/github-review-followups";
+import { IntegrationSettingsStore } from "./db/integration-settings";
+import { SessionInternalPaths } from "./session/contracts";
+import { createSessionRuntimeClient } from "./session/runtime-client";
+import { GitHubReviewFollowupSweep } from "./webhooks/github-review-followup";
 
 const logger = createLogger("worker");
 
@@ -71,10 +76,29 @@ export default {
       logger.warn("Unknown scheduled trigger", { cron: event.cron });
       return;
     }
-    // The tick runs both the recovery sweep (orphaned/timed-out runs) and
-    // processes overdue automations.
-    // eslint-disable-next-line no-restricted-syntax -- scheduled composition root: construct the scheduler's database dependency
-    await new Scheduler(env.DB, env, createCloudflareBackgroundTasks(ctx)).tick();
+    // The tick runs both the recovery sweep (orphaned/timed-out runs),
+    // overdue automations, and debounced GitHub review follow-ups.
+    const requestId = crypto.randomUUID();
+    const requestContext = { request_id: requestId, trace_id: requestId };
+    // eslint-disable-next-line no-restricted-syntax -- scheduled composition root: the one minute-cron env.DB read
+    const db: SqlDatabase = env.DB;
+    const runtime = createSessionRuntimeClient(env, requestContext);
+    const settings = new IntegrationSettingsStore(db);
+    await Promise.all([
+      new Scheduler(db, env, createCloudflareBackgroundTasks(ctx)).tick(),
+      new GitHubReviewFollowupSweep({
+        store: new GitHubReviewFollowupStore(db),
+        settings: { resolve: (repo) => settings.getResolvedConfig("github", repo) },
+        enqueue: (sessionId, prompt) =>
+          runtime.fetch(sessionId, SessionInternalPaths.prompt, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(prompt),
+          }),
+        log: logger,
+        now: () => Date.now(),
+      }).run(),
+    ]);
   },
 
   queue: consumeImageBuildFinalizations,

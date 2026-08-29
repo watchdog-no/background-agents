@@ -407,6 +407,79 @@ describe("POST /webhooks/github", () => {
     });
   });
 
+  it("forwards submitted reviews and marks the GitHub App bot's own reviews", async () => {
+    const body = JSON.stringify({
+      action: "submitted",
+      repository: { id: 99, owner: { login: "test" }, name: "repo" },
+      sender: { login: "test-bot[bot]" },
+      review: {
+        id: 77,
+        body: "Please address this edge case.",
+        state: "commented",
+        commit_id: "abc123",
+        submitted_at: "2026-08-28T12:00:00Z",
+        user: { login: "test-bot[bot]" },
+      },
+      pull_request: {
+        number: 42,
+        title: "Handle review feedback",
+        body: null,
+        state: "open",
+        draft: false,
+        merged: false,
+        html_url: "https://github.com/test/repo/pull/42",
+        created_at: "2026-08-28T10:00:00Z",
+        updated_at: "2026-08-28T12:00:00Z",
+        merged_at: null,
+        closed_at: null,
+        user: { login: "alice" },
+        labels: [],
+        head: { ref: "feature/reviews", sha: "abc123", repo: { id: 99 } },
+        base: { ref: "main", repo: { id: 99 } },
+      },
+    });
+    const signature = await sign(SECRET, body);
+    const ctx = makeCtx();
+    const env = makeEnv();
+
+    const res = await app.fetch(
+      new Request("http://localhost/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "X-Hub-Signature-256": signature,
+          "X-GitHub-Event": "pull_request_review",
+          "X-GitHub-Delivery": "delivery-review-submitted",
+        },
+      }),
+      env,
+      ctx
+    );
+
+    expect(res.status).toBe(200);
+    await flushWaitUntil(ctx);
+
+    const controlPlaneFetch = (env.CONTROL_PLANE as unknown as { fetch: ReturnType<typeof vi.fn> })
+      .fetch;
+    expect(controlPlaneFetch).toHaveBeenCalledOnce();
+    const [url, init] = controlPlaneFetch.mock.calls[0];
+    expect(url).toBe("https://internal/internal/github-event");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      eventType: "pull_request_review.submitted",
+      actor: "test-bot[bot]",
+      pullRequest: {
+        number: 42,
+        state: "open",
+        repositoryExternalId: "99",
+      },
+      meta: {
+        reviewId: 77,
+        reviewState: "commented",
+        isBotActor: true,
+      },
+    });
+  });
+
   it.each(["reopened", "converted_to_draft", "ready_for_review"])(
     "forwards lifecycle-only pull_request action %s",
     async (action) => {

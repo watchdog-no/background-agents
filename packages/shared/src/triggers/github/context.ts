@@ -13,6 +13,7 @@ import type {
   IssuesPayload,
   PullRequestPayload,
   PullRequestReviewCommentPayload,
+  PullRequestReviewPayload,
 } from "./webhook-types";
 
 const GITHUB_CONTEXT_CONSTANTS = {
@@ -163,6 +164,32 @@ export function buildReviewCommentContextBlock(payload: PullRequestReviewComment
     lines.push("");
     lines.push("Diff context:");
     lines.push(truncatedHunk);
+  }
+
+  return wrapGitHubEventContext(lines.join("\n"));
+}
+
+export function buildPullRequestReviewContextBlock(payload: PullRequestReviewPayload): string {
+  const pr = payload.pull_request;
+  const review = payload.review;
+  const repoFullName = getRepoFullName(payload);
+  const reviewer = review.user?.login ?? payload.sender?.login;
+  const body = review.body ?? undefined;
+  const bodyPreview = body ? body.slice(0, BODY_PREVIEW_MAX) : undefined;
+
+  const lines: string[] = [
+    GITHUB_EVENT_PREAMBLE,
+    "",
+    "Event: pull_request_review.submitted",
+    `Repository: ${repoFullName}`,
+    `PR #${pr.number}: ${pr.title ?? "(no title)"}`,
+    `Reviewer: ${reviewer ?? "unknown"}`,
+    `Review state: ${review.state}`,
+  ];
+
+  if (bodyPreview) {
+    lines.push("", "Review:", bodyPreview);
+    if (body && body.length > BODY_PREVIEW_MAX) lines.push("(truncated)");
   }
 
   return wrapGitHubEventContext(lines.join("\n"));

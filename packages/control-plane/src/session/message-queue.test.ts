@@ -156,6 +156,8 @@ function buildQueue(options?: { session?: SessionRow }) {
     updateMessageToProcessing: vi.fn(),
     updateMessageToPending: vi.fn(),
     getParticipantById: vi.fn(() => createParticipant()),
+    getParticipantByCanonicalUserId: vi.fn(() => null as ParticipantRow | null),
+    getOwnerParticipant: vi.fn(() => null as ParticipantRow | null),
     getSession: vi.fn(() => options?.session ?? createSession()),
     updateParticipantCoalesce: vi.fn(),
     recordMessageCompletion: vi.fn((event: { messageId: string }, completedAt: number) => ({
@@ -656,7 +658,7 @@ describe("SessionMessageQueue", () => {
   it("materializes the user_message at processing start", async () => {
     const h = buildQueue();
     const sandboxWs = { readyState: 1 } as WebSocket;
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage());
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ source: "github-review" }));
     h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
 
     await h.queue.processMessageQueue();
@@ -668,6 +670,7 @@ describe("SessionMessageQueue", () => {
         type: "user_message",
         messageId: "msg-1",
         content: "hello",
+        source: "github-review",
       })
     );
     const event = h.repository.startMessageProcessing.mock.calls[0][2];
@@ -1357,6 +1360,76 @@ describe("SessionMessageQueue", () => {
       });
 
       expect(h.participantService.create).toHaveBeenCalledWith("github:1001", "github:1001");
+    });
+
+    it("reuses the original participant by canonical user id", async () => {
+      const h = buildQueue();
+      const owner = createParticipant({
+        id: "part-owner",
+        user_id: "owner-session-user",
+        canonical_user_id: "user-1",
+      });
+      h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
+      h.repository.getParticipantByCanonicalUserId.mockReturnValue(owner);
+      h.repository.getParticipantById.mockReturnValue(owner);
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "user-1",
+        canonicalUserId: "user-1",
+        source: "github",
+      });
+
+      expect(h.repository.getParticipantByCanonicalUserId).toHaveBeenCalledWith("user-1");
+      expect(h.participantService.create).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ authorId: "part-owner", source: "github" }),
+        []
+      );
+    });
+
+    it("reuses the session owner for a GitHub review follow-up without a canonical user", async () => {
+      const h = buildQueue();
+      const owner = createParticipant({
+        id: "part-owner",
+        user_id: "linear:usr_9",
+        role: "owner",
+        scm_access_token_encrypted: "encrypted-token",
+      });
+      h.participantService.getByUserId.mockReturnValue(null as unknown as ParticipantRow);
+      h.repository.getOwnerParticipant.mockReturnValue(owner);
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "github-review-followup",
+        source: "github-review",
+      });
+
+      expect(h.repository.getOwnerParticipant).toHaveBeenCalledOnce();
+      expect(h.participantService.create).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ authorId: "part-owner", source: "github-review" }),
+        []
+      );
+    });
+
+    it("persists an API client request id for idempotent retries", async () => {
+      const h = buildQueue();
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Address review feedback",
+        authorId: "user-1",
+        source: "github",
+        clientRequestId: "github-review:artifact-1:3",
+      });
+
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientRequestId: "github-review:artifact-1:3",
+          requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        }),
+        []
+      );
     });
 
     it("updates stored SCM identity and tokens after successful enrichment", async () => {
