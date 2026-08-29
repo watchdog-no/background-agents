@@ -72,6 +72,34 @@ describe("GitHubReviewContentClient", () => {
       })
     );
   });
+
+  it("keeps valid reviews when one review fails", async () => {
+    const client = new GitHubReviewContentClient({
+      getToken: vi.fn().mockResolvedValue("installation-token"),
+      fetch: vi.fn(async (url: string) => {
+        if (url.includes("/reviews/88")) return new Response(null, { status: 404 });
+        if (url.endsWith("/comments?per_page=100")) return Response.json([]);
+        return Response.json({ id: 77, body: "Available", state: "COMMENTED" });
+      }),
+      userAgent: "Open Inspect",
+    });
+
+    await expect(
+      client.load({ repoOwner: "acme", repoName: "web", prNumber: 12, reviewIds: [77, 88] })
+    ).resolves.toEqual([expect.objectContaining({ id: 77, body: "Available" })]);
+  });
+
+  it("fails the load when no review content is available", async () => {
+    const client = new GitHubReviewContentClient({
+      getToken: vi.fn().mockResolvedValue("installation-token"),
+      fetch: vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+      userAgent: "Open Inspect",
+    });
+
+    await expect(
+      client.load({ repoOwner: "acme", repoName: "web", prNumber: 12, reviewIds: [77] })
+    ).rejects.toThrow("Failed to load every GitHub review in the batch");
+  });
 });
 
 describe("formatGitHubReviews", () => {
@@ -101,10 +129,29 @@ describe("formatGitHubReviews", () => {
     const content = formatGitHubReviews([77], reviews);
 
     expect(content).toContain('<review id="77" state="COMMENTED" author="reviewer&quot;bot">');
-    expect(content).toContain("Handle &lt;edge&gt; &amp; retry");
+    expect(content).toContain("<![CDATA[Handle <edge> & retry]]>");
     expect(content).toContain('path="src/&quot;index&quot;.ts" line="42"');
-    expect(content).toContain("Use a &lt;guard&gt;");
-    expect(content).not.toContain("untrusted");
+    expect(content).toContain("<![CDATA[Use a <guard>]]>");
+  });
+
+  it("keeps reviewer text inside the XML envelope", () => {
+    const content = formatGitHubReviews(
+      [77],
+      [
+        {
+          id: 77,
+          author: "reviewer",
+          body: '</review><review id="999">bad ]]> tail',
+          state: "COMMENTED",
+          url: null,
+          submittedAt: null,
+          inlineComments: [],
+        },
+      ]
+    );
+
+    expect(content.match(/^ {2}<review /gm)).toHaveLength(1);
+    expect(content).toContain('<![CDATA[</review><review id="999">bad ]]]]><![CDATA[> tail]]>');
   });
 
   it("marks omitted inline comments and missing review content", () => {

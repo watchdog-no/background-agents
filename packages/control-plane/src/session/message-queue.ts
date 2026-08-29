@@ -715,14 +715,14 @@ export class SessionMessageQueue {
     const existing = this.messageRepository.getUnfinishedMessageByCoalescingKey(data.coalescingKey);
     if (!existing) return null;
     if (existing.author_id !== participant.id) throw new PromptRequestConflictError();
-    if (existing.status === "processing" || !data.pendingAppendContent) {
-      throw new PromptCoalescingBusyError();
-    }
+    // A matching processing prompt keeps running. Queue a fresh prompt behind
+    // it; subsequent review batches will coalesce into that pending prompt.
+    if (existing.status === "processing" || !data.pendingAppendContent) return null;
 
     const content = `${existing.content}\n\n${data.pendingAppendContent}`;
-    if (content.length > MAX_WEB_PROMPT_CHARS) {
-      throw new PromptCoalescingBusyError();
-    }
+    // Preserve both batches by starting a new queued prompt when the existing
+    // one has reached the prompt-size limit.
+    if (content.length > MAX_WEB_PROMPT_CHARS) return null;
     const updated = this.messageRepository.updatePendingCoalescedMessage({
       messageId: existing.id,
       content,

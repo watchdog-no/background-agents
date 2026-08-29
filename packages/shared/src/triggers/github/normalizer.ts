@@ -283,6 +283,10 @@ function normalizePullRequestReview(
     targetBranch,
     actor: review.user?.login ?? getActor(payload),
     pullRequest: getPullRequestFacts(pr),
+    review: {
+      id: review.id,
+      state: review.state,
+    },
     contextBlock: buildPullRequestReviewContextBlock(payload),
     meta: {
       reviewId: review.id,

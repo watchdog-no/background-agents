@@ -79,9 +79,8 @@ GitHub before acting so it sees the current thread state. Submitted reviews are 
 workflow and do not also fire user-created automations.
 
 Review feedback never interrupts a running turn. New feedback is merged into a matching follow-up
-that is still queued; if a matching follow-up is already running, the new batch remains durable and
-is retried after that turn completes. Temporary session queue pressure is retried rather than
-discarded.
+that is still queued; if a matching follow-up is already running, the new batch is queued behind it.
+Temporary session queue pressure is retried rather than discarded.
 
 Before dispatch, Open-Inspect rechecks that the setting is enabled, the repository remains in scope,
 the PR is open, and the original session can accept another prompt. Approved and dismissed reviews,
@@ -95,6 +94,10 @@ debounce window; work already delivered to a session continues.
 
 Ordinary PR comments and individual inline comments still require an `@mention`; they do not trigger
 this workflow by themselves.
+
+GitHub Apps installed before this event was enabled must be updated to subscribe to the
+`pull_request_review` webhook. Without that subscription, GitHub does not send submitted reviews to
+Open-Inspect and automatic follow-up cannot run.
 
 ---
 

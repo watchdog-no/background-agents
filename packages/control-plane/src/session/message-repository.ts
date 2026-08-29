@@ -139,7 +139,7 @@ export class MessageRepository {
     const result = this.sql.exec(
       `SELECT * FROM messages
        WHERE coalescing_key = ? AND status IN ('processing', 'pending')
-       ORDER BY CASE status WHEN 'processing' THEN 0 ELSE 1 END, created_at, rowid
+       ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC, rowid DESC
        LIMIT 1`,
       coalescingKey
     );
@@ -155,14 +155,14 @@ export class MessageRepository {
     const result = this.sql.exec(
       `UPDATE messages
        SET content = ?, client_request_id = ?, request_fingerprint = ?
-       WHERE id = ? AND status = 'pending'`,
+       WHERE id = ? AND status = 'pending'
+       RETURNING id`,
       data.content,
       data.clientRequestId,
       data.requestFingerprint,
       data.messageId
     );
-    result.toArray();
-    return result.rowsWritten === 1;
+    return this.rows<{ id: string }>(result).length === 1;
   }
 
   getUnfinishedMessagePosition(messageId: string): number | null {

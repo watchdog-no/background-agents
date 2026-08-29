@@ -22,6 +22,7 @@ import {
 } from "../db/integration-settings";
 import { EnvironmentStore } from "../db/environments";
 import { GitHubReviewFollowupStore } from "../db/github-review-followups";
+import { isGitHubReviewFollowupRepoEnabled } from "../webhooks/github-review-followup";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
 import { createLogger } from "../logger";
@@ -44,18 +45,41 @@ async function cancelIneligibleGitHubReviewFollowups(
   db: SqlDatabase
 ): Promise<number> {
   const followups = new GitHubReviewFollowupStore(db);
-  const pending = await followups.listPendingTargets();
+  const [pending, globalSettings, repoSettings] = await Promise.all([
+    followups.listPendingTargets(),
+    settingsStore.getGlobal("github"),
+    settingsStore.listRepoSettings("github"),
+  ]);
   let canceled = 0;
+  const targetsByRepo = new Map<string, typeof pending>();
+  const overridesByRepo = new Map(repoSettings.map((entry) => [entry.repo, entry.settings]));
+  const enabledRepos = globalSettings?.enabledRepos ?? null;
+  const defaults = globalSettings?.defaults ?? {};
 
   for (const target of pending) {
     const repo = `${target.repoOwner}/${target.repoName}`;
-    const config = await settingsStore.getResolvedConfig("github", repo);
-    const repoEnabled =
-      config.enabledRepos === null || config.enabledRepos.includes(repo.toLowerCase());
-    if (config.settings.autoAddressReviewFeedback === true && repoEnabled) continue;
+    const targets = targetsByRepo.get(repo) ?? [];
+    targets.push(target);
+    targetsByRepo.set(repo, targets);
+  }
 
-    await followups.delete(target.artifactId, target.generation);
-    canceled += 1;
+  for (const [repo, targets] of targetsByRepo) {
+    const settings: GitHubBotSettings = {
+      ...defaults,
+      ...(overridesByRepo.get(repo.toLowerCase()) ?? {}),
+    };
+    const config = { enabledRepos, settings };
+    if (
+      config.settings.autoAddressReviewFeedback === true &&
+      isGitHubReviewFollowupRepoEnabled(config, repo)
+    ) {
+      continue;
+    }
+
+    for (const target of targets) {
+      await followups.delete(target.artifactId, target.generation);
+      canceled += 1;
+    }
   }
 
   return canceled;
@@ -67,11 +91,21 @@ async function reconcileGitHubReviewFollowups(
   ctx: RequestContext
 ): Promise<void> {
   if (integrationId !== "github") return;
-  const canceled = await cancelIneligibleGitHubReviewFollowups(settingsStore, ctx.db);
-  if (canceled > 0) {
-    logger.info("github_review_followup.pending_canceled", {
-      event: "github_review_followup.pending_canceled",
-      canceled,
+  try {
+    const canceled = await cancelIneligibleGitHubReviewFollowups(settingsStore, ctx.db);
+    if (canceled > 0) {
+      logger.info("github_review_followup.pending_canceled", {
+        event: "github_review_followup.pending_canceled",
+        canceled,
+        request_id: ctx.request_id,
+        trace_id: ctx.trace_id,
+      });
+    }
+  } catch (reconcileError) {
+    // The settings write has already committed. Reconciliation is best-effort
+    // cleanup and must not report a successful save as failed.
+    logger.error("github_review_followup.reconcile_failed", {
+      error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });

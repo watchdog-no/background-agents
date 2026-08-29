@@ -14,7 +14,16 @@ export const REVIEW_FOLLOWUP_QUIET_PERIOD_MS = 2 * 60 * 1_000;
 export const REVIEW_FOLLOWUP_MAX_WAIT_MS = 10 * 60 * 1_000;
 export const REVIEW_FOLLOWUP_SWEEP_LIMIT = 25;
 const REVIEW_FOLLOWUP_MAX_ATTEMPTS = 8;
-const REVIEW_FOLLOWUP_RETRY_MINUTES = [1, 2, 4, 8, 15, 15, 15, 15] as const;
+const REVIEW_FOLLOWUP_RETRY_DELAYS_MS = [
+  60_000,
+  2 * 60_000,
+  4 * 60_000,
+  8 * 60_000,
+  15 * 60_000,
+  15 * 60_000,
+  15 * 60_000,
+] as const;
+const REVIEW_FOLLOWUP_QUEUE_RETRY_DELAY_MS = 60_000;
 const ACTIONABLE_REVIEW_STATES = new Set(["commented", "changes_requested"]);
 
 interface ResolvedGitHubSettings {
@@ -73,7 +82,10 @@ export type GitHubReviewFollowupAdmissionOutcome =
   | "session_not_promptable"
   | "queued";
 
-function isRepoEnabled(config: ResolvedGitHubSettings, repo: string): boolean {
+export function isGitHubReviewFollowupRepoEnabled(
+  config: ResolvedGitHubSettings,
+  repo: string
+): boolean {
   return (
     config.enabledRepos === null ||
     config.enabledRepos.some((enabled) => enabled.toLowerCase() === repo.toLowerCase())
@@ -86,8 +98,8 @@ export async function admitGitHubReviewFollowup(
 ): Promise<GitHubReviewFollowupAdmissionOutcome> {
   if (event.eventType !== "pull_request_review.submitted") return "not_review";
 
-  const reviewId = event.meta.reviewId;
-  const reviewState = event.meta.reviewState;
+  const reviewId = event.review?.id;
+  const reviewState = event.review?.state;
   if (
     typeof reviewId !== "number" ||
     !Number.isInteger(reviewId) ||
@@ -97,7 +109,8 @@ export async function admitGitHubReviewFollowup(
   ) {
     return "review_state_ignored";
   }
-  if (event.meta.isBotActor === true) return "bot_authored";
+  // Fail closed across independently deployed github-bot/control-plane versions.
+  if (event.review?.isBotActor !== false) return "bot_authored";
 
   const facts = event.pullRequest;
   if (
@@ -112,7 +125,7 @@ export async function admitGitHubReviewFollowup(
   const repo = `${event.repoOwner}/${event.repoName}`;
   const config = await deps.settings.resolve(repo);
   if (config.settings.autoAddressReviewFeedback !== true) return "setting_disabled";
-  if (!isRepoEnabled(config, repo)) return "repo_not_enabled";
+  if (!isGitHubReviewFollowupRepoEnabled(config, repo)) return "repo_not_enabled";
 
   const record = await deps.pullRequests.getByIdentity({
     repositoryExternalId: facts.repositoryExternalId,
@@ -180,6 +193,15 @@ export function buildGitHubReviewFollowupAppend(
 ${formatGitHubReviews(reviewIds, reviews)}`;
 }
 
+export function buildGitHubReviewFollowupRequestId(
+  artifactId: string,
+  reviewIds: number[]
+): string {
+  // GitHub review IDs are unique. The highest ID is stable for retries of one
+  // batch and cannot be reused after that review has been marked dispatched.
+  return `github-review:${artifactId}:${Math.max(...reviewIds)}`;
+}
+
 interface ReviewFollowupSweepStore {
   listDue(now: number, limit: number): Promise<DueGitHubReviewFollowup[]>;
   listPendingReviewIds(artifactId: string): Promise<number[]>;
@@ -197,6 +219,12 @@ interface ReviewFollowupSweepStore {
     now: number;
   }): Promise<void>;
   delete(artifactId: string, generation: number): Promise<void>;
+  abandon(params: {
+    artifactId: string;
+    generation: number;
+    reason: string;
+    now: number;
+  }): Promise<void>;
 }
 
 export interface GitHubReviewFollowupSweepDeps {
@@ -214,7 +242,28 @@ export class GitHubReviewFollowupSweep {
   async run(): Promise<void> {
     const now = this.deps.now();
     const due = await this.deps.store.listDue(now, REVIEW_FOLLOWUP_SWEEP_LIMIT);
-    for (const row of due) await this.dispatch(row, now);
+    for (const row of due) {
+      try {
+        await this.dispatch(row, now);
+      } catch (error) {
+        this.deps.log.error("github_review_followup.dispatch_failed", {
+          artifact_id: row.artifactId,
+          session_id: row.sessionId,
+          pr_number: row.prNumber,
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+        try {
+          await this.retry(row, now, undefined, error);
+        } catch (retryError) {
+          this.deps.log.error("github_review_followup.retry_persist_failed", {
+            artifact_id: row.artifactId,
+            session_id: row.sessionId,
+            pr_number: row.prNumber,
+            error: retryError instanceof Error ? retryError : new Error(String(retryError)),
+          });
+        }
+      }
+    }
   }
 
   private async dispatch(row: DueGitHubReviewFollowup, now: number): Promise<void> {
@@ -222,7 +271,7 @@ export class GitHubReviewFollowupSweep {
     const config = await this.deps.settings.resolve(repo);
     if (
       config.settings.autoAddressReviewFeedback !== true ||
-      !isRepoEnabled(config, repo) ||
+      !isGitHubReviewFollowupRepoEnabled(config, repo) ||
       row.lifecycleState !== "open" ||
       !isSessionPromptable(row.sessionStatus)
     ) {
@@ -259,6 +308,8 @@ export class GitHubReviewFollowupSweep {
         pr_number: row.prNumber,
         error: error instanceof Error ? error : new Error(String(error)),
       });
+      await this.retry(row, now, undefined, error);
+      return;
     }
 
     const prompt: EnqueuePromptRequest = {
@@ -266,7 +317,7 @@ export class GitHubReviewFollowupSweep {
       authorId: row.sessionUserId ?? "github-review-followup",
       canonicalUserId: row.sessionUserId,
       source: "github-review",
-      clientRequestId: `github-review:${row.artifactId}:${row.generation}`,
+      clientRequestId: buildGitHubReviewFollowupRequestId(row.artifactId, reviewIds),
       coalescingKey: `github-review:${row.artifactId}`,
       pendingAppendContent: buildGitHubReviewFollowupAppend(reviewIds, reviews),
     };
@@ -302,7 +353,12 @@ export class GitHubReviewFollowupSweep {
     }
 
     if (response.status === 409 || response.status === 404 || response.status === 400) {
-      await this.deps.store.delete(row.artifactId, row.generation);
+      await this.deps.store.abandon({
+        artifactId: row.artifactId,
+        generation: row.generation,
+        reason: `enqueue_http_${response.status}`,
+        now,
+      });
       this.deps.log.warn("github_review_followup.abandoned", {
         artifact_id: row.artifactId,
         session_id: row.sessionId,
@@ -325,7 +381,7 @@ export class GitHubReviewFollowupSweep {
       artifactId: row.artifactId,
       generation: row.generation,
       attemptCount: row.attemptCount,
-      dueAt: now + 60_000,
+      dueAt: now + REVIEW_FOLLOWUP_QUEUE_RETRY_DELAY_MS,
       now,
     });
     this.deps.log.info("github_review_followup.queue_deferred", {
@@ -344,7 +400,12 @@ export class GitHubReviewFollowupSweep {
   ): Promise<void> {
     const attemptCount = row.attemptCount + 1;
     if (attemptCount >= REVIEW_FOLLOWUP_MAX_ATTEMPTS) {
-      await this.deps.store.delete(row.artifactId, row.generation);
+      await this.deps.store.abandon({
+        artifactId: row.artifactId,
+        generation: row.generation,
+        reason: "retry_exhausted",
+        now,
+      });
       this.deps.log.error("github_review_followup.abandoned", {
         artifact_id: row.artifactId,
         session_id: row.sessionId,
@@ -358,12 +419,13 @@ export class GitHubReviewFollowupSweep {
       return;
     }
 
-    const retryMinutes = REVIEW_FOLLOWUP_RETRY_MINUTES[attemptCount - 1] ?? 15;
+    const retryDelayMs = REVIEW_FOLLOWUP_RETRY_DELAYS_MS[attemptCount - 1];
+    if (retryDelayMs === undefined) return;
     await this.deps.store.retry({
       artifactId: row.artifactId,
       generation: row.generation,
       attemptCount,
-      dueAt: now + retryMinutes * 60 * 1_000,
+      dueAt: now + retryDelayMs,
       now,
     });
     this.deps.log.warn("github_review_followup.retry_scheduled", {
@@ -371,7 +433,7 @@ export class GitHubReviewFollowupSweep {
       session_id: row.sessionId,
       pr_number: row.prNumber,
       attempt: attemptCount,
-      retry_minutes: retryMinutes,
+      retry_delay_ms: retryDelayMs,
       ...(httpStatus !== undefined ? { http_status: httpStatus } : {}),
     });
   }

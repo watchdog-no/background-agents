@@ -80,6 +80,7 @@ function createMessage(overrides: Partial<MessageRow> = {}): MessageRow {
     callback_context: null,
     client_request_id: null,
     request_fingerprint: null,
+    coalescing_key: null,
     status: "pending",
     error_message: null,
     stop_confirmation_deadline: null,
@@ -1474,7 +1475,7 @@ describe("SessionMessageQueue", () => {
       expect(h.repository.updatePendingCoalescedMessage).toHaveBeenCalledOnce();
     });
 
-    it("defers a review batch while a matching prompt is processing", async () => {
+    it("queues a review batch behind a matching prompt that is processing", async () => {
       const h = buildQueue();
       h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
         createMessage({
@@ -1485,19 +1486,79 @@ describe("SessionMessageQueue", () => {
         })
       );
 
+      await h.queue.enqueuePromptFromApi({
+        content: "Second review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:88",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "Second review batch",
+          coalescingKey: "github-review:artifact-1",
+        }),
+        []
+      );
+    });
+
+    it("queues a separate review prompt when the pending one is full", async () => {
+      const h = buildQueue();
+      h.repository.getUnfinishedMessageByCoalescingKey.mockReturnValue(
+        createMessage({
+          id: "msg-review",
+          author_id: "part-1",
+          content: "x".repeat(64_000),
+          source: "github-review",
+          status: "pending",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
+      await h.queue.enqueuePromptFromApi({
+        content: "Next review batch",
+        pendingAppendContent: "Additional reviews",
+        authorId: "user-1",
+        source: "github-review",
+        clientRequestId: "github-review:artifact-1:99",
+        coalescingKey: "github-review:artifact-1",
+      });
+
+      expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
+      expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "Next review batch" }),
+        []
+      );
+    });
+
+    it("rejects a completed client request id reused with different content", async () => {
+      const h = buildQueue();
+      h.repository.getMessageByClientRequestId.mockReturnValue(
+        createMessage({
+          id: "msg-old-review",
+          author_id: "part-1",
+          content: "Old review batch",
+          source: "github-review",
+          status: "completed",
+          client_request_id: "github-review:artifact-1:77",
+          request_fingerprint: "different-fingerprint",
+          coalescing_key: "github-review:artifact-1",
+        })
+      );
+
       await expect(
         h.queue.enqueuePromptFromApi({
-          content: "Second review batch",
+          content: "New review batch",
           pendingAppendContent: "Additional reviews",
           authorId: "user-1",
           source: "github-review",
-          clientRequestId: "github-review:artifact-1:2",
+          clientRequestId: "github-review:artifact-1:77",
           coalescingKey: "github-review:artifact-1",
         })
-      ).rejects.toMatchObject({ name: "PromptCoalescingBusyError" });
-
-      expect(h.repository.updatePendingCoalescedMessage).not.toHaveBeenCalled();
-      expect(h.repository.createMessageWithAttachments).not.toHaveBeenCalled();
+      ).rejects.toMatchObject({ name: "PromptRequestConflictError" });
     });
 
     it("persists an API client request id for idempotent retries", async () => {

@@ -292,6 +292,7 @@ describe("normalizeGitHubEvent", () => {
         isCrossRepository: false,
         repositoryExternalId: "321",
       });
+      expect(event!.review).toEqual({ id: 8080, state: "commented" });
       expect(event!.meta).toMatchObject({
         reviewId: 8080,
         reviewState: "commented",

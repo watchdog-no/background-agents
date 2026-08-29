@@ -80,7 +80,19 @@ export class GitHubReviewContentClient implements GitHubReviewContentLoader {
     prNumber: number;
     reviewIds: number[];
   }): Promise<GitHubReviewContent[]> {
-    return Promise.all(params.reviewIds.map((reviewId) => this.loadReview(params, reviewId)));
+    const results = await Promise.allSettled(
+      params.reviewIds.map((reviewId) => this.loadReview(params, reviewId))
+    );
+    const reviews = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : []
+    );
+    if (reviews.length === 0 && results.length > 0) {
+      throw new AggregateError(
+        results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+        "Failed to load every GitHub review in the batch"
+      );
+    }
+    return reviews;
   }
 
   private async loadReview(
@@ -165,6 +177,12 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n[truncated; refresh GitHub for the complete text]`;
 }
 
+function wrapCdata(value: string): string {
+  // Preserve code-heavy review text while preventing reviewer content from
+  // closing the XML envelope. Splitting the CDATA terminator is valid XML.
+  return `<![CDATA[${value.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+}
+
 function formatReview(review: GitHubReviewContent): string {
   const attributes = [
     `id="${review.id}"`,
@@ -176,7 +194,7 @@ function formatReview(review: GitHubReviewContent): string {
   if (review.body?.trim()) {
     lines.push(
       "    <comment>",
-      escapeXmlText(truncate(review.body, MAX_REVIEW_BODY_CHARS)),
+      wrapCdata(truncate(review.body, MAX_REVIEW_BODY_CHARS)),
       "    </comment>"
     );
   }
@@ -191,7 +209,7 @@ function formatReview(review: GitHubReviewContent): string {
     ];
     lines.push(
       `    <inline-comment ${commentAttributes.join(" ")}>`,
-      escapeXmlText(truncate(comment.body, MAX_INLINE_COMMENT_BODY_CHARS)),
+      wrapCdata(truncate(comment.body, MAX_INLINE_COMMENT_BODY_CHARS)),
       "    </inline-comment>"
     );
   }

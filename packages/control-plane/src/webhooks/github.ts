@@ -31,29 +31,31 @@ import {
 } from "./automation-event";
 import {
   processPullRequestLifecycleEvent,
+  type PullRequestLifecycleOutcome,
   type PullRequestLifecycleDeps,
   type SessionArtifactSummary,
 } from "./pull-request-lifecycle";
 import { admitGitHubReviewFollowup } from "./github-review-followup";
 
 /**
- * Best-effort PR lifecycle tracking for one normalized event. Runs in
- * waitUntil off the request path; every failure is logged and swallowed.
+ * Best-effort PR lifecycle tracking for one normalized event. Submitted
+ * reviews await it for ownership repair; other events run it in waitUntil.
+ * Every failure is logged and swallowed.
  */
 async function trackPullRequestLifecycle(
   env: Env,
   event: GitHubAutomationEvent,
   ctx: RequestContext
-): Promise<void> {
+): Promise<PullRequestLifecycleOutcome | null> {
   const log = createLogger(
     "webhook:pr-lifecycle",
     { trace_id: ctx.trace_id, request_id: ctx.request_id },
     parseLogLevel(env.LOG_LEVEL)
   );
   try {
-    if (!env.SESSION) return;
+    if (!env.SESSION) return null;
 
-    if (!event.pullRequest) return;
+    if (!event.pullRequest) return null;
 
     const sessionRuntime = createSessionRuntimeClient(env, ctx);
     const deps: PullRequestLifecycleDeps = {
@@ -89,17 +91,24 @@ async function trackPullRequestLifecycle(
     };
 
     const outcome = await processPullRequestLifecycleEvent(deps, event);
-    log.info("pull_request_lifecycle.processed", {
+    const details = {
       outcome,
       event_type: event.eventType,
       repo_owner: event.repoOwner,
       repo_name: event.repoName,
       pr_number: event.pullRequest?.number,
-    });
+    };
+    if (outcome === "record_write_failed") {
+      log.error("pull_request_lifecycle.record_write_failed", details);
+    } else {
+      log.info("pull_request_lifecycle.processed", details);
+    }
+    return outcome;
   } catch (err) {
     log.error("pull_request_lifecycle.failed", {
       error: err instanceof Error ? err : String(err),
     });
+    return null;
   }
 }
 
@@ -139,19 +148,31 @@ async function handleGitHubAutomationEvent(
     { trace_id: ctx.trace_id, request_id: ctx.request_id },
     parseLogLevel(env.LOG_LEVEL)
   );
-  const followupOutcome = await admitGitHubReviewFollowup(
-    {
-      settings: {
-        resolve: (repo) => settings.getResolvedConfig("github", repo),
+  let followupOutcome: Awaited<ReturnType<typeof admitGitHubReviewFollowup>> = "not_review";
+  let followupAdmissionFailed = false;
+  try {
+    followupOutcome = await admitGitHubReviewFollowup(
+      {
+        settings: {
+          resolve: (repo) => settings.getResolvedConfig("github", repo),
+        },
+        followups: new GitHubReviewFollowupStore(ctx.db),
+        pullRequests: new SessionPullRequestStore(ctx.db),
+        sessions: new SessionIndexStore(ctx.db),
+        log: followupLog,
+        now: () => Date.now(),
       },
-      followups: new GitHubReviewFollowupStore(ctx.db),
-      pullRequests: new SessionPullRequestStore(ctx.db),
-      sessions: new SessionIndexStore(ctx.db),
-      log: followupLog,
-      now: () => Date.now(),
-    },
-    validated.event
-  );
+      validated.event
+    );
+  } catch (admissionError) {
+    followupAdmissionFailed = true;
+    followupLog.error("github_review_followup.admission_failed", {
+      repo_owner: validated.event.repoOwner,
+      repo_name: validated.event.repoName,
+      pr_number: validated.event.pullRequest?.number,
+      error: admissionError instanceof Error ? admissionError : new Error(String(admissionError)),
+    });
+  }
 
   if (!isSubmittedReview) {
     ctx.executionCtx.submit(() => trackPullRequestLifecycle(env, validated.event, ctx), {
@@ -169,6 +190,9 @@ async function handleGitHubAutomationEvent(
   }
 
   if (isSubmittedReview) {
+    if (followupAdmissionFailed) {
+      return error("GitHub review follow-up admission unavailable", 503);
+    }
     return json({ ok: true, triggered: 0, skipped: 0 });
   }
 

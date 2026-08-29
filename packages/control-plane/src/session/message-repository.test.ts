@@ -164,10 +164,10 @@ describe("MessageRepository", () => {
   it("finds and updates an unfinished coalesced message", () => {
     const lookup = `SELECT * FROM messages
        WHERE coalescing_key = ? AND status IN ('processing', 'pending')
-       ORDER BY CASE status WHEN 'processing' THEN 0 ELSE 1 END, created_at, rowid
+       ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC, rowid DESC
        LIMIT 1`;
     mock.setData(lookup, [{ id: "msg-1", status: "pending", coalescing_key: "review:1" }]);
-    mock.setRowsWritten(1);
+    mock.setMatchingData(/UPDATE messages[\s\S]*RETURNING id/, [{ id: "msg-1" }]);
 
     expect(repository.getUnfinishedMessageByCoalescingKey("review:1")).toMatchObject({
       id: "msg-1",
@@ -182,12 +182,24 @@ describe("MessageRepository", () => {
       })
     ).toBe(true);
     expect(mock.calls[1].query).toContain("WHERE id = ? AND status = 'pending'");
+    expect(mock.calls[1].query).toContain("RETURNING id");
     expect(mock.calls[1].params).toEqual([
       "first\n\nsecond",
       "request-2",
       "fingerprint-2",
       "msg-1",
     ]);
+  });
+
+  it("does not update a coalescing target that already left pending state", () => {
+    expect(
+      repository.updatePendingCoalescedMessage({
+        messageId: "msg-processing",
+        content: "combined",
+        clientRequestId: "request-2",
+        requestFingerprint: "fingerprint-2",
+      })
+    ).toBe(false);
   });
 
   it("atomically claims attachments and creates a message", () => {

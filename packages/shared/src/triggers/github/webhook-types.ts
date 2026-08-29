@@ -89,7 +89,6 @@ const userSchema = z.object({
 });
 
 const repositorySchema = z.object({
-  id: z.number().optional(),
   name: z.string().optional(),
   owner: userSchema.optional(),
 });

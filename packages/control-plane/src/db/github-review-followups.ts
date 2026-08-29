@@ -49,6 +49,8 @@ export class GitHubReviewFollowupStore {
     quietPeriodMs: number;
     maxWaitMs: number;
   }): Promise<void> {
+    // generation is an optimistic-concurrency token for one live debounce row:
+    // stale sweep completions cannot delete a row advanced by a newer review.
     const { artifactId, reviewId, now, quietPeriodMs, maxWaitMs } = params;
     await this.db.batch([
       this.db
@@ -72,7 +74,7 @@ export class GitHubReviewFollowupStore {
                github_review_followups.first_event_at + ?,
                excluded.latest_event_at + ?
              ),
-             attempt_count = 0,
+             attempt_count = github_review_followups.attempt_count,
              updated_at = excluded.updated_at`
         )
         .bind(artifactId, now, now, now + quietPeriodMs, now, now, maxWaitMs, quietPeriodMs),
@@ -116,7 +118,7 @@ export class GitHubReviewFollowupStore {
       .prepare(
         `SELECT review_id
          FROM github_review_followup_reviews
-         WHERE artifact_id = ? AND dispatched_at IS NULL
+         WHERE artifact_id = ? AND dispatched_at IS NULL AND abandoned_at IS NULL
          ORDER BY received_at, review_id`
       )
       .bind(artifactId)
@@ -191,6 +193,8 @@ export class GitHubReviewFollowupStore {
   }
 
   async delete(artifactId: string, generation: number): Promise<void> {
+    // D1 batch statements execute in order. The child delete is guarded by the
+    // same generation before the parent debounce row is removed.
     await this.db.batch([
       this.db
         .prepare(
@@ -209,6 +213,35 @@ export class GitHubReviewFollowupStore {
            WHERE artifact_id = ? AND generation = ?`
         )
         .bind(artifactId, generation),
+    ]);
+  }
+
+  async abandon(params: {
+    artifactId: string;
+    generation: number;
+    reason: string;
+    now: number;
+  }): Promise<void> {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE github_review_followup_reviews
+           SET abandoned_at = ?, abandon_reason = ?
+           WHERE artifact_id = ?
+             AND dispatched_at IS NULL
+             AND abandoned_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM github_review_followups
+               WHERE artifact_id = ? AND generation = ?
+             )`
+        )
+        .bind(params.now, params.reason, params.artifactId, params.artifactId, params.generation),
+      this.db
+        .prepare(
+          `DELETE FROM github_review_followups
+           WHERE artifact_id = ? AND generation = ?`
+        )
+        .bind(params.artifactId, params.generation),
     ]);
   }
 }
