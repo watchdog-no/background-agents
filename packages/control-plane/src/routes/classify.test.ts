@@ -35,9 +35,8 @@ vi.mock("../session/anthropic-token-refresh-service", () => ({
   }),
 }));
 
-import { classifyRoutes } from "./classify";
+import { handleClassify as handler } from "./classify";
 
-const handler = classifyRoutes[0].handler;
 const ctx = { trace_id: "test-trace" } as unknown as RequestContext;
 const mockFetch = vi.fn();
 

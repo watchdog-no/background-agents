@@ -502,6 +502,23 @@ class OpenCodeServer:
             "model": f"{self.provider}/{self.model}",
             "autoupdate": False,
             "permission": {"*": "allow", "doom_loop": "deny"},
+            "provider": {
+                "anthropic": {
+                    "models": {
+                        model: {
+                            "variants": {
+                                effort: {"thinking": {"type": "enabled", "budgetTokens": budget}}
+                                for effort, budget in (("high", 16_000), ("max", 31_999))
+                            }
+                        }
+                        for model in (
+                            "claude-haiku-4-5",
+                            "claude-sonnet-4-5",
+                            "claude-opus-4-5",
+                        )
+                    }
+                }
+            },
         }
 
         # Inject MCP servers

@@ -71,7 +71,7 @@ describe("buildCodeReviewPrompt", () => {
 
   it("limits self-reviews to comments", () => {
     const prompt = buildCodeReviewPrompt({ ...baseParams, isSelfReview: true });
-    expect(prompt).toContain('-f event="COMMENT"');
+    expect(prompt).toContain('"event": "COMMENT"');
     expect(prompt).toContain("GitHub does not allow pull request authors to approve their own PRs");
     expect(prompt).not.toContain("COMMENT|APPROVE|REQUEST_CHANGES");
   });

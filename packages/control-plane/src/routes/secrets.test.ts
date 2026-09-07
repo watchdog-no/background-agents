@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { secretsRoutes } from "./secrets";
+import { handleListRepoSecrets, handleListGlobalSecrets } from "./secrets";
 import type { RequestContext } from "./shared";
 import type { Env } from "../types";
 import type { SqlDatabase } from "../db/sql-database";
@@ -42,21 +42,11 @@ vi.mock("./shared", async (importOriginal) => {
   };
 });
 
-function getHandler(method: string, path: string) {
-  for (const route of secretsRoutes) {
-    if (route.method === method && route.pattern.test(path)) {
-      const match = path.match(route.pattern)!;
-      return { handler: route.handler, match };
-    }
-  }
-  throw new Error(`No route found for ${method} ${path}`);
-}
-
 function createEnv(): Env {
   return {
-    DB: {} as D1Database,
+    DB: {} as SqlDatabase,
     REPO_SECRETS_ENCRYPTION_KEY: "test-encryption-key",
-  } as Env;
+  } as unknown as Env;
 }
 
 function createCtx(): RequestContext {
@@ -66,7 +56,7 @@ function createCtx(): RequestContext {
     db: {} as SqlDatabase,
     executionCtx: TEST_BACKGROUND_TASK_CONTEXT,
     metrics: {
-      d1Queries: [],
+      sqlQueries: [],
       spans: {},
       time: async <T>(_name: string, fn: () => Promise<T>) => fn(),
       summarize: () => ({}),
@@ -75,13 +65,10 @@ function createCtx(): RequestContext {
 }
 
 async function callRoute(method: string, path: string): Promise<Response> {
-  const { handler, match } = getHandler(method, path);
-  return handler(
-    new Request(`https://test.local${path}`, { method }),
-    createEnv(),
-    match,
-    createCtx()
-  );
+  const request = new Request(`https://test.local${path}`, { method });
+  return path === "/secrets"
+    ? handleListGlobalSecrets(request, createEnv(), {}, createCtx())
+    : handleListRepoSecrets(request, createEnv(), { owner: "acme", name: "app" }, createCtx());
 }
 
 beforeEach(() => {

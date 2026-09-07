@@ -1,3 +1,6 @@
+import { Hono } from "hono";
+import { admit, dispatch } from "../routing/admit";
+import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 /**
  * Repository classification endpoint.
  *
@@ -27,14 +30,7 @@ import { GlobalSecretsStore } from "../db/global-secrets";
 import type { SqlDatabase } from "../db/sql-database";
 import { OpenAITokenRefreshService } from "../session/openai-token-refresh-service";
 import { AnthropicTokenRefreshService } from "../session/anthropic-token-refresh-service";
-import {
-  type Route,
-  type RequestContext,
-  SCM_AGNOSTIC_USER_OR_SERVICE_ROUTE,
-  defineRoutes,
-  parsePattern,
-  json,
-} from "./shared";
+import { type RequestContext, json } from "./shared";
 
 const log = createLogger("router:classify");
 
@@ -391,10 +387,10 @@ async function providerHttpError(provider: string, response: Response): Promise<
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
-async function handleClassify(
+export async function handleClassify(
   request: Request,
   env: Env,
-  _match: RegExpMatchArray,
+  _params: object,
   ctx: RequestContext
 ): Promise<Response> {
   let payload: { prompt?: unknown; model?: unknown };
@@ -447,10 +443,18 @@ function classifyErrorResponse(e: ClassifyError): Response {
   return json({ reason: e.reason, message: e.message }, e.status);
 }
 
-export const classifyRoutes: Route[] = defineRoutes(SCM_AGNOSTIC_USER_OR_SERVICE_ROUTE, [
-  {
-    method: "POST",
-    pattern: parsePattern("/classify"),
-    handler: handleClassify,
-  },
-]);
+export const classifyRoutes = new Hono<ControlPlaneHonoEnv>();
+classifyRoutes.post(
+  "/classify",
+  admit({
+    authentication: { kind: "service" },
+    supportedScmProviders: "all",
+    authorization: {
+      kind: "service",
+      services: ["slack-bot", "linear-bot"],
+      actor: "optional",
+      auditAllowed: true,
+    },
+  }),
+  (c) => dispatch(c, handleClassify)
+);

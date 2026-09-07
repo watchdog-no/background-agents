@@ -41,7 +41,7 @@ describe("automation templates catalog", () => {
     expect(
       automationTemplates.find((template) => template.id === "scan-vulnerabilities")?.prefill
     ).toMatchObject({
-      model: "openai/gpt-5.6-sol",
+      model: "openai/gpt-6-astra",
       reasoningEffort: "xhigh",
     });
   });

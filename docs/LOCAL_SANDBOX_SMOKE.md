@@ -37,7 +37,7 @@ uv run python scripts/local_prompt_smoke.py \
 Defaults:
 
 - prompt: `Please use the /code-review skill to review PR 658 in watchdog-monorepo.`
-- model: `openai/gpt-5.6-sol`
+- model: `openai/gpt-6-astra`
 - reasoning effort: `xhigh`
 - workdir: `/tmp/openinspect-local-smoke`
 

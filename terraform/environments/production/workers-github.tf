@@ -65,7 +65,7 @@ module "github_bot_worker" {
   plain_text_bindings = [
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
-    { name = "DEFAULT_MODEL", value = "openai/gpt-5.6-sol" },
+    { name = "DEFAULT_MODEL", value = "openai/gpt-6-astra" },
     { name = "DEFAULT_REASONING_EFFORT", value = "xhigh" },
     { name = "GITHUB_BOT_USERNAME", value = var.github_bot_username },
   ]

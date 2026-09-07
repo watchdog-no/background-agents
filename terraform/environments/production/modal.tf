@@ -38,6 +38,10 @@ module "modal_app" {
 
   secrets = [
     {
+      name   = "llm-api-keys"
+      values = local.modal_llm_secret_values
+    },
+    {
       name = "github-app"
       values = {
         GITHUB_APP_ID              = var.github_app_id
