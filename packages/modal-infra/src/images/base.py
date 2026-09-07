@@ -33,7 +33,7 @@ SANDBOX_RUNTIME_DIR = Path(sandbox_runtime.__file__).parent
 # releases order the turn loop by comparing those IDs as strings, which makes
 # any session carrying pre-wraparound history exit the loop without calling the
 # model. 1.18.15 orders by message creation time instead.
-OPENCODE_VERSION = "1.18.23"
+OPENCODE_VERSION = "1.18.29"
 
 # code-server version to install (pinned for reproducible images)
 CODE_SERVER_VERSION = "4.109.5"

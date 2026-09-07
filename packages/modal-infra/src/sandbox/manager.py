@@ -36,7 +36,7 @@ from sandbox_runtime.constants import (
 from sandbox_runtime.log_config import get_logger
 from sandbox_runtime.types import SandboxStatus, SessionConfig
 
-from ..app import app
+from ..app import app, llm_secrets
 from ..images.base import base_image
 from .vcs_env import inject_vcs_env_vars
 
@@ -473,7 +473,7 @@ class SandboxManager:
         create_kwargs: dict[str, Any] = {
             "image": image,
             "app": app,
-            "secrets": [],
+            "secrets": [llm_secrets],
             "timeout": config.timeout_seconds,
             "workdir": "/workspace",
             "env": env_vars,

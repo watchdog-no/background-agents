@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v74-mcp-tool-permissions",
-  "generation": 74,
-  "minimumCompatibleGeneration": 74,
-  "minimumRebuildGeneration": 74
+  "runtimeVersion": "v75-gpt6-astra",
+  "generation": 75,
+  "minimumCompatibleGeneration": 75,
+  "minimumRebuildGeneration": 75
 }

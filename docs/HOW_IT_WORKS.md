@@ -648,7 +648,10 @@ operators may remove legacy keys after legacy-bound sessions are no longer neede
 
 > **Daytona and Vercel users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the
 > default Claude subscription path. Add provider API keys only if you intentionally use metered API
-> billing.
+> billing. **LLM API keys** (e.g., `ANTHROPIC_API_KEY` for Claude models) are added as global
+> secrets. A deployment can instead configure `anthropic_api_key` in Terraform to inject one
+> fleet-wide key into Modal session sandboxes and OpenComputer sandboxes; a global secret of the
+> same name takes precedence over it, and the other providers read only the secret store.
 >
 > **Opt-in model providers**: DeepSeek models require `DEEPSEEK_API_KEY`, and Z.AI Coding Plan
 > models require `ZHIPU_API_KEY`, as a global secret with any sandbox provider. SuperGrok models

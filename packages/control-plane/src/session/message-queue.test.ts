@@ -9,6 +9,7 @@ import {
 } from "@open-inspect/shared/types/server-messages";
 import { MAX_UNFINISHED_PROMPTS } from "@open-inspect/shared/types/prompts";
 import type { ClientInfo } from "../types";
+import type { MessageStatus } from "@open-inspect/shared/types/sessions";
 import type { MessageRow, ParticipantRow, SessionRow, SessionAttachmentRow } from "./types";
 import type { SessionCoreRepository } from "./session-core-repository";
 import type { ParticipantRepository } from "./participant-repository";
@@ -106,7 +107,7 @@ function createClientInfo(overrides: Partial<ClientInfo> = {}): ClientInfo {
     status: "active",
     lastSeen: 1000,
     clientId: "client-1",
-    ws: {} as WebSocket,
+    authorizationExpiresAt: Date.now() + 300_000,
     ...overrides,
   };
 }
@@ -156,7 +157,7 @@ function buildQueue(options?: { session?: SessionRow }) {
       messageId: "msg-autofix",
     })),
     getAutofixMessageId: vi.fn(() => null as string | null),
-    getMessageStatus: vi.fn(() => "pending" as const),
+    getMessageStatus: vi.fn((_messageId: string): MessageStatus | null => "pending"),
     cancelPendingMessage: vi.fn(() => false),
     getUnfinishedMessagePosition: vi.fn((): number | null => 1),
     listUnfinishedMessages: vi.fn((): MessageRow[] => []),
@@ -222,6 +223,7 @@ function buildQueue(options?: { session?: SessionRow }) {
     reportSandboxError: vi.fn((_reason: string) => {}),
   };
   const backgroundTasks = createTestBackgroundTasks();
+  const sessionIndex = { touchUpdatedAt: vi.fn(async () => true) };
   const getAlarm = vi.fn(async () => null as number | null);
   const setAlarm = vi.fn(async (_timestamp: number) => {});
   const projectTerminalMessage = vi.fn(async () => {});
@@ -242,7 +244,7 @@ function buildQueue(options?: { session?: SessionRow }) {
     getProviderAuthenticationError,
     projectTerminalMessage,
     sandboxLifecycle,
-    null,
+    sessionIndex,
     "github",
     createEarliestAlarmScheduler(
       { getAlarm, setAlarm, deleteAlarm: vi.fn(async () => {}) },
@@ -269,6 +271,7 @@ function buildQueue(options?: { session?: SessionRow }) {
     broadcast,
     sessionStatus,
     sandboxLifecycle,
+    sessionIndex,
     backgroundTasks,
     getAlarm,
     setAlarm,
@@ -502,6 +505,62 @@ describe("SessionMessageQueue", () => {
     }
   );
 
+  it("does not spawn a sandbox for a prompt cancelled during the provider-auth lookup", async () => {
+    const h = buildQueue();
+    const session = createSession();
+    h.repository.getSession.mockImplementation(() => session);
+    h.repository.getNextPendingMessage.mockReturnValue(createMessage());
+    h.wsManager.getSandboxSocket.mockReturnValue(null);
+    h.getProviderAuthenticationError.mockImplementation(async () => {
+      // The cancel lands at this await: it closes the session and fails the
+      // pending prompt in one synchronous turn.
+      session.status = "cancelled";
+      h.repository.getMessageStatus.mockReturnValue("failed");
+      return null;
+    });
+
+    await h.queue.processMessageQueue();
+    await h.backgroundTasks.settle();
+
+    expect(h.sandboxLifecycle.spawnSandbox).not.toHaveBeenCalled();
+    expect(h.broadcast).not.toHaveBeenCalledWith({ type: "sandbox_spawning" });
+    expect(h.log.info).toHaveBeenCalledWith(
+      "prompt.dispatch",
+      expect.objectContaining({ outcome: "deferred", reason: "superseded_during_auth" })
+    );
+  });
+
+  it("dispatches the next prompt when only the head was cancelled during the provider-auth lookup", async () => {
+    const h = buildQueue();
+    const session = createSession();
+    h.repository.getSession.mockImplementation(() => session);
+    h.repository.getNextPendingMessage
+      .mockReturnValueOnce(createMessage({ id: "msg-a" }))
+      .mockReturnValueOnce(createMessage({ id: "msg-b" }))
+      .mockReturnValue(null);
+    h.wsManager.getSandboxSocket.mockReturnValue(null);
+    h.getProviderAuthenticationError.mockImplementationOnce(async () => {
+      // The cancel of the head alone lands at this await: the session stays
+      // open and msg-b stays pending, with nothing else to dispatch it.
+      h.repository.getMessageStatus.mockImplementation((id) => (id === "msg-a" ? null : "pending"));
+      return null;
+    });
+
+    await h.queue.processMessageQueue();
+    await h.backgroundTasks.settle();
+
+    expect(h.log.info).toHaveBeenCalledWith(
+      "prompt.dispatch",
+      expect.objectContaining({ message_id: "msg-a", reason: "superseded_during_auth" })
+    );
+    expect(h.log.info).toHaveBeenCalledWith(
+      "prompt.dispatch",
+      expect.objectContaining({ message_id: "msg-b", reason: "no_sandbox" })
+    );
+    expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledTimes(1);
+    expect(h.broadcast).toHaveBeenCalledWith({ type: "sandbox_spawning" });
+  });
+
   it("does not block queue processing on the sandbox spawn", async () => {
     const h = buildQueue();
     h.repository.getNextPendingMessage.mockReturnValue(createMessage());
@@ -537,6 +596,28 @@ describe("SessionMessageQueue", () => {
     );
     // The spawn failure is absorbed by the boundary, not thrown at the caller.
     expect(h.backgroundTasks.failures).toEqual([expect.any(Error)]);
+  });
+
+  it("rejects a prompt whose session closed while its fingerprint was being hashed", async () => {
+    const h = buildQueue();
+    const session = createSession();
+    h.repository.getSession.mockImplementation(() => session);
+    const ws = {} as WebSocket;
+
+    // The fingerprint hash is the first await; the cancel lands there.
+    const handled = h.queue.handlePromptMessage(ws, createClientInfo(), {
+      content: "hello",
+      clientRequestId: "req-1",
+    });
+    session.status = "cancelled";
+    await handled;
+
+    expect(h.repository.createMessageWithAttachments).not.toHaveBeenCalled();
+    expect(h.sessionStatus.transition).not.toHaveBeenCalled();
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      ws,
+      expect.objectContaining({ type: "error", code: "SESSION_NOT_PROMPTABLE" })
+    );
   });
 
   it("marks session active when a prompt is enqueued", async () => {
@@ -589,6 +670,21 @@ describe("SessionMessageQueue", () => {
         messageId: "msg-existing",
       })
     );
+  });
+
+  it("touches the session index when a prompt is queued", async () => {
+    const h = buildQueue();
+
+    await h.queue.handlePromptMessage({} as WebSocket, createClientInfo(), {
+      clientRequestId: "request-touch",
+      content: "hello",
+    });
+    await h.backgroundTasks.settle();
+
+    expect(h.backgroundTasks.submissions).toContainEqual(
+      expect.objectContaining({ name: "session_index.touch_updated_at" })
+    );
+    expect(h.sessionIndex.touchUpdatedAt).toHaveBeenCalledWith("s1");
   });
 
   it("returns a null position when retrying a completed correlated prompt", async () => {
@@ -1382,6 +1478,20 @@ describe("SessionMessageQueue", () => {
     );
     expect(h.repository.clearMessageAwaitingStopConfirmation).not.toHaveBeenCalled();
     expect(h.repository.getNextPendingMessage).toHaveBeenCalled();
+  });
+
+  it("re-arms a future stop confirmation deadline when an earlier alarm fired", async () => {
+    const h = buildQueue();
+    const deadline = Date.now() + 10_000;
+    h.repository.getMessageAwaitingStopConfirmation.mockReturnValue({
+      id: "msg-stopped",
+      deadline,
+    });
+
+    await h.queue.recoverStopConfirmationTimeout();
+
+    expect(h.sandboxLifecycle.terminateUnresponsiveSandbox).not.toHaveBeenCalled();
+    expect(h.setAlarm).toHaveBeenCalledExactlyOnceWith(deadline);
   });
 
   it("clears the marker and resumes only after definitive sandbox termination", async () => {

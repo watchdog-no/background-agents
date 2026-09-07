@@ -285,9 +285,39 @@ variable "linear_api_key" {
 # API Keys
 # =============================================================================
 
-variable "anthropic_oauth_client_id" {
-  description = "Optional Claude subscription OAuth public client ID override"
+variable "anthropic_api_key" {
+  description = "Anthropic API key for the Slack and Linear bot classifiers, also injected into Modal session sandboxes and OpenComputer sandboxes. Daytona, E2B and Vercel read model keys only from the scoped secret store, as do Modal image builds. Optional: leave blank to supply model credentials as scoped secrets, which override this value on every provider. Required only when a classifier bot is enabled and classification_model is an Anthropic model."
   type        = string
+  sensitive   = true
+  default     = ""
+  nullable    = false
+
+
+}
+
+variable "classification_model" {
+  description = "Model backing the Slack and Linear bots' target classifiers. An \"anthropic/\"-prefixed or bare \"claude-\" id is served by anthropic_api_key; an \"openai/\"-prefixed or bare \"gpt-\" id is served by classification_openai_api_key."
+  type        = string
+  default     = "claude-haiku-4-5"
+  nullable    = false
+
+  # Each prefix must be followed by an actual model id: a bare "claude-" or
+  # "openai/" satisfies startswith but names no model, and would reach the bots
+  # as a value their resolver accepts and then sends to the provider verbatim.
+  validation {
+    condition = anytrue([
+      for prefix in ["anthropic/", "claude-", "openai/", "gpt-"] :
+      startswith(var.classification_model, prefix) &&
+      trimspace(substr(var.classification_model, length(prefix), -1)) != ""
+    ])
+    error_message = "classification_model must be an Anthropic id (\"anthropic/...\" or \"claude-...\") or an OpenAI id (\"openai/...\" or \"gpt-...\"), naming a model after the prefix."
+  }
+}
+
+variable "classification_openai_api_key" {
+  description = "OpenAI API key used specifically by the Slack and Linear bot classifiers. Required when classification_model is an OpenAI model and the Slack or Linear bot is enabled."
+  type        = string
+  sensitive   = true
   default     = ""
 }
 
@@ -672,4 +702,10 @@ variable "unsafe_allow_all_users" {
   description = "Bypass Terraform's access-control safety check and allow any authenticated user to sign in when all allowlists are empty. Set to true only for intentionally open deployments."
   type        = bool
   default     = false
+}
+
+variable "anthropic_oauth_client_id" {
+  description = "Optional Claude subscription OAuth public client ID override"
+  type        = string
+  default     = ""
 }

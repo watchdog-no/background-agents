@@ -39,7 +39,7 @@ import type { SessionStatusService } from "./session-status-service";
 import type { EnqueuePromptRequest } from "./enqueue-prompt-contract";
 import { getAvatarUrl } from "./participant-service";
 import { resolveParticipantName } from "./participant-name";
-import type { AlarmScheduler, BackgroundTasks } from "../platform-ports";
+import type { AlarmScheduler, BackgroundTasks, SessionWebSocket } from "../platform-ports";
 import { resolveGitAuthorIdentity } from "./identity";
 import { validateReasoningEffort } from "./reasoning-effort";
 import {
@@ -174,7 +174,7 @@ export class SessionMessageQueue {
       completedAt: number
     ) => Promise<void>,
     private readonly sandboxLifecycle: SandboxLifecycle,
-    private readonly sessionIndex: SessionIndexStore | null,
+    private readonly sessionIndex: Pick<SessionIndexStore, "touchUpdatedAt">,
     private readonly scmProvider: SourceControlProviderName,
     private readonly alarmScheduler: AlarmScheduler,
     /** Resolved per use so it honors settings persisted after construction. */
@@ -250,7 +250,7 @@ export class SessionMessageQueue {
   }
 
   async handlePromptMessage(
-    ws: WebSocket,
+    ws: SessionWebSocket,
     client: ClientInfo,
     data: PromptMessageData
   ): Promise<void> {
@@ -313,16 +313,13 @@ export class SessionMessageQueue {
       throw error;
     }
 
-    const sessionIndex = this.sessionIndex;
-    if (sessionIndex) {
-      const session = this.repository.getSession();
-      const sessionId = session?.session_name || session?.id;
-      if (sessionId) {
-        this.backgroundTasks.submit(() => sessionIndex.touchUpdatedAt(sessionId), {
-          name: "session_index.touch_updated_at",
-          context: { session_id: sessionId },
-        });
-      }
+    const session = this.repository.getSession();
+    const sessionId = session?.session_name || session?.id;
+    if (sessionId) {
+      this.backgroundTasks.submit(() => this.sessionIndex.touchUpdatedAt(sessionId), {
+        name: "session_index.touch_updated_at",
+        context: { session_id: sessionId },
+      });
     }
 
     this.wsManager.send(ws, {
@@ -336,7 +333,7 @@ export class SessionMessageQueue {
   }
 
   async cancelQueuedPrompt(
-    ws: WebSocket,
+    ws: SessionWebSocket,
     data: { messageId: string; clientRequestId: string }
   ): Promise<void> {
     if (!this.messageRepository.cancelPendingMessage(data.messageId)) {
@@ -406,6 +403,25 @@ export class SessionMessageQueue {
 
     const sandboxWs = this.wsManager.getSandboxSocket();
     if (!sandboxWs) {
+      // The provider-auth lookup above is a non-storage await. The socket
+      // path re-validates through the processing claim; this path has no
+      // claim, so it re-reads what it acts on: a cancel or archive that
+      // landed meanwhile has closed the session and terminalized the prompt,
+      // and must not get a sandbox spawned for it. The queue is then pumped
+      // again over the state that moved: a prompt cancelled on its own
+      // leaves the next one pending with nobody else to dispatch it, and the
+      // pump stops by itself for a closed session, a processing owner, a
+      // stop fence, or an empty queue.
+      if (!this.isPromptStillDispatchable(message.id)) {
+        this.log.info("prompt.dispatch", {
+          event: "prompt.dispatch",
+          message_id: message.id,
+          outcome: "deferred",
+          reason: "superseded_during_auth",
+        });
+        await this.processMessageQueue();
+        return;
+      }
       this.log.info("prompt.dispatch", {
         event: "prompt.dispatch",
         message_id: message.id,
@@ -567,7 +583,13 @@ export class SessionMessageQueue {
 
   async recoverStopConfirmationTimeout(): Promise<void> {
     const awaitingStop = this.messageRepository.getMessageAwaitingStopConfirmation();
-    if (!awaitingStop || awaitingStop.deadline > Date.now()) return;
+    if (!awaitingStop) return;
+    if (awaitingStop.deadline > Date.now()) {
+      // An earlier deadline may have consumed the single alarm slot; keep
+      // this one armed so the stop cannot wait on unrelated work.
+      await this.alarmScheduler.schedule(awaitingStop.deadline);
+      return;
+    }
     this.log.warn("Sandbox did not confirm stop before deadline", {
       event: "prompt.stop_confirmation_timeout",
       message_id: awaitingStop.id,
@@ -844,8 +866,12 @@ export class SessionMessageQueue {
       data.requestFingerprint ??
       (data.clientRequestId ? await fingerprintWebPrompt(data.participant.id, data) : undefined);
 
-    // Keep the idempotency lookup, capacity check, and insert in one synchronous
-    // turn so concurrent WebSocket requests cannot race between them.
+    // Keep the promptability check, idempotency lookup, capacity check, and
+    // insert in one synchronous turn so concurrent requests cannot race between
+    // them. The fingerprint hash above is a non-storage await: a cancel or
+    // archive can land while this request is suspended, so the session is
+    // read after it, not before.
+    this.assertPromptableSession();
     const queueDepthBefore = this.messageRepository.getPendingOrProcessingCount();
     if (data.clientRequestId) {
       const existing = this.messageRepository.getMessageByClientRequestId(data.clientRequestId);
@@ -952,6 +978,20 @@ export class SessionMessageQueue {
     });
 
     return { messageId, position };
+  }
+
+  /**
+   * Whether `messageId` is still pending in a session that still accepts
+   * work. Read in the caller's continuation, so the decision it feeds is made
+   * on the same state.
+   */
+  private isPromptStillDispatchable(messageId: string): boolean {
+    const session = this.repository.getSession();
+    return (
+      session !== null &&
+      isSessionPromptable(session.status) &&
+      this.messageRepository.getMessageStatus(messageId) === "pending"
+    );
   }
 
   private assertPromptableSession(): void {

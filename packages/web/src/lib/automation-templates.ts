@@ -100,7 +100,7 @@ export const automationTemplates: AutomationTemplate[] = [
       name: "Scan codebase for vulnerabilities",
       triggerType: "schedule",
       scheduleCron: WEEKLY_MON_9AM,
-      model: "openai/gpt-5.6-sol",
+      model: "openai/gpt-6-astra",
       reasoningEffort: "xhigh",
       instructions:
         "Perform an application-security review of this repository. Look for validated, exploitable " +

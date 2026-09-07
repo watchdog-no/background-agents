@@ -1,3 +1,5 @@
+import { encodeRepositoryPathSegments } from "@open-inspect/shared/types/repositories";
+
 function buildCustomInstructionsSection(instructions: string | null | undefined): string {
   if (!instructions?.trim()) return "";
   return `\n## Custom Instructions\n${instructions}`;
@@ -49,15 +51,17 @@ export function buildCodeReviewPrompt(params: {
     codeReviewInstructions,
     isSelfReview = false,
   } = params;
+  const repositoryPath = encodeRepositoryPathSegments({ repoOwner: owner, repoName: repo });
   const selfReviewGuidance = isSelfReview
     ? `
 3. GitHub does not allow pull request authors to approve their own PRs. Post this self-review as a
    comment review:
 
-   gh api repos/${owner}/${repo}/pulls/${number}/reviews \\
+   gh api repos/${repositoryPath}/pulls/${number}/reviews \\
      --method POST \\
-     -f body="<your review summary>" \\
-     -f event="COMMENT"
+     --input - <<'JSON'
+{ "body": "<your review summary>", "event": "COMMENT", "comments": [] }
+JSON
 `
     : "";
 
@@ -77,7 +81,8 @@ ${wrapUntrusted("github_pr_description", body ?? "_No description provided._")}
    /code-review --pr ${number} --post
 
 ${selfReviewGuidance}
-4. The review must be posted to GitHub because this session was started by a GitHub webhook and the
+4. Submit the summary and all inline comments in exactly one pull request review.
+   The review must be posted to GitHub because this session was started by a GitHub webhook and the
    PR is where users will see the result. Do not stop after a local dry-run review.
 5. You may read individual files in the repo for context beyond the diff, but do not make code
    changes as part of the review.
@@ -134,9 +139,10 @@ export function buildCommentActionPrompt(params: {
     codeLocation = `\n\n## Code Location\nThis comment is about \`${filePath}\`:\n\`\`\`\n${diffHunk}\n\`\`\``;
   }
 
+  const repositoryPath = encodeRepositoryPathSegments({ repoOwner: owner, repoName: repo });
   let replyInstruction = "";
   if (commentId) {
-    replyInstruction = `\n5. If you need to reply to the specific review thread:\n\n   gh api repos/${owner}/${repo}/pulls/${number}/comments/${commentId}/replies \\\n     --method POST \\\n     -f body="<your reply>"`;
+    replyInstruction = `\n5. If you need to reply to the specific review thread:\n\n   gh api repos/${repositoryPath}/pulls/${number}/comments/${commentId}/replies \\\n     --method POST \\\n     -f body="<your reply>"`;
   }
 
   return `${intro}${prDetails}${codeLocation}

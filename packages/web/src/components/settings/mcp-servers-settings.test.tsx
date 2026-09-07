@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   createMcpServer: vi.fn(),
   updateMcpServer: vi.fn(),
   discoverMcpTools: vi.fn(),
+  allowedPermissions: null as Set<string> | null,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -27,6 +28,12 @@ vi.mock("@/hooks/use-mcp-servers", () => ({
   updateMcpServer: mocks.updateMcpServer,
   deleteMcpServer: vi.fn(),
   discoverMcpTools: mocks.discoverMcpTools,
+}));
+vi.mock("@/hooks/use-current-user-authorization", () => ({
+  useCurrentUserAuthorization: () => ({
+    hasPermission: (permission: string) =>
+      mocks.allowedPermissions === null || mocks.allowedPermissions.has(permission),
+  }),
 }));
 
 const servers: McpServerMetadata[] = [
@@ -59,6 +66,7 @@ const servers: McpServerMetadata[] = [
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  mocks.allowedPermissions = null;
 });
 
 beforeEach(() => {
@@ -102,6 +110,18 @@ describe("McpServersSettings", () => {
 
     await waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
     expect(screen.getByDisplayValue("https://b.example.com")).toBeInTheDocument();
+  });
+
+  it("shows servers but no mutation entry points with read-only permission", () => {
+    mocks.allowedPermissions = new Set(["mcp_servers.read"]);
+
+    render(<McpServersSettings />);
+
+    expect(screen.getByText("Server A")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Server" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Server A/ })).toBeDisabled();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("does not close a newer draft when an older save completes", async () => {

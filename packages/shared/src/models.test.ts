@@ -39,6 +39,7 @@ const OPENAI_MODELS = [
   "openai/gpt-5.6-sol",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
+  "openai/gpt-6-astra",
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-codex-spark",
 ] as const;
@@ -96,8 +97,8 @@ describe("model utilities", () => {
     );
   });
 
-  it("uses GPT 5.6 Sol with xhigh reasoning as the valid default", () => {
-    expect(DEFAULT_MODEL).toBe("openai/gpt-5.6-sol");
+  it("uses GPT-6 Astra with xhigh reasoning as the valid default", () => {
+    expect(DEFAULT_MODEL).toBe("openai/gpt-6-astra");
     expect(isValidModel(DEFAULT_MODEL)).toBe(true);
     expect(getDefaultReasoningEffort(DEFAULT_MODEL)).toBe("xhigh");
   });
@@ -317,6 +318,10 @@ describe("model utilities", () => {
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: undefined,
     });
+    expect(getReasoningConfig("openai/gpt-6-astra")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default: "xhigh",
+    });
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: "xhigh",
@@ -351,6 +356,9 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "none")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-fable-5", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.4", "none")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6-astra", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6-astra", "ultra")).toBe(false);
+    expect(isValidReasoningEffort("openai/gpt-6-astra", "none")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "max")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-5.6-luna", "max")).toBe(true);

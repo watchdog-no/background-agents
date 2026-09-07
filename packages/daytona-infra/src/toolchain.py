@@ -16,21 +16,12 @@ if TYPE_CHECKING:
 #
 # Never pin below 1.18.15 — see packages/modal-infra/src/images/base.py for why
 # (OpenCode's message-ID counter wraps and earlier releases order by ID string).
-OPENCODE_VERSION = "1.18.23"
+OPENCODE_VERSION = "1.18.29"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.35.0"
 BUN_VERSION = "1.4.0"
 # Bump when changing image contents to invalidate the Daytona snapshot.
-# daytona-v2: install the SCM credential-helper shim and configure
-# git system-wide so per-request token brokerage works (parity with Modal v52).
-# daytona-v5: adopt upstream host-scoped SCM credential broker (PR #679).
-# daytona-v6: upgrade OpenCode after upstream SSE fixes.
-# daytona-v7: upgrade to OpenCode 1.18.11.
-# daytona-v8: add the VNC/noVNC desktop toolchain.
-# daytona-v9: upgrade past the OpenCode message-ID wraparound bug.
-# daytona-v10: remove retired agent-side packages.
-# daytona-v11: upgrade the Node, OpenCode, agent-browser, and Bun toolchain.
-SANDBOX_VERSION = "daytona-v11-node24-vnc-opencode-1-18-23"
+SANDBOX_VERSION = "v62-gpt6-astra"
 
 
 def build_base_image(repo_root: Path) -> Image:

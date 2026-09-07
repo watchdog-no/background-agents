@@ -46,7 +46,7 @@ module "linear_bot_worker" {
     { name = "WEB_APP_URL", value = local.web_app_url },
     { name = "DEPLOYMENT_NAME", value = var.deployment_name },
     { name = "APP_NAME", value = var.app_name },
-    { name = "DEFAULT_MODEL", value = "openai/gpt-5.6-sol" },
+    { name = "DEFAULT_MODEL", value = "openai/gpt-6-astra" },
     # The classifier only calls the provider when mappings, explicit mentions,
     # Linear suggestions, and the configured default cannot resolve a target.
     # Luna uses the control plane's metered OPENAI_API_KEY path.

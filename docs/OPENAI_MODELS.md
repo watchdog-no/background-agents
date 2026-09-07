@@ -18,14 +18,16 @@ For the full model list, including Claude Fable 5 and other Anthropic models, se
 | GPT 5.4             | Flagship model                                                            |
 | GPT 5.5             | Latest flagship model                                                     |
 | GPT 5.5 Pro         | Highest-capability GPT 5.5; $30/M input, $180/M output, no cache discount |
+| GPT-6 Astra         | Most capable model for complex, demanding work                            |
 | GPT 5.6 Sol         | Frontier model for complex professional work                              |
 | GPT 5.6 Terra       | Balanced, cost-efficient everyday work                                    |
 | GPT 5.6 Luna        | Fast, cost-efficient high-volume workloads                                |
 | GPT 5.3 Codex       | Latest codex variant                                                      |
 | GPT 5.3 Codex Spark | Lightweight Codex variant                                                 |
 
-OpenAI models support reasoning effort levels: none, low, medium, high, and extra high. The system
-default model, GPT 5.6 Sol, defaults to extra high; Codex models default to high.
+The system default, GPT-6 Astra, supports low, medium, high, extra high, and max reasoning; this
+fork defaults to extra high. Astra does not support none. Other models have their own reasoning
+choices; see [Available Models](AVAILABLE_MODELS.md).
 
 ---
 

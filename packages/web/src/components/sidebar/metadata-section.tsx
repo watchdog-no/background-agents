@@ -54,6 +54,7 @@ interface MetadataSectionProps {
   totalCost?: number;
   contextTokens?: number;
   contextLimit?: number;
+  canManageLifecycle: boolean;
 }
 
 /**
@@ -112,12 +113,13 @@ export function MetadataSection({
   totalCost,
   contextTokens,
   contextLimit,
+  canManageLifecycle,
 }: MetadataSectionProps) {
   const [copied, setCopied] = useState(false);
 
   const isMultiRepo = (repositories?.length ?? 0) > 1;
   const hasPrArtifact = artifacts.some((a) => a.type === "pr");
-  const showSyncButton = Boolean(sessionId) && hasPrArtifact;
+  const showSyncButton = canManageLifecycle && Boolean(sessionId) && hasPrArtifact;
 
   // Sessions can hold several PRs (one open PR per head branch); list them
   // all, oldest first — creation order matches PR-number order.
