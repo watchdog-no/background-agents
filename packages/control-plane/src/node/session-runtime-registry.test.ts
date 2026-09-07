@@ -848,7 +848,7 @@ describe("SessionRuntimeRegistry", () => {
 
       expect(
         { status: child.status, signal: child.signal, stdout: child.stdout, stderr: child.stderr },
-        "the isolated registry eviction probe must exit normally"
+        `the isolated registry eviction probe must exit normally\n${child.stdout}\n${child.stderr}`
       ).toMatchObject({ status: 0, signal: null });
     },
     // Spawning a vitest run costs more than the default 5s per-test budget on a
