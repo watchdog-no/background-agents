@@ -161,7 +161,7 @@ run "an_anthropic_classifier_uses_the_control_plane_broker" {
   }
 
   assert {
-    condition = !contains(module.slack_bot_worker[0].secret_binding_names, "ANTHROPIC_API_KEY")
+    condition     = !contains(module.slack_bot_worker[0].secret_binding_names, "ANTHROPIC_API_KEY")
     error_message = "The classifier must use the control-plane credential broker."
   }
 }

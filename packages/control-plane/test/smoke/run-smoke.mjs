@@ -88,7 +88,14 @@ async function createSession() {
   // off the network. Repository resolution has its own coverage.
   const { status, body } = await signedFetch("/sessions", {
     method: "POST",
-    body: { name: "compose smoke", actorEmail: ACTOR_EMAIL, actorDisplayName: "Compose Smoke" },
+    body: {
+      name: "compose smoke",
+      actorEmail: ACTOR_EMAIL,
+      actorDisplayName: "Compose Smoke",
+      // The fake bridge needs no provider credentials. Keep this transport smoke
+      // independent of deployment defaults that may require a connected account.
+      model: "anthropic/claude-haiku-4-5",
+    },
   });
   if (status !== 201) fail(`session create returned ${status}`, body);
   if (!body?.sessionId) fail("session create returned no sessionId", body);
