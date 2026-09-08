@@ -112,3 +112,4 @@ terraform/environments/aws-production/plan.out
 
 # Reviewed, non-secret Watchdog sandbox deployment configuration.
 !terraform/environments/production/sandbox.auto.tfvars
+# Stable local advisory-lock inode for sandbox release selection writers.

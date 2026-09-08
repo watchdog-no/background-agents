@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v75-gpt6-astra",
-  "generation": 75,
-  "minimumCompatibleGeneration": 75,
-  "minimumRebuildGeneration": 75
+  "runtimeVersion": "v76-shared-images-mcp-cache",
+  "generation": 76,
+  "minimumCompatibleGeneration": 76,
+  "minimumRebuildGeneration": 76
 }

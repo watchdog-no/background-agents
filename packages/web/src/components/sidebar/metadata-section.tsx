@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatModelName, formatTokens, truncateBranch, copyToClipboard } from "@/lib/format";
-import { formatSessionCost } from "@/lib/session-cost";
 import { formatRelativeTime } from "@/lib/time";
 import { getSafeExternalUrl } from "@/lib/urls";
 import { getScmBranchUrl, getScmRepoUrl } from "@/lib/scm";
@@ -51,7 +50,6 @@ interface MetadataSectionProps {
   /** Non-fatal boot/runtime warnings surfaced to the user. */
   warnings?: WarningEvent[];
   parentSessionId?: string | null;
-  totalCost?: number;
   contextTokens?: number;
   contextLimit?: number;
   canManageLifecycle: boolean;
@@ -110,7 +108,6 @@ export function MetadataSection({
   environmentName,
   warnings = [],
   parentSessionId,
-  totalCost,
   contextTokens,
   contextLimit,
   canManageLifecycle,
@@ -171,12 +168,6 @@ export function MetadataSection({
             {formatModelName(model)}
             {reasoningEffort && <span> · {reasoningEffort}</span>}
           </span>
-        </div>
-      )}
-
-      {typeof totalCost === "number" && totalCost > 0 && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>Session cost: {formatSessionCost(totalCost)}</span>
         </div>
       )}
 

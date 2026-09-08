@@ -51,7 +51,6 @@ const QUERY_PATTERNS = {
   SELECT_LIST: /^SELECT \* FROM sessions\b.*ORDER BY updated_at DESC LIMIT/,
   UPDATE_STATUS: /^UPDATE sessions SET status = \?/,
   UPDATE_UPDATED_AT: /^UPDATE sessions SET updated_at = \?/,
-  UPDATE_TITLE: /^UPDATE sessions SET title = \?/,
   UPDATE_TITLE_IF_NEWER:
     /^UPDATE sessions SET title = \?, title_updated_at = \?, updated_at = max\(updated_at, \?\) WHERE id = \? AND \(title_updated_at IS NULL OR title_updated_at <= \?\)$/,
   UPDATE_METRICS: /^UPDATE sessions SET total_cost = \?/,
@@ -296,17 +295,6 @@ class FakeD1Database {
         row.title = title;
         row.title_updated_at = titleUpdatedAt;
         row.updated_at = Math.max(row.updated_at, maxUpdatedAt);
-        return { meta: { changes: 1 } };
-      }
-      return { meta: { changes: 0 } };
-    }
-
-    if (QUERY_PATTERNS.UPDATE_TITLE.test(normalized)) {
-      const [title, updatedAt, id] = args as [string, number, string];
-      const row = this.rows.get(id);
-      if (row) {
-        row.title = title;
-        row.updated_at = updatedAt;
         return { meta: { changes: 1 } };
       }
       return { meta: { changes: 0 } };
@@ -830,22 +818,6 @@ describe("SessionIndexStore", () => {
       const session = await store.get("test-id");
       expect(session?.status).toBe("completed");
       expect(session?.updatedAt).toBe(2000);
-    });
-  });
-
-  describe("updateTitle", () => {
-    it("updates the title of an existing session", async () => {
-      await store.create(makeSession());
-      const updated = await store.updateTitle("test-id", "New Title");
-      expect(updated).toBe(true);
-
-      const session = await store.get("test-id");
-      expect(session?.title).toBe("New Title");
-    });
-
-    it("returns false when session not found", async () => {
-      const updated = await store.updateTitle("nonexistent", "New Title");
-      expect(updated).toBe(false);
     });
   });
 

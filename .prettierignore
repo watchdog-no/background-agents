@@ -9,6 +9,7 @@ build/
 .open-next/
 .wrangler/
 coverage/
+.cache/sandbox-images/
 
 # Python
 packages/modal-infra/

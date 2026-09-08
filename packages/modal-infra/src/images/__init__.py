@@ -1,6 +1,5 @@
-"""Image definitions for Open-Inspect sandboxes."""
+"""Provider-native sandbox image reference."""
 
-from .base import OPENCODE_VERSION, base_image
-from .version import CACHE_BUSTER
+from .base import base_image
 
-__all__ = ["CACHE_BUSTER", "OPENCODE_VERSION", "base_image"]
+__all__ = ["base_image"]
