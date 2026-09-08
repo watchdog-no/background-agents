@@ -1945,7 +1945,7 @@ describe("SessionMessageQueue", () => {
     expect(h.sessionStatus.reconcileAfterExecution).toHaveBeenCalledWith(false);
   });
 
-  it("redrives a pending prompt after fatal sandbox termination completes", async () => {
+  it("fails queued and processing prompts before fatal termination finishes", async () => {
     const h = buildQueue();
     let resolveTermination!: (terminated: boolean) => void;
     h.sandboxLifecycle.terminateFailedSandbox.mockReturnValue(
@@ -1953,18 +1953,46 @@ describe("SessionMessageQueue", () => {
         resolveTermination = resolve;
       })
     );
-    h.repository.getNextPendingMessage.mockReturnValue(createMessage({ id: "msg-pending" }));
+    const pending = [createMessage({ id: "msg-pending" }), createMessage({ id: "msg-next" })];
+    h.repository.listPendingMessagesWithCreatedAt.mockImplementation(() => [...pending]);
+    h.repository.getNextPendingMessage.mockImplementation(() => pending[0] ?? null);
+    const recordCompletion = h.repository.recordMessageCompletion.getMockImplementation()!;
+    h.repository.recordMessageCompletion.mockImplementation((event, completedAt) => {
+      const index = pending.findIndex((message) => message.id === event.messageId);
+      if (index !== -1) pending.splice(index, 1);
+      return recordCompletion(event, completedAt);
+    });
+    h.repository.getProcessingMessageWithCreatedAt.mockReturnValue({
+      id: "msg-running",
+      created_at: 900,
+    });
+    h.repository.markMessageAwaitingStopConfirmation("msg-stopping", Date.now() + 10000);
 
-    const handling = h.queue.handleFatalSandboxFailure("Sandbox crashed");
-    await Promise.resolve();
+    const handling = h.queue.handleFatalSandboxFailure("start hook failed");
+    expect(h.repository.recordMessageCompletion).toHaveBeenCalledTimes(3);
+    for (const [id, status] of [
+      ["msg-pending", "pending"],
+      ["msg-next", "pending"],
+      ["msg-running", "processing"],
+    ]) {
+      expect(h.repository.recordMessageCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({ messageId: id, error: "start hook failed" }),
+        expect.any(Number),
+        status
+      );
+    }
     expect(h.sandboxLifecycle.spawnSandbox).not.toHaveBeenCalled();
-
     resolveTermination(true);
     await handling;
     await h.backgroundTasks.settle();
-
-    expect(h.sandboxLifecycle.terminateFailedSandbox).toHaveBeenCalledWith("Sandbox crashed");
-    expect(h.sandboxLifecycle.spawnSandbox).toHaveBeenCalledOnce();
+    expect(h.sandboxLifecycle.spawnSandbox).not.toHaveBeenCalled();
+    expect(h.repository.clearMessageAwaitingStopConfirmation).toHaveBeenCalledWith("msg-stopping");
+    expect(h.callbackService.notifyComplete).toHaveBeenCalledWith(
+      "msg-pending",
+      false,
+      "start hook failed"
+    );
+    expect(h.sessionStatus.reconcileAfterExecution).toHaveBeenCalledWith(false);
   });
 
   describe("enqueuePromptFromApi", () => {

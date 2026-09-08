@@ -39,6 +39,63 @@ describe("GET /internal/state", () => {
   });
 });
 
+describe("POST /internal/sandbox-error", () => {
+  it("terminalizes queued prompts and preserves the fatal boot error without respawning", async () => {
+    const { stub } = await initSession();
+    const authToken = "fatal-boot-test-token";
+    const sandboxId = "sb-fatal-boot";
+    await seedSandboxAuthHash(stub, { authToken, sandboxId, status: "connecting" });
+    const [participant] = await queryDO<{ id: string }>(
+      stub,
+      "SELECT id FROM participants LIMIT 1"
+    );
+    for (const id of ["pending-one", "pending-two"]) {
+      await seedMessage(stub, {
+        id,
+        authorId: participant.id,
+        content: "Hello?",
+        source: "web",
+        status: "pending",
+        createdAt: Date.now(),
+      });
+    }
+    await runInSessionDO(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE sandbox SET spawn_failure_count = 0");
+    });
+
+    const response = await stub.fetch("http://internal/internal/sandbox-error", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+        "X-Sandbox-ID": sandboxId,
+      },
+      body: JSON.stringify({ error: "start hook failed for watchdog-no/watchdog-monorepo" }),
+    });
+    expect(response.status).toBe(200);
+    const messages = await queryDO<{ status: string; error_message: string }>(
+      stub,
+      "SELECT status, error_message FROM messages ORDER BY id"
+    );
+    expect(messages).toEqual(
+      [1, 2].map(() => ({
+        status: "failed",
+        error_message: "start hook failed for watchdog-no/watchdog-monorepo",
+      }))
+    );
+    const [sandbox] = await queryDO<{
+      status: string;
+      modal_sandbox_id: string;
+      spawn_failure_count: number;
+    }>(stub, "SELECT status, modal_sandbox_id, spawn_failure_count FROM sandbox");
+    expect(sandbox).toEqual({
+      status: "failed",
+      modal_sandbox_id: sandboxId,
+      spawn_failure_count: 1,
+    });
+  });
+});
+
 describe("POST /internal/archive", () => {
   it("archive sets status to archived", async () => {
     const { stub } = await initSession({ userId: "user-1" });

@@ -535,8 +535,21 @@ export class SessionMessageQueue {
 
   async handleFatalSandboxFailure(reason: string): Promise<void> {
     const termination = this.sandboxLifecycle.terminateFailedSandbox(reason);
-    await this.failStuckProcessingMessage(reason);
-    if (await termination) await this.executionStop.resumeAfterSandboxTermination();
+    // Close the affected queue before any await can dispatch it again. A fatal
+    // boot error cannot be repaired by endlessly replacing the same sandbox.
+    const now = Date.now();
+    for (const message of this.messageRepository.listPendingMessagesWithCreatedAt()) {
+      this.failMessage(message, reason, now, "pending");
+    }
+    const processingMessage = this.messageRepository.getProcessingMessageWithCreatedAt();
+    if (processingMessage) this.failMessage(processingMessage, reason, now, "processing");
+    this.messenger.broadcast({ type: "processing_status", isProcessing: false });
+    this.broadcastPromptQueue();
+    try {
+      await this.sessionStatus.reconcileAfterExecution(false);
+    } finally {
+      if (await termination) await this.executionStop.resumeAfterSandboxTermination();
+    }
   }
 
   /** Close every unfinished message synchronously; status projection happens afterwards. */

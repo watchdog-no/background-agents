@@ -701,9 +701,6 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
 
       await this.finishProviderStartup(generation);
 
-      // Reset circuit breaker on successful spawn initiation
-      this.storage.resetCircuitBreaker();
-
       this.log.info("Sandbox spawn completed", {
         event: "sandbox.spawn",
         outcome: "success",
@@ -1156,7 +1153,6 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
 
       await this.storeAndBroadcastTunnelUrls(result.tunnelUrls);
       await this.finishProviderStartup(generation);
-      this.storage.resetCircuitBreaker();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to resume sandbox";
       this.failAttempt(generation, "connecting", errorMessage);
@@ -1330,6 +1326,9 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
         provider_object_id: providerObjectId,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Keep the provider handle so a later retry can clean up this sandbox.
+      // Creating another one here leaks storage whenever deletion is rejected.
+      throw error;
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
@@ -1616,6 +1615,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     }
 
     this.isTerminatingSandbox = true;
+    if (sandbox.status !== "failed") this.storage.incrementCircuitBreakerFailure(Date.now());
     if (sandbox.status !== "failed") {
       this.storage.updateSandboxStatus("failed");
       this.broadcaster.broadcast({ type: "sandbox_status", status: "failed" });
@@ -1841,6 +1841,8 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    */
   onSandboxConnected(): void {
     this.isSpawningSandbox = false;
+    // Provider creation alone does not prove that repository startup succeeded.
+    this.storage.resetCircuitBreaker();
     this.storage.setLastSpawnError(null, null);
   }
 }
