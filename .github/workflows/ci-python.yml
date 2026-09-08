@@ -10,6 +10,8 @@ on:
       - "packages/e2b-infra/**"
       - "packages/modal-infra/**"
       - "packages/sandbox-runtime/**"
+      - "packages/sandbox-images/**"
+      - "packages/vercel-infra/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
       - "terraform/environments/production/daytona.tf"
@@ -17,6 +19,8 @@ on:
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
+      - "packages/sandbox-runtime/src/**"
+      - "packages/sandbox-images/**"
   pull_request:
     branches: [main]
     paths:
@@ -26,6 +30,8 @@ on:
       - "packages/e2b-infra/**"
       - "packages/modal-infra/**"
       - "packages/sandbox-runtime/**"
+      - "packages/sandbox-images/**"
+      - "packages/vercel-infra/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
       - "terraform/environments/production/daytona.tf"
@@ -33,6 +39,8 @@ on:
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
+      - "packages/sandbox-runtime/src/**"
+      - "packages/sandbox-images/**"
 
 permissions:
   contents: read
@@ -95,10 +103,10 @@ jobs:
           pip install -e "packages/modal-infra[dev]"
 
       - name: Run Ruff linter
-        run: ruff check packages/modal-infra/ packages/e2b-infra/ packages/daytona-infra/
+        run: ruff check packages/modal-infra/ packages/e2b-infra/ packages/daytona-infra/ packages/sandbox-images/
 
       - name: Run Ruff formatter check
-        run: ruff format --check packages/modal-infra/ packages/e2b-infra/ packages/daytona-infra/
+        run: ruff format --check packages/modal-infra/ packages/e2b-infra/ packages/daytona-infra/ packages/sandbox-images/
 
   typecheck-python:
     name: TypeCheck (Python)
@@ -213,6 +221,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
+      - name: Setup frozen image lock checker
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.7"
 
       - name: Install dependencies
         run: |

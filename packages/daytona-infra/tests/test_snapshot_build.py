@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from daytona import DaytonaNotFoundError
 from src import bootstrap
-from src.toolchain import build_base_image
+from src.toolchain import build_base_image, create_base_snapshot
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -20,9 +20,17 @@ def test_image_uses_current_runtime_and_has_terminal():
         (ROOT / "packages/sandbox-runtime/src/sandbox_runtime/runtime_manifest.json").read_text()
     )
     assert manifest["runtimeVersion"] in dockerfile
-    assert "/usr/local/bin/ttyd" in dockerfile
-    assert "sha256sum -c -" in dockerfile
-    assert "/app/sandbox_runtime" in dockerfile
+    assert "packages/sandbox-images/install/install.sh" in dockerfile
+    tools = (ROOT / "packages/sandbox-images/install/tools.sh").read_text()
+    assert "/usr/local/bin/ttyd" in tools
+    assert "download_checked" in tools
+
+
+def test_snapshot_preserves_workspace_resource_limits():
+    client = MagicMock()
+    create_base_snapshot(client, ROOT, "candidate")
+    resources = client.snapshot.create.call_args.args[0].resources
+    assert (resources.cpu, resources.memory, resources.disk) == (2, 4, 10)
 
 
 def test_non_code_assets_change_image_hash(tmp_path):
@@ -60,7 +68,11 @@ def build(monkeypatch):
     )
     create = MagicMock()
     monkeypatch.setattr(bootstrap, "create_base_snapshot", create)
-    monkeypatch.setattr("sys.argv", ["bootstrap"])
+    monkeypatch.setenv("OPENINSPECT_IMAGE_CANDIDATE", "test")
+    client.create.return_value.process.exec.return_value.exit_code = 0
+    from sandbox_images import native
+
+    monkeypatch.setattr(native, "write_build_result", MagicMock())
     return client, create
 
 
@@ -81,8 +93,8 @@ def test_missing_snapshot_is_built(build):
 
 def test_failed_snapshot_blocks_worker_cutover(build):
     client, create = build
-    client.snapshot.get.return_value.state = "error"
-    with pytest.raises(RuntimeError, match="not active"):
+    client.create.return_value.process.exec.return_value.exit_code = 1
+    with pytest.raises(RuntimeError, match="verification failed"):
         bootstrap.main()
     create.assert_not_called()
     client.snapshot.delete.assert_not_called()

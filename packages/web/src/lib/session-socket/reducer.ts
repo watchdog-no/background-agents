@@ -30,6 +30,7 @@ export interface SessionSocketState {
   participants: ParticipantPresence[];
   artifacts: Artifact[];
   currentParticipantId: string | null;
+  canManageBudget: boolean;
   hasMoreHistory: boolean;
   loadingHistory: boolean;
   cursor: HistoryCursor | null;
@@ -52,6 +53,7 @@ export const initialSessionSocketState: SessionSocketState = {
   participants: [],
   artifacts: [],
   currentParticipantId: null,
+  canManageBudget: false,
   hasMoreHistory: false,
   loadingHistory: false,
   cursor: null,
@@ -228,6 +230,7 @@ function reduceServerMessage(
         },
         artifacts: message.artifacts.map(toUiArtifact),
         currentParticipantId: message.participantId || state.currentParticipantId,
+        canManageBudget: message.canManageBudget ?? false,
         events: renderTimelineEvents(timelineEvents),
         hasMoreHistory: message.timeline.hasMore,
         cursor: message.timeline.cursor,
@@ -340,6 +343,14 @@ function reduceServerMessage(
         isProcessing: message.isProcessing,
       }));
 
+    case "budget_status":
+      return updateSessionState(state, (prev) => ({
+        ...prev,
+        totalCost: message.totalCost,
+        maxSessionCostUsd: message.maxSessionCostUsd,
+        budgetExhausted: message.budgetExhausted,
+      }));
+
     case "prompt_queue_updated":
       return { ...state, promptQueue: message.promptQueue };
 
@@ -368,19 +379,6 @@ export function sessionSocketReducer(
         events: appendLiveEvents(state.events, action.events),
       };
       for (const event of action.events) {
-        if (
-          event.type === "step_finish" &&
-          typeof event.cost === "number" &&
-          Number.isFinite(event.cost) &&
-          event.cost > 0
-        ) {
-          const stepCost = event.cost;
-          next = updateSessionState(next, (prev) => ({
-            ...prev,
-            totalCost: (prev.totalCost ?? 0) + stepCost,
-          }));
-        }
-
         // Context usage is a point-in-time gauge, not a running total. Ignore
         // child-task steps so they cannot overwrite the parent session's value.
         if (event.type === "step_finish" && !event.isSubtask && event.tokens !== undefined) {

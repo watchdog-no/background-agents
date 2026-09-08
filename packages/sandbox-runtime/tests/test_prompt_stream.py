@@ -1088,6 +1088,7 @@ class TestForkRuntimeEvents:
             {
                 "type": "step_finish",
                 "cost": 0.1,
+                "messageCostUsd": 0.1,
                 "tokens": {"input": 12},
                 "reason": "stop",
                 "messageId": "cp-msg-1",
@@ -1169,7 +1170,7 @@ class TestForkRuntimeEvents:
             },
             {
                 "type": "step_finish",
-                "cost": None,
+                "messageCostUsd": 0,
                 "tokens": {"input": 12},
                 "reason": None,
                 "messageId": "cp-msg-1",

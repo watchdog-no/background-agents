@@ -4,6 +4,7 @@ output "snapshot_build_id" {
 }
 
 output "snapshot_name" {
-  description = "Immutable snapshot name published by this build"
-  value       = local.snapshot_name
+  description = "Verified snapshot name; only switch traffic after the build succeeds"
+  value       = var.snapshot_name
+  depends_on  = [null_resource.daytona_snapshot]
 }

@@ -163,7 +163,7 @@ module "control_plane_worker" {
     ] : [],
     local.use_e2b_backend ? [
       { name = "E2B_API_URL", value = var.e2b_api_url },
-      { name = "E2B_TEMPLATE_ID", value = var.e2b_template_id },
+      { name = "E2B_TEMPLATE_ID", value = module.e2b_infra[0].template_id },
       { name = "E2B_SANDBOX_TIMEOUT_SECONDS", value = tostring(var.e2b_sandbox_timeout_seconds) },
       { name = "E2B_AUTO_PAUSE", value = tostring(var.e2b_auto_pause) },
     ] : []
@@ -242,15 +242,14 @@ module "control_plane_worker" {
   # and the draft sweep ABANDONED_DRAFT_SWEEP_CRON in abandoned-draft-sweep.ts.
   cron_triggers = ["* * * * *", "7,37 * * * *", "23 * * * *"]
 
-  # module.e2b_infra is deliberately absent: its template build depends on THIS
-  # worker instead (see e2b.tf), so control-plane deploys land before template
-  # rebuilds — the compatible order for E2B boots.
+  # Base artifacts are verified before the Worker switches its provider references.
   depends_on = [
     null_resource.control_plane_build,
     module.session_index_kv,
     null_resource.d1_migrations,
     module.linear_bot_worker,
     module.daytona_infra,
+    module.e2b_infra,
     module.vercel_sandbox_infra,
     module.opencomputer_infra,
     module.modal_app,

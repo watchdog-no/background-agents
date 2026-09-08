@@ -37,6 +37,8 @@ function createSession(overrides: Partial<SessionRow> = {}): SessionRow {
     total_cost: 0,
     context_tokens: 0,
     context_limit: 0,
+    max_cost_usd: null,
+    budget_exhausted: 0,
     sandbox_settings: null,
     environment_id: null,
     created_at: 1000,

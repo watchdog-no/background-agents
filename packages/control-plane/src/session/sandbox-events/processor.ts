@@ -93,7 +93,7 @@ export class SessionSandboxEventProcessor {
         return;
       case "step_start":
       case "step_finish":
-        this.streaming.handleStep(event, context);
+        await this.streaming.handleStep(event, context);
         return;
       case "tool_call":
         this.streaming.handleToolCall(event, context);
