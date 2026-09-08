@@ -1,7 +1,16 @@
-# Watchdog Daytona deployment
+# Watchdog Daytona deployment (reverted)
 
-Watchdog production selects Daytona in `terraform/environments/production/sandbox.auto.tfvars`. This
-non-secret configuration is reviewed with the code and takes precedence over the old
+The September 8, 2026 Daytona production cutover from PR #80 is reverted. Watchdog Open Inspect
+selects **Modal** in `terraform/environments/production/sandbox.auto.tfvars`; Daytona is no longer
+used for new sessions. Modal credentials remain in Actions secrets. This does not migrate the
+Watchdog application's separate sandbox integration.
+
+The instructions below are historical context for the Daytona integration, not the active production
+configuration. Existing Daytona filesystem state does not transfer to Modal; any sessions created on
+Daytona need a fresh session after the switch.
+
+The original cutover selected Daytona in `terraform/environments/production/sandbox.auto.tfvars`.
+This non-secret configuration is reviewed with the code and takes precedence over the old
 `SANDBOX_PROVIDER=modal` Actions secret and local `terraform.tfvars`. Merging the change to `main`
 starts the normal Terraform deployment; opening the PR does not switch the running worker.
 

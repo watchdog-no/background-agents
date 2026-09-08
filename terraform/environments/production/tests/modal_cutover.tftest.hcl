@@ -14,7 +14,7 @@ mock_provider "random" {}
 mock_provider "vercel" {}
 
 variables {
-  daytona_api_key                  = "test-daytona-key"
+  daytona_api_key                  = ""
   cloudflare_api_token             = "test-cloudflare-token"
   cloudflare_account_id            = "test-account"
   cloudflare_worker_subdomain      = "test-account"
@@ -28,10 +28,10 @@ variables {
   nextauth_secret                  = "test-browser-auth-secret-with-32-characters"
   deployment_name                  = "auth-provider-test"
 
-  modal_token_id     = ""
-  modal_token_secret = ""
-  modal_workspace    = ""
-  modal_api_secret   = ""
+  modal_token_id     = "test-modal-token-id"
+  modal_token_secret = "test-modal-token-secret"
+  modal_workspace    = "test-workspace"
+  modal_api_secret   = "test-modal-api-secret"
 
   web_platform      = "cloudflare"
   project_root      = "../../../"
@@ -48,33 +48,34 @@ variables {
   unsafe_allow_all_users = false
 }
 
-run "watchdog_daytona_cutover" {
+run "watchdog_modal_restored" {
   command = plan
 
   assert {
     condition = (
-      var.sandbox_provider == "daytona" &&
-      length(module.daytona_infra) == 1 &&
-      length(module.modal_app) == 0
+      var.sandbox_provider == "modal" &&
+      length(module.daytona_infra) == 0 &&
+      length(module.modal_app) == 1
     )
-    error_message = "Watchdog production must build Daytona, with no Modal deployment."
+    error_message = "Watchdog production must deploy Modal, with no Daytona snapshot build."
   }
 
   assert {
     condition = (
-      contains(module.control_plane_worker.secret_binding_names, "DAYTONA_API_KEY") &&
-      !contains(module.control_plane_worker.secret_binding_names, "MODAL_API_SECRET") &&
-      contains(module.control_plane_worker.plain_text_binding_names, "DAYTONA_BASE_SNAPSHOT") &&
-      module.daytona_infra[0].snapshot_name == "watchdog-open-inspect-test-source-hash"
+      contains(module.control_plane_worker.secret_binding_names, "MODAL_API_SECRET") &&
+      !contains(module.control_plane_worker.secret_binding_names, "DAYTONA_API_KEY") &&
+      contains(module.control_plane_worker.plain_text_binding_names, "MODAL_WORKSPACE") &&
+      !contains(module.control_plane_worker.plain_text_binding_names, "DAYTONA_BASE_SNAPSHOT") &&
+      !contains(module.control_plane_worker.plain_text_binding_names, "DAYTONA_API_URL")
     )
-    error_message = "Daytona must receive its secret and immutable runtime snapshot."
+    error_message = "Modal must receive its credentials; Daytona must have no production bindings."
   }
 }
 
-run "missing_daytona_key_blocks_cutover" {
+run "missing_modal_secret_blocks_deployment" {
   command = plan
   variables {
-    daytona_api_key = ""
+    modal_api_secret = ""
   }
-  expect_failures = [var.daytona_api_key]
+  expect_failures = [var.modal_api_secret]
 }
