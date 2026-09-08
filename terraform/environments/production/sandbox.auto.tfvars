@@ -1,6 +1,4 @@
-# Watchdog production cutover. This file takes precedence over legacy TF_VAR_*
-# settings (including the existing SANDBOX_PROVIDER=modal Actions secret).
+# Watchdog production uses Modal. This file takes precedence over TF_VAR_*
+# settings so stale provider configuration cannot switch production back.
 # Credentials remain in GitHub Actions secrets, never in this file.
-sandbox_provider      = "daytona"
-daytona_api_url       = "https://app.daytona.io/api"
-daytona_base_snapshot = "watchdog-open-inspect"
+sandbox_provider = "modal"
