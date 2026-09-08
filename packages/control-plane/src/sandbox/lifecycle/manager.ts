@@ -195,6 +195,8 @@ export interface SandboxStorage {
   setLastSpawnError(error: string | null, timestamp: number | null): void;
   /** Set one access artifact's URL and (encrypted) secret on the sandbox row */
   updateSandboxAccess(kind: SandboxAccessKind, url: string, secret: string): void | Promise<void>;
+  /** Replace one access artifact's URL without changing its stored secret. */
+  updateSandboxAccessUrl(kind: SandboxAccessKind, url: string): void;
   /** Clear one access artifact's URL and secret (e.g. on sandbox teardown) */
   clearSandboxAccess(kind: SandboxAccessKind): void;
   /** Clear one access artifact's URL while preserving its stored secret */
@@ -1140,6 +1142,10 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
       }
       this.broadcastSandboxDashboardUrl(finalProviderObjectId);
 
+      if (result.ttydUrl) {
+        this.storage.updateSandboxAccessUrl("ttyd", result.ttydUrl);
+      }
+
       if (result.codeServerUrl && result.codeServerPassword) {
         await this.storeCodeServer(result.codeServerUrl, result.codeServerPassword);
       }
@@ -1331,20 +1337,21 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
   /**
    * Clear preview URLs after a sandbox is no longer reachable.
    *
-   * Persistent resumes preserve code-server and VNC passwords, so only their
-   * URLs are cleared. Snapshot restores rotate passwords, so both values are
+   * Persistent resumes preserve access credentials, so only their
+   * URLs are cleared. Snapshot restores rotate credentials, so both values are
    * removed.
    */
   private clearSandboxAccessState(): void {
     if (this.usesProviderManagedStop() && this.storage.clearSandboxAccessUrl) {
       this.storage.clearSandboxAccessUrl("codeServer");
       this.storage.clearSandboxAccessUrl("vnc");
+      this.storage.clearSandboxAccessUrl("ttyd");
     } else {
       this.storage.clearSandboxAccess("codeServer");
       this.storage.clearSandboxAccess("vnc");
+      this.storage.clearSandboxAccess("ttyd");
     }
     this.storage.clearSandboxTunnelUrls();
-    this.storage.clearSandboxAccess("ttyd");
     this.broadcaster.broadcast({ type: "sandbox_access_changed" });
   }
 

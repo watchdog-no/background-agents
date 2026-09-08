@@ -269,6 +269,10 @@ function createMockStorage(
         sandbox[ACCESS_FIELDS[kind].secret] = secret;
       }
     }),
+    updateSandboxAccessUrl: vi.fn((kind: SandboxAccessKind, url: string) => {
+      calls.push(`updateSandboxAccessUrl:${kind}:${url}`);
+      if (sandbox) sandbox[ACCESS_FIELDS[kind].url] = url;
+    }),
     clearSandboxAccess: vi.fn((kind: SandboxAccessKind) => {
       calls.push(`clearSandboxAccess:${kind}`);
       if (sandbox) {
@@ -2323,7 +2327,7 @@ describe("SandboxLifecycleManager", () => {
       expect(wsManager.sendToSandbox).toHaveBeenCalledWith({ type: "shutdown" });
     });
 
-    it("stops resumable provider-managed sandboxes without snapshotting", async () => {
+    it("preserves terminal credentials through stop/resume and refreshes the URL", async () => {
       const now = Date.now();
       const sandbox = createMockSandbox({
         status: "ready",
@@ -2333,12 +2337,18 @@ describe("SandboxLifecycleManager", () => {
         code_server_password: "encrypted-password",
         vnc_url: "https://vnc.test",
         vnc_password: "encrypted-vnc-password",
+        ttyd_url: "https://old-terminal.test",
+        ttyd_token: "encrypted-terminal-token",
       });
       const storage = createMockStorage(createMockSession(), sandbox);
       const stopSandbox = vi.fn(async () => ({ success: true }));
       const provider = createMockProvider({
         capabilities: { supportsExplicitStop: true, supportsPersistentResume: true },
         stopSandbox,
+        resumeSandbox: vi.fn(async () => ({
+          success: true,
+          ttydUrl: "https://resumed-terminal.test",
+        })),
       });
 
       const manager = new SandboxLifecycleManager(
@@ -2366,6 +2376,14 @@ describe("SandboxLifecycleManager", () => {
       expect(storage.calls).toContain("clearSandboxAccessUrl:vnc");
       expect(storage.calls).not.toContain("clearSandboxAccess:vnc");
       expect(sandbox.vnc_password).toBe("encrypted-vnc-password");
+      expect(sandbox.ttyd_url).toBeNull();
+      expect(sandbox.ttyd_token).toBe("encrypted-terminal-token");
+
+      await manager.spawnSandbox();
+
+      expect(provider.resumeSandbox).toHaveBeenCalled();
+      expect(sandbox.ttyd_url).toBe("https://resumed-terminal.test");
+      expect(sandbox.ttyd_token).toBe("encrypted-terminal-token");
     });
 
     it("clears complete access when URL-only clearing is unavailable", async () => {

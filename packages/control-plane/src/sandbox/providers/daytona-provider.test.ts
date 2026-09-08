@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { computeHmacHex } from "@open-inspect/shared/auth";
+import { DEFAULT_TERMINAL_PORT } from "@open-inspect/shared/types/integrations";
 import { deriveVncPassword } from "../sandbox-env";
 import { DaytonaSandboxProvider, type DaytonaProviderConfig } from "./daytona-provider";
 import { SandboxProviderError } from "../provider";
@@ -465,6 +466,82 @@ describe("DaytonaSandboxProvider", () => {
         tunnelUrls: { "3000": "https://preview.test/3000" },
       });
     });
+  });
+
+  describe("terminal access", () => {
+    it.each([undefined, 7000])(
+      "enables and exposes the terminal on port %s",
+      async (configuredPort) => {
+        const port = configuredPort ?? DEFAULT_TERMINAL_PORT;
+        const client = createMockClient({
+          getSignedPreviewUrl: vi.fn(async (_id, previewPort) => ({
+            url: `https://preview.test/${previewPort}`,
+          })),
+        });
+        const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);
+
+        const result = await provider.createSandbox({
+          ...baseCreateConfig,
+          sandboxSettings: {
+            terminalEnabled: true,
+            terminalPort: configuredPort,
+            tunnelPorts: [port, 3000],
+          },
+        });
+
+        expect(vi.mocked(client.createSandbox).mock.calls[0][0].env).toMatchObject({
+          TERMINAL_ENABLED: "true",
+          TTYD_PROXY_PORT: String(port),
+        });
+        expect(result.ttydUrl).toBe(`https://preview.test/${port}`);
+        expect(result.tunnelUrls).toEqual({ "3000": "https://preview.test/3000" });
+        expect(client.getSignedPreviewUrl).toHaveBeenCalledWith("daytona-sandbox-id", port, 3900);
+        expect(client.getSignedPreviewUrl).toHaveBeenCalledTimes(2);
+      }
+    );
+
+    it.each([undefined, false])(
+      "leaves the terminal disabled for terminalEnabled=%s",
+      async (terminalEnabled) => {
+        const client = createMockClient();
+        const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);
+
+        const result = await provider.createSandbox({
+          ...baseCreateConfig,
+          sandboxSettings: { terminalEnabled },
+        });
+
+        const env = vi.mocked(client.createSandbox).mock.calls[0][0].env;
+        expect(env?.TERMINAL_ENABLED).toBeUndefined();
+        expect(env?.TTYD_PROXY_PORT).toBeUndefined();
+        expect(result.ttydUrl).toBeUndefined();
+        expect(client.getSignedPreviewUrl).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([undefined, 7000])(
+      "refreshes the signed terminal URL on resume for port %s",
+      async (configuredPort) => {
+        const port = configuredPort ?? DEFAULT_TERMINAL_PORT;
+        const client = createMockClient({
+          getSandbox: async () => ({ id: "daytona-sandbox-id", state: "stopped" }),
+          getSignedPreviewUrl: vi.fn(async (_id, previewPort) => ({
+            url: `https://preview.test/${previewPort}`,
+          })),
+        });
+        const provider = new DaytonaSandboxProvider(client, defaultProviderConfig);
+
+        const result = await provider.resumeSandbox({
+          ...baseResumeConfig,
+          sandboxSettings: { terminalEnabled: true, terminalPort: configuredPort },
+        });
+
+        expect(client.startSandbox).toHaveBeenCalledWith("daytona-sandbox-id");
+        expect(result.success).toBe(true);
+        expect(result.ttydUrl).toBe(`https://preview.test/${port}`);
+        expect(client.getSignedPreviewUrl).toHaveBeenCalledWith("daytona-sandbox-id", port, 3900);
+      }
+    );
   });
 
   describe("resumeSandbox", () => {

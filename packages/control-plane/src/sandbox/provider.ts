@@ -315,6 +315,8 @@ export interface ResumeResult {
   codeServerUrl?: string;
   /** Code-server password (if available) */
   codeServerPassword?: string;
+  /** Refreshed ttyd proxy URL; in-place resume retains the existing terminal credential. */
+  ttydUrl?: string;
   /** Complete browser-based VNC credential (if available) */
   vncAccess?: VncAccess;
   /** Tunnel URLs for extra ports (port -> URL mapping) */
