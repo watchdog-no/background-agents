@@ -39,6 +39,17 @@ current base snapshot. Retries reuse an already active snapshot; an existing fai
 snapshot blocks deployment until investigated. Previous snapshots are retained for rollback and
 require periodic manual cleanup once unused.
 
+The Daytona image includes PostgreSQL 17 server and client binaries. Repository setup can use them
+without contacting PGDG from inside a network-restricted sandbox. Image verification initializes a
+temporary database, starts it over a local Unix socket, runs a query, and removes it; no database
+cluster is baked into the snapshot. The major version is owned by `sandbox-images/toolchain.json`.
+
+Fatal runtime errors fail the affected queued and processing prompts instead of automatically
+replaying them. A new prompt can retry after the startup issue is fixed. Startup failures count
+toward the circuit breaker until the runtime connects successfully. Replacing a sandbox requires
+successful provider cleanup; a failed or timed-out deletion retains the old handle and blocks
+creation so the session cannot accumulate orphaned sandboxes.
+
 Before merging, finish active Modal sessions and push any work that must survive the provider
 change. Modal filesystem snapshots and sandbox IDs cannot be resumed on Daytona. Start a new session
 after cutover to validate repository checkout, agent streaming, terminal/IDE access, and

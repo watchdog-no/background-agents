@@ -208,6 +208,50 @@ def stop_process(process: subprocess.Popen) -> None:
             process.wait()
 
 
+def verify_postgres(major: str) -> None:
+    """Prove the baked server can initialize and query a fresh offline cluster."""
+    account = pwd.getpwnam("postgres") if os.geteuid() == 0 else pwd.getpwuid(os.geteuid())
+    options: dict[str, Any] = {"text": True, "capture_output": True, "check": True, "timeout": 30}
+    if os.geteuid() == 0:
+        options.update(user=account.pw_uid, group=account.pw_gid, extra_groups=[])
+    binaries = Path(f"/usr/lib/postgresql/{major}/bin")
+    with tempfile.TemporaryDirectory(prefix="openinspect-postgres-") as directory:
+        root = Path(directory)
+        if os.geteuid() == 0:
+            os.chown(root, account.pw_uid, account.pw_gid)
+        data = root / "data"
+        subprocess.run(
+            [str(binaries / "initdb"), "-D", str(data), "-A", "trust", "--no-locale"], **options
+        )
+        try:
+            subprocess.run(
+                [
+                    str(binaries / "pg_ctl"),
+                    "-D",
+                    str(data),
+                    "-l",
+                    str(root / "postgres.log"),
+                    "-o",
+                    f"-c listen_addresses='' -k {root}",
+                    "-w",
+                    "start",
+                ],
+                **options,
+            )
+            result = subprocess.run(
+                [str(binaries / "psql"), "-h", str(root), "-d", "postgres", "-Atc", "SELECT 1"],
+                **options,
+            )
+            if result.stdout.strip() != "1":
+                raise RuntimeError("PostgreSQL image query failed")
+        finally:
+            if (data / "postmaster.pid").exists():
+                subprocess.run(
+                    [str(binaries / "pg_ctl"), "-D", str(data), "-m", "immediate", "-w", "stop"],
+                    **options,
+                )
+
+
 def observed_tool_version(command: str, expected: str, output: str) -> str:
     """Normalize the command's leading version, not an expected substring."""
     prefixes = {
@@ -234,6 +278,8 @@ def observed_tool_version(command: str, expected: str, output: str) -> str:
 
 def inspect_image(plan: dict[str, Any], tools: dict[str, Any], *, services: bool) -> None:
     probe = Probe(plan)
+    if plan["provider"] == "daytona":
+        verify_postgres(tools["postgresMajor"])
     for command, version in (
         ("node", tools["node"][plan["target"]["node"]]["version"]),
         ("opencode", tools["opencode"]),

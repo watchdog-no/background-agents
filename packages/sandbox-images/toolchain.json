@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "osRefresh": "2026-09-06",
+  "postgresMajor": "17",
   "chrome": {
     "version": "152.0.7977.82",
     "sha256": "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0"

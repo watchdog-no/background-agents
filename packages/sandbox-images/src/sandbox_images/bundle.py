@@ -172,6 +172,7 @@ def pack_bundle(root: Path, provider: str, output_root: Path) -> Path:
             "OI_RUNTIME_USER": plan["target"]["user"],
             "OI_RUNTIME_HOME": plan["target"]["home"],
             "PYTHON_VERSION": toolchain["python"],
+            "POSTGRES_MAJOR": toolchain["postgresMajor"],
             "AGENT_BROWSER_VERSION": toolchain["agentBrowser"],
             "AGENT_BROWSER_SHA256": toolchain["agentBrowserSha256"],
         }

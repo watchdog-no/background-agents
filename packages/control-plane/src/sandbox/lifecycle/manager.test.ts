@@ -614,7 +614,7 @@ describe("SandboxLifecycleManager", () => {
     );
 
     it.each(["spawn", "restore"] as const)(
-      "continues %s when stopping the prior provider sandbox fails",
+      "blocks %s and retains the handle when prior provider cleanup fails",
       async (kind) => {
         const sandbox = createMockSandbox({
           status: kind === "spawn" ? "pending" : "stopped",
@@ -652,11 +652,11 @@ describe("SandboxLifecycleManager", () => {
         expect(sandbox.modal_object_id).toBe("modal-obj-123");
         expect(
           kind === "spawn" ? provider.createSandbox : provider.restoreFromSnapshot
-        ).toHaveBeenCalledOnce();
+        ).not.toHaveBeenCalled();
         expect(storage.transitionSandboxStatus).toHaveBeenCalledWith(
           expect.objectContaining({ sandboxId: expect.any(String) }),
           "spawning",
-          "connecting"
+          "failed"
         );
         expect(parseStructuredLogs(warnSpy)).toContainEqual(
           expect.objectContaining({
@@ -668,7 +668,7 @@ describe("SandboxLifecycleManager", () => {
       }
     );
 
-    it("continues replacement when stopping the prior provider sandbox times out", async () => {
+    it("blocks replacement when prior provider cleanup times out", async () => {
       vi.useFakeTimers();
       try {
         const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
@@ -699,11 +699,11 @@ describe("SandboxLifecycleManager", () => {
         await vi.advanceTimersByTimeAsync(10_000);
         await spawning;
 
-        expect(provider.createSandbox).toHaveBeenCalledOnce();
+        expect(provider.createSandbox).not.toHaveBeenCalled();
         expect(storage.transitionSandboxStatus).toHaveBeenCalledWith(
           expect.objectContaining({ sandboxId: expect.any(String) }),
           "spawning",
-          "connecting"
+          "failed"
         );
         expect(sandbox.modal_object_id).toBe("modal-obj-123");
         expect(parseStructuredLogs(warnSpy)).toContainEqual(
@@ -2613,6 +2613,57 @@ describe("SandboxLifecycleManager", () => {
   });
 
   describe("terminateFailedSandbox", () => {
+    it("counts fatal boot failures across successful provider creations until the circuit opens", async () => {
+      const sandbox = createMockSandbox({ status: "pending", created_at: Date.now() - 60000 });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const provider = createMockProvider();
+      const config = createTestConfig();
+      const manager = new SandboxLifecycleManager(
+        provider,
+        storage,
+        storage,
+        createMockBroadcaster(),
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        config
+      );
+      for (let attempt = 0; attempt < config.circuitBreaker.threshold; attempt++) {
+        await manager.spawnSandbox();
+        expect(sandbox.status).toBe("connecting");
+        expect(sandbox.spawn_failure_count).toBe(attempt);
+        await manager.terminateFailedSandbox("start hook failed");
+        expect(sandbox.spawn_failure_count).toBe(attempt + 1);
+      }
+      await manager.spawnSandbox();
+      expect(provider.createSandbox).toHaveBeenCalledTimes(config.circuitBreaker.threshold);
+      expect(storage.resetCircuitBreaker).not.toHaveBeenCalled();
+    });
+
+    it("resets prior failures only when the runtime connects", async () => {
+      const sandbox = createMockSandbox({
+        status: "pending",
+        spawn_failure_count: 1,
+        last_spawn_failure: Date.now(),
+        created_at: Date.now() - 60000,
+      });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const manager = new SandboxLifecycleManager(
+        createMockProvider(),
+        storage,
+        storage,
+        createMockBroadcaster(),
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        createTestConfig()
+      );
+      await manager.spawnSandbox();
+      expect(sandbox.spawn_failure_count).toBe(1);
+      manager.onSandboxConnected();
+      expect(sandbox.spawn_failure_count).toBe(0);
+    });
+
     it("detaches dispatch and gates replacement spawn until provider termination completes", async () => {
       let resolveStop!: (result: StopResult) => void;
       const stopSandbox = vi.fn(
