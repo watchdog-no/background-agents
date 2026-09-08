@@ -14,6 +14,7 @@ mock_provider "random" {}
 mock_provider "vercel" {}
 
 variables {
+  sandbox_provider                 = "modal"
   cloudflare_api_token             = "test-cloudflare-token"
   cloudflare_account_id            = "test-account"
   cloudflare_worker_subdomain      = "test-account"

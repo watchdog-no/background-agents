@@ -16,7 +16,7 @@ variable "target" {
 }
 
 variable "snapshot_name" {
-  description = "Name of the Daytona snapshot to create/update"
+  description = "Prefix for the content-addressed Daytona runtime snapshot"
   type        = string
 }
 

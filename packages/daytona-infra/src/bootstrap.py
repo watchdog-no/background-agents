@@ -64,6 +64,20 @@ def main() -> None:
             client.snapshot.delete(existing)
             _wait_for_snapshot_deletion(client, config.base_snapshot)
 
+    else:
+        try:
+            existing = client.snapshot.get(config.base_snapshot)
+        except DaytonaNotFoundError:
+            existing = None
+        if existing is not None:
+            if existing.state != "active":
+                raise RuntimeError(
+                    f"Snapshot {config.base_snapshot!r} is {existing.state}, not active; "
+                    "inspect the build in Daytona before retrying."
+                )
+            print(f"Reusing active Daytona snapshot {config.base_snapshot!r}")
+            return
+
     create_base_snapshot(client, config.repo_root, config.base_snapshot)
 
 

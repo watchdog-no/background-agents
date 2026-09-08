@@ -12,6 +12,8 @@ on:
       - "packages/sandbox-runtime/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
+      - "terraform/environments/production/daytona.tf"
+      - "terraform/modules/daytona-infra/**"
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
@@ -26,6 +28,8 @@ on:
       - "packages/sandbox-runtime/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
+      - "terraform/environments/production/daytona.tf"
+      - "terraform/modules/daytona-infra/**"
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
@@ -218,3 +222,19 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+  test-daytona:
+    name: Test (Python - Daytona)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install snapshot test dependencies
+        run: pip install 'daytona==0.161.0' pytest
+      - name: Test snapshot build and retries
+        run: PYTHONPATH=packages/daytona-infra pytest packages/daytona-infra/tests -q

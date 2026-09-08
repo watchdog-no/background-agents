@@ -24,8 +24,7 @@ cd "${DEPLOY_PATH}" || {
 # Pin the version to avoid surprise breakage from SDK changes.
 pip install --user -q 'daytona==0.161.0'
 
-# --force deletes the existing snapshot before rebuilding,
-# ensuring the create call succeeds even if the name is taken.
-python -m src.bootstrap --force
+# Reuse an already-built content-addressed snapshot when retrying an apply.
+python -m src.bootstrap
 
 echo "Daytona snapshot ${DAYTONA_BASE_SNAPSHOT} built successfully"
