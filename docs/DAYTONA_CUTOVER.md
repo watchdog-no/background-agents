@@ -23,12 +23,12 @@ account credentials continue through the control plane's normal credential deliv
 ## Build and cutover
 
 Terraform builds a base snapshot with the shared runtime manifest, bundled skills, OpenCode,
-code-server, browser/VNC tools, and ttyd. The snapshot reserves 2 CPUs, 4 GiB memory, and 20 GiB
-disk. Runtime and build input changes produce a new snapshot name. The worker depends on a
-successful build, so a failed replacement does not remove its current base snapshot. Retries reuse
-an already active snapshot; an existing failed or unfinished snapshot blocks deployment until
-investigated. Previous snapshots are retained for rollback and require periodic manual cleanup once
-unused.
+code-server, browser/VNC tools, and ttyd. The snapshot reserves 2 CPUs, 4 GiB memory, and 10 GiB
+disk (the current Watchdog organization limit). Runtime and build input changes produce a new
+snapshot name. The worker depends on a successful build, so a failed replacement does not remove its
+current base snapshot. Retries reuse an already active snapshot; an existing failed or unfinished
+snapshot blocks deployment until investigated. Previous snapshots are retained for rollback and
+require periodic manual cleanup once unused.
 
 Before merging, finish active Modal sessions and push any work that must survive the provider
 change. Modal filesystem snapshots and sandbox IDs cannot be resumed on Daytona. Start a new session

@@ -113,7 +113,7 @@ def create_base_snapshot(daytona: Daytona, repo_root: Path, snapshot_name: str) 
         CreateSnapshotParams(
             name=snapshot_name,
             image=image,
-            resources=Resources(cpu=2, memory=4, disk=20),
+            resources=Resources(cpu=2, memory=4, disk=10),
             entrypoint=["python", "-m", "sandbox_runtime.entrypoint"],
         ),
         on_logs=lambda chunk: print(chunk, end="\n"),
