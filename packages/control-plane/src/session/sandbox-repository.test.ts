@@ -342,6 +342,14 @@ describe("SandboxRepository", () => {
       expect(mock.calls[0].query).toContain("SET vnc_url = NULL");
       expect(mock.calls[0].query).not.toContain("vnc_password");
     });
+
+    it("refreshes a terminal URL without replacing the encrypted credential", () => {
+      repository.updateSandboxAccessUrl("ttyd", "https://resumed-terminal.test");
+
+      expect(mock.calls[0].query).toContain("SET ttyd_url = ?");
+      expect(mock.calls[0].query).not.toContain("ttyd_token");
+      expect(mock.calls[0].params).toEqual(["https://resumed-terminal.test"]);
+    });
   });
 
   describe("resetCircuitBreaker", () => {

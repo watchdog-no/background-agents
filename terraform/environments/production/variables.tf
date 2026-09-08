@@ -395,7 +395,7 @@ variable "daytona_api_key" {
 }
 
 variable "daytona_base_snapshot" {
-  description = "Named Daytona snapshot used for fresh sandbox creation"
+  description = "Prefix for the managed Daytona snapshot used for fresh sandbox creation"
   type        = string
   default     = ""
 

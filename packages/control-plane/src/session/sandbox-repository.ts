@@ -324,6 +324,15 @@ export class SandboxRepository {
     );
   }
 
+  /** Refresh a preview URL without replacing or re-encrypting its credential. */
+  updateSandboxAccessUrl(kind: SandboxAccessKind, url: string): void {
+    const { urlColumn } = ACCESS_ARTIFACT_COLUMNS[kind];
+    this.sql.exec(
+      `UPDATE sandbox SET ${urlColumn} = ? WHERE id = (SELECT id FROM sandbox LIMIT 1)`,
+      url
+    );
+  }
+
   /** Clear one access artifact's URL and secret. */
   clearSandboxAccess(kind: SandboxAccessKind): void {
     const { urlColumn, secretColumn } = ACCESS_ARTIFACT_COLUMNS[kind];

@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Open-Inspect is a background coding agent system that spawns sandboxed dev environments to work on
-GitHub repositories. Single-tenant design. Stack: Cloudflare Workers (TypeScript), Modal (Python),
-Next.js (React), Terraform.
+GitHub repositories. Single-tenant design. Stack: Cloudflare Workers (TypeScript), Daytona sandboxes
+(Python runtime), Next.js (React), Terraform.
 
 ## Architecture
 
@@ -13,8 +13,9 @@ Three tiers connected by WebSockets:
 2. **Control Plane** (Cloudflare Workers + Durable Objects) — session lifecycle, WebSocket hub,
    GitHub/auth integration. Each session is a Durable Object with SQLite storage. Uses D1 for the
    session index, repo metadata, environments, and encrypted secrets.
-3. **Data Plane** (Modal, Python) — sandboxed environments running coding agents. Manages sandbox
-   creation, snapshots, and repository/environment image builds.
+3. **Data Plane** (Daytona, Python) — sandboxed environments running coding agents. The control
+   plane calls Daytona directly; Terraform builds the base runtime snapshot. Modal remains available
+   as an alternate backend. Daytona uses persistent stop/resume and has no repo image-build support.
 
 **Bot integrations** — all Cloudflare Workers using Hono:
 
@@ -22,7 +23,7 @@ Three tiers connected by WebSockets:
 - `github-bot` — PR review assignments and @mention commands
 - `linear-bot` — Linear agent webhooks → coding sessions
 
-**Data flow**: User prompt → web client → control plane DO (WebSocket) → Modal sandbox → streaming
+**Data flow**: User prompt → web client → control plane DO (WebSocket) → Daytona sandbox → streaming
 events back through the same WebSocket chain.
 
 ### Package Dependency Graph
@@ -129,6 +130,10 @@ under 72 characters. Use the PR body for details, not the commit message.
 - Open PRs as ready for review by default. Use draft only when explicitly requested.
 
 ## Key Gotchas
+
+- **Watchdog sandbox provider**: `terraform/environments/production/sandbox.auto.tfvars` selects
+  Daytona and overrides legacy `TF_VAR_*` provider values. Keep credentials in Actions secrets. See
+  `docs/DAYTONA_CUTOVER.md` for build, cutover, and rollback details.
 
 - **Build order**: always build `@open-inspect/shared` before packages that depend on it.
 - **PKCS#8 keys**: Cloudflare Workers require PKCS#8 format for GitHub App private keys — convert

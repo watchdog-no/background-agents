@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
-from daytona import CreateSnapshotParams, Daytona, Image
+from daytona import CreateSnapshotParams, Daytona, Image, Resources
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,13 +21,17 @@ OPENCODE_VERSION = "1.18.29"
 CODE_SERVER_VERSION = "4.109.5"
 AGENT_BROWSER_VERSION = "0.35.0"
 BUN_VERSION = "1.4.0"
-# Bump when changing image contents to invalidate the Daytona snapshot.
-SANDBOX_VERSION = "v62-gpt6-astra"
+TTYD_VERSION = "1.7.7"
+TTYD_SHA256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
 
 def build_base_image(repo_root: Path) -> Image:
     """Build the Open-Inspect Daytona base image."""
     sandbox_runtime_dir = repo_root / "packages" / "sandbox-runtime" / "src" / "sandbox_runtime"
+
+    runtime_version = json.loads((sandbox_runtime_dir / "runtime_manifest.json").read_text())[
+        "runtimeVersion"
+    ]
 
     return (
         Image.base("python:3.12-slim-bookworm")
@@ -37,7 +42,7 @@ def build_base_image(repo_root: Path) -> Image:
             "libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 "
             "libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 "
             "libpango-1.0-0 libcairo2 ffmpeg xvfb fluxbox x11vnc "
-            "websockify novnc",
+            "websockify novnc passwd adduser sysvinit-utils procps",
             "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg "
             "| dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
             "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] "
@@ -65,6 +70,10 @@ def build_base_image(repo_root: Path) -> Image:
             f"code-server_{CODE_SERVER_VERSION}_amd64.deb",
             "dpkg -i /tmp/code-server.deb",
             "rm /tmp/code-server.deb",
+            f"curl -fsSL -o /usr/local/bin/ttyd "
+            f"https://github.com/tsl0922/ttyd/releases/download/{TTYD_VERSION}/ttyd.x86_64",
+            f'echo "{TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -',
+            "chmod +x /usr/local/bin/ttyd && ttyd --version",
             f"npm install -g agent-browser@{AGENT_BROWSER_VERSION}",
             "agent-browser install",
             "mkdir -p /workspace /app /tmp/opencode",
@@ -89,7 +98,7 @@ def build_base_image(repo_root: Path) -> Image:
                 "PATH": "/root/.bun/bin:/usr/local/bin:/usr/bin:/bin",
                 "PYTHONPATH": "/app",
                 "NODE_PATH": "/usr/lib/node_modules",
-                "SANDBOX_VERSION": SANDBOX_VERSION,
+                "SANDBOX_VERSION": runtime_version,
             }
         )
         .add_local_dir(str(sandbox_runtime_dir), "/app/sandbox_runtime")
@@ -104,6 +113,7 @@ def create_base_snapshot(daytona: Daytona, repo_root: Path, snapshot_name: str) 
         CreateSnapshotParams(
             name=snapshot_name,
             image=image,
+            resources=Resources(cpu=2, memory=4, disk=10),
             entrypoint=["python", "-m", "sandbox_runtime.entrypoint"],
         ),
         on_logs=lambda chunk: print(chunk, end="\n"),

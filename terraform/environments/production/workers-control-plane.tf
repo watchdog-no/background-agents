@@ -123,7 +123,7 @@ module "control_plane_worker" {
     ] : [],
     local.use_daytona_backend ? [
       { name = "DAYTONA_API_URL", value = var.daytona_api_url },
-      { name = "DAYTONA_BASE_SNAPSHOT", value = var.daytona_base_snapshot },
+      { name = "DAYTONA_BASE_SNAPSHOT", value = module.daytona_infra[0].snapshot_name },
     ] : [],
     var.anthropic_oauth_client_id != "" ? [
       { name = "ANTHROPIC_OAUTH_CLIENT_ID", value = var.anthropic_oauth_client_id },

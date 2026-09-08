@@ -93,7 +93,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
       const sandbox = await this.client.createSandbox(params);
 
-      const { codeServerUrl, codeServerPassword, vncAccess, tunnelUrls } =
+      const { codeServerUrl, codeServerPassword, ttydUrl, vncAccess, tunnelUrls } =
         await this.buildTunnelUrls(
           sandbox.id,
           config.sandboxId,
@@ -109,6 +109,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         createdAt: Date.now(),
         codeServerUrl,
         codeServerPassword,
+        ttydUrl,
         vncAccess,
         tunnelUrls,
       };
@@ -146,6 +147,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       // doesn't mask a successful resume.
       let codeServerUrl: string | undefined;
       let codeServerPassword: string | undefined;
+      let ttydUrl: string | undefined;
       let vncAccess: VncAccess | undefined;
       let tunnelUrls: Record<string, string> | undefined;
       try {
@@ -159,6 +161,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         );
         codeServerUrl = tunnels.codeServerUrl;
         codeServerPassword = tunnels.codeServerPassword;
+        ttydUrl = tunnels.ttydUrl;
         vncAccess = tunnels.vncAccess;
         tunnelUrls = tunnels.tunnelUrls;
       } catch (tunnelError) {
@@ -173,6 +176,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         providerObjectId: sandbox.id,
         codeServerUrl,
         codeServerPassword,
+        ttydUrl,
         vncAccess,
         tunnelUrls,
       };
@@ -214,7 +218,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
   // -----------------------------------------------------------------------
 
   private async buildEnvVars(config: CreateSandboxConfig): Promise<Record<string, string>> {
-    return buildSandboxEnvVars(config, {
+    const envVars = buildSandboxEnvVars(config, {
       scmIdentity: scmCloneIdentity(this.providerConfig.scmProvider),
       codeServerPassword: config.codeServerEnabled
         ? await deriveCodeServerPassword(
@@ -226,6 +230,11 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         ? await deriveVncPassword(config.sandboxId, this.providerConfig.sandboxAccessPasswordSecret)
         : undefined,
     });
+    if (config.sandboxSettings?.terminalEnabled) {
+      envVars.TERMINAL_ENABLED = "true";
+      envVars.TTYD_PROXY_PORT = String(resolveServicePorts(config.sandboxSettings).terminalPort);
+    }
+    return envVars;
   }
 
   // -----------------------------------------------------------------------
@@ -257,14 +266,16 @@ export class DaytonaSandboxProvider implements SandboxProvider {
   ): Promise<{
     codeServerUrl?: string;
     codeServerPassword?: string;
+    ttydUrl?: string;
     vncAccess?: VncAccess;
     tunnelUrls?: Record<string, string>;
   }> {
     const expirySeconds = resolvePreviewExpirySeconds(timeoutSeconds);
-    const { codeServerPort, vncPort } = resolveServicePorts(sandboxSettings);
+    const { codeServerPort, terminalPort, vncPort } = resolveServicePorts(sandboxSettings);
     let tunnelPorts = resolveTunnelPorts(sandboxSettings?.tunnelPorts);
     let codeServerUrl: string | undefined;
     let codeServerPassword: string | undefined;
+    let ttydUrl: string | undefined;
     let vncAccess: VncAccess | undefined;
 
     if (codeServerEnabled) {
@@ -279,6 +290,16 @@ export class DaytonaSandboxProvider implements SandboxProvider {
         this.providerConfig.sandboxAccessPasswordSecret
       );
       tunnelPorts = tunnelPorts.filter((p) => p !== codeServerPort);
+    }
+
+    if (sandboxSettings?.terminalEnabled) {
+      const preview = await this.client.getSignedPreviewUrl(
+        daytonaSandboxId,
+        terminalPort,
+        expirySeconds
+      );
+      ttydUrl = preview.url;
+      tunnelPorts = tunnelPorts.filter((p) => p !== terminalPort);
     }
 
     if (vncEnabled) {
@@ -310,7 +331,7 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       tunnelUrls = Object.fromEntries(entries);
     }
 
-    return { codeServerUrl, codeServerPassword, vncAccess, tunnelUrls };
+    return { codeServerUrl, codeServerPassword, ttydUrl, vncAccess, tunnelUrls };
   }
 
   // -----------------------------------------------------------------------

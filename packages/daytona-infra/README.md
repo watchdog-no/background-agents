@@ -12,7 +12,8 @@ snapshot setup, not runtime operations.
 
 ## Environment
 
-- `DAYTONA_API_KEY` (required) — must have **Snapshots: Read, Write, Delete** permissions
+- `DAYTONA_API_KEY` (required) — **Sandboxes: Read, Write, Delete** for runtime lifecycle and
+  **Snapshots: Read, Write, Delete** for builds
 - `DAYTONA_API_URL`
 - `DAYTONA_TARGET`
 - `DAYTONA_BASE_SNAPSHOT` (required)
@@ -21,12 +22,15 @@ snapshot setup, not runtime operations.
 
 ```bash
 cd packages/daytona-infra
-pip install daytona  # or: uv pip install daytona
-python -m src.bootstrap --force
+pip install 'daytona==0.161.0'
+python -m src.bootstrap
 ```
 
 Re-run `bootstrap` whenever `packages/sandbox-runtime` or the sandbox toolchain changes.
 
 > **Note**: Snapshot builds are automated via Terraform when `sandbox_provider = "daytona"`. The
-> `daytona-infra` Terraform module triggers a rebuild whenever source files change. Manual runs are
-> only needed for initial setup or debugging.
+> `daytona-infra` Terraform module hashes runtime code, manifests, skills, and build scripts, then
+> creates a snapshot named `<DAYTONA_BASE_SNAPSHOT>-<source hash>`. It updates the worker only after
+> the snapshot build succeeds. Retries reuse an active snapshot; old snapshots remain available for
+> rollback. Remove unused snapshots separately after confirming they are no longer referenced.
+> `--force` is only for manually repairing a failed snapshot.
