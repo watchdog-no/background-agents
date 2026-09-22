@@ -30,6 +30,7 @@ const ANTHROPIC_MODELS = [
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
   "anthropic/claude-opus-5",
+  "anthropic/claude-opus-5-5",
   "anthropic/claude-fable-5",
   "anthropic/claude-fable-5-1",
 ] as const;
@@ -153,6 +154,7 @@ describe("model utilities", () => {
     expect(normalizeModelId("claude-sonnet-4-6")).toBe("anthropic/claude-sonnet-4-6");
     expect(normalizeModelId("claude-opus-4-8")).toBe("anthropic/claude-opus-4-8");
     expect(normalizeModelId("claude-opus-5")).toBe("anthropic/claude-opus-5");
+    expect(normalizeModelId("claude-opus-5-5")).toBe("anthropic/claude-opus-5-5");
     expect(normalizeModelId("claude-fable-5")).toBe("anthropic/claude-fable-5");
     expect(normalizeModelId("claude-fable-5-1")).toBe("anthropic/claude-fable-5-1");
     expect(normalizeModelId("gpt-5.3-codex")).toBe("openai/gpt-5.3-codex");
@@ -160,6 +162,7 @@ describe("model utilities", () => {
     expect(isValidModel("claude-sonnet-4-6")).toBe(true);
     expect(isValidModel("claude-opus-4-8")).toBe(true);
     expect(isValidModel("claude-opus-5")).toBe(true);
+    expect(isValidModel("claude-opus-5-5")).toBe(true);
     expect(isValidModel("claude-fable-5")).toBe(true);
     expect(isValidModel("claude-fable-5-1")).toBe(true);
     expect(isValidModel("gpt-5.3-codex")).toBe(true);
@@ -278,6 +281,10 @@ describe("model utilities", () => {
       provider: "anthropic",
       model: "claude-opus-5",
     });
+    expect(extractProviderAndModel("anthropic/claude-opus-5-5")).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5-5",
+    });
     expect(extractProviderAndModel("openai/gpt-5.3-codex-spark")).toEqual({
       provider: "openai",
       model: "gpt-5.3-codex-spark",
@@ -340,6 +347,7 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("anthropic/claude-opus-4-8")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-sonnet-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-opus-5")).toBe("high");
+    expect(getDefaultReasoningEffort("anthropic/claude-opus-5-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-fable-5")).toBe("xhigh");
     expect(getDefaultReasoningEffort("anthropic/claude-fable-5-1")).toBe("high");
     expect(getDefaultReasoningEffort("openai/gpt-5.3-codex")).toBe("high");
@@ -369,6 +377,10 @@ describe("model utilities", () => {
       default: "high",
     });
     expect(getReasoningConfig("anthropic/claude-opus-5")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default: "high",
+    });
+    expect(getReasoningConfig("anthropic/claude-opus-5-5")).toEqual({
       efforts: ["low", "medium", "high", "xhigh", "max"],
       default: "high",
     });
@@ -424,6 +436,8 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("anthropic/claude-sonnet-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "none")).toBe(false);
+    expect(isValidReasoningEffort("anthropic/claude-opus-5-5", "xhigh")).toBe(true);
+    expect(isValidReasoningEffort("anthropic/claude-opus-5-5", "none")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-fable-5", "max")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-fable-5-1", "max")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-fable-5-1", "none")).toBe(false);
