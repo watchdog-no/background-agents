@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL, type ModelCategory } from "@open-inspect/shared/models";
+import { type ModelCategory } from "@open-inspect/shared/models";
 import { filterModelOptionsForHarness, resolveHarnessModelSelection } from "./session-harness";
 
 const OPENAI_MODEL = "openai/gpt-5.4";
+// Named by provider rather than taken from DEFAULT_MODEL: these cases turn on
+// which harness can run the model, and a deployment is free to default to a
+// model the Claude harness cannot.
+const ANTHROPIC_MODEL = "anthropic/claude-sonnet-5";
 const options: ModelCategory[] = [
-  { category: "Anthropic", models: [{ id: DEFAULT_MODEL, name: "Default", description: "" }] },
+  { category: "Anthropic", models: [{ id: ANTHROPIC_MODEL, name: "Sonnet 5", description: "" }] },
   { category: "OpenAI", models: [{ id: OPENAI_MODEL, name: "GPT-5.4", description: "" }] },
 ];
 
@@ -32,12 +36,12 @@ describe("resolveHarnessModelSelection", () => {
     const selection = resolveHarnessModelSelection({
       harness: "claude",
       preference: { model: OPENAI_MODEL },
-      enabledModels: [OPENAI_MODEL, DEFAULT_MODEL],
+      enabledModels: [OPENAI_MODEL, ANTHROPIC_MODEL],
       enabledModelOptions: options,
       loading: false,
     });
     expect(selection.availability).toEqual({ status: "available" });
-    expect(selection.model).toBe(DEFAULT_MODEL);
+    expect(selection.model).toBe(ANTHROPIC_MODEL);
     expect(selection.options).toEqual([options[0]]);
   });
 

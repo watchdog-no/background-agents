@@ -7,6 +7,12 @@ import * as matchers from "@testing-library/jest-dom/matchers";
 import type { ReactNode } from "react";
 import { MAX_AUTOMATION_REPOSITORIES } from "@open-inspect/shared/types/automations";
 import { DEFAULT_MODEL } from "@open-inspect/shared/models";
+
+/**
+ * A model the Claude harness can run, named by provider rather than taken from
+ * DEFAULT_MODEL: a deployment is free to default to a model it cannot.
+ */
+const CLAUDE_HARNESS_MODEL = "anthropic/claude-sonnet-5";
 import { DEFAULT_HARNESS } from "@open-inspect/shared/harnesses";
 import { AutomationForm, type AutomationFormValues } from "./automation-form";
 import { CronPicker } from "./cron-picker";
@@ -1258,7 +1264,7 @@ describe("agent harness", () => {
   });
 
   it("loads an existing automation's harness and keeps the model inside it", () => {
-    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    enabledModelsValue = ["openai/gpt-5.4", CLAUDE_HARNESS_MODEL];
     const { onSubmit, submit } = renderForm({ harness: "claude" }, "edit");
     expect(screen.getByRole("combobox", { name: "Agent harness" })).toHaveTextContent(
       "Claude Agent"
@@ -1266,11 +1272,14 @@ describe("agent harness", () => {
 
     submit();
 
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ harness: "claude", model: DEFAULT_MODEL });
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      harness: "claude",
+      model: CLAUDE_HARNESS_MODEL,
+    });
   });
 
   it("submits a newly selected harness and coerces the model to one it can run", () => {
-    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    enabledModelsValue = ["openai/gpt-5.4", CLAUDE_HARNESS_MODEL];
     const { onSubmit, submit } = renderForm({}, "create");
 
     fireEvent.click(screen.getByRole("combobox", { name: "Agent harness" }));
@@ -1280,16 +1289,19 @@ describe("agent harness", () => {
     submit();
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ harness: "claude", model: DEFAULT_MODEL });
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      harness: "claude",
+      model: CLAUDE_HARNESS_MODEL,
+    });
   });
 
   it("drops a connected Anthropic account pin when the harness switches to OpenCode", () => {
-    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    enabledModelsValue = ["openai/gpt-5.4", CLAUDE_HARNESS_MODEL];
     const accountId = "b".repeat(32);
     const { onSubmit, submit } = renderForm(
       {
         harness: "claude",
-        model: DEFAULT_MODEL,
+        model: CLAUDE_HARNESS_MODEL,
         providerSelections: { anthropic: { mode: "provider_account", accountId } },
       },
       "edit"
@@ -1302,7 +1314,7 @@ describe("agent harness", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0][0]).toMatchObject({
       harness: "opencode",
-      model: DEFAULT_MODEL,
+      model: CLAUDE_HARNESS_MODEL,
       providerSelections: {},
     });
   });

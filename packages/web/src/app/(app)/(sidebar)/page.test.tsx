@@ -239,6 +239,24 @@ function createMemoryStorage(): Storage {
   };
 }
 
+/**
+ * A model the Claude harness can run, named by provider rather than taken from
+ * DEFAULT_MODEL: this deployment defaults to a model it cannot run, and the
+ * harness gates submission until a compatible model is enabled.
+ */
+const CLAUDE_HARNESS_MODEL = "anthropic/claude-sonnet-5";
+
+function enableClaudeHarnessModel() {
+  mocks.enabledModelsValue = [...mocks.enabledModelsValue, CLAUDE_HARNESS_MODEL];
+  mocks.enabledModelOptionsValue = [
+    ...mocks.enabledModelOptionsValue,
+    {
+      category: "Anthropic",
+      models: [{ id: CLAUDE_HARNESS_MODEL, name: "Sonnet 5", description: "" }],
+    },
+  ];
+}
+
 beforeEach(() => {
   mocks.reposValue = [repo];
   mocks.loadingReposValue = false;
@@ -813,6 +831,7 @@ describe("Home", () => {
   it("restores a stored harness and switches an incompatible model to one it can run", async () => {
     const openAiModel = "openai/gpt-5.4";
     mocks.enabledModelsValue = [DEFAULT_MODEL, openAiModel];
+    enableClaudeHarnessModel();
     localStorage.setItem("open-inspect-last-selected-model", openAiModel);
     localStorage.setItem("open-inspect-last-selected-harness", "claude");
     render(<Home />);
@@ -825,11 +844,15 @@ describe("Home", () => {
     });
 
     await waitFor(() =>
-      expect(sessionCreateBody()).toMatchObject({ harness: "claude", model: DEFAULT_MODEL })
+      expect(sessionCreateBody()).toMatchObject({
+        harness: "claude",
+        model: CLAUDE_HARNESS_MODEL,
+      })
     );
   });
 
   it("persists a harness choice and re-warms the draft session with it", async () => {
+    enableClaudeHarnessModel();
     render(<Home />);
     fireEvent.change(screen.getByPlaceholderText("What do you want to build?"), {
       target: { value: "Ship it" },
@@ -865,6 +888,7 @@ describe("Home", () => {
 
   it("drops a connected Anthropic account pin when the harness switches to OpenCode", async () => {
     const accountId = "c".repeat(32);
+    enableClaudeHarnessModel();
     mocks.providerAccountsValue = [activeAnthropicAccount(accountId)];
     localStorage.setItem("open-inspect-last-selected-harness", "claude");
     localStorage.setItem(
