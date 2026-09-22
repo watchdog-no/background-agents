@@ -1,3 +1,4 @@
+import { getValidHarnessOrDefault } from "@open-inspect/shared/harnesses";
 import {
   sessionSnapshotSchema,
   type SessionSnapshotState,
@@ -8,6 +9,7 @@ import type { Logger } from "../logger";
 import type { SqlDatabase } from "../db/sql-database";
 import { EnvironmentStore } from "../db/environments";
 import { DEFAULT_SANDBOX_STATUS } from "../sandbox/sandbox-status";
+import { parseStoredSandboxBootPhase } from "../sandbox/boot-phase";
 import type { SandboxDashboardSettings } from "./sandbox-access";
 import { resolveSandboxDashboardUrl } from "./sandbox-access";
 import { findPrArtifactForRepo } from "./pr-artifacts";
@@ -15,11 +17,12 @@ import { resolvePublicSessionId } from "./public-session-id";
 import { safeParseTunnelUrls } from "./tunnel-urls";
 import type { ArtifactRepository } from "./artifact-repository";
 import type { MessageRepository } from "./message-repository";
-import type { SandboxRepository } from "./sandbox-repository";
+import type { SandboxStateReader } from "./sandbox-ports";
 import type { SessionCoreRepository } from "./session-core-repository";
 import type { SessionEventStream } from "./event-stream";
 import type { MessageService } from "./services/message.service";
 import type { SessionRow, SandboxRow } from "./types";
+import type { SandboxShutdownState } from "@open-inspect/shared/types/sandbox-shutdown";
 import { DEFAULT_BASE_BRANCH } from "../repos/default-branch";
 
 export interface SessionSnapshotEnrichment {
@@ -28,8 +31,9 @@ export interface SessionSnapshotEnrichment {
 }
 
 export interface SessionSnapshotReaderDeps {
+  getShutdown?: () => SandboxShutdownState | null;
   sessionCoreRepository: SessionCoreRepository;
-  sandboxRepository: SandboxRepository;
+  sandboxRepository: SandboxStateReader;
   messageRepository: MessageRepository;
   artifactRepository: ArtifactRepository;
   messageService: MessageService;
@@ -76,6 +80,7 @@ export class SessionSnapshotReader {
         timeline: this.deps.eventStream.getReplay(),
         promptQueue: this.deps.messageRepository.listPromptQueue(),
         spawnError: local.sandbox?.last_spawn_error ?? null,
+        bootPhase: parseStoredSandboxBootPhase(local.sandbox?.boot_phase ?? null),
       };
     });
   }
@@ -95,8 +100,10 @@ export class SessionSnapshotReader {
       branchName: session.branch_name,
       status: session.status,
       sandboxStatus: sandbox?.status ?? DEFAULT_SANDBOX_STATUS,
+      sandboxPreservation: this.deps.getShutdown?.() ?? null,
       messageCount: this.deps.messageRepository.getMessageCount(),
       createdAt: session.created_at,
+      harness: getValidHarnessOrDefault(session.harness),
       model: session.model ?? DEFAULT_MODEL,
       reasoningEffort: session.reasoning_effort ?? undefined,
       isProcessing: this.getIsProcessing(),

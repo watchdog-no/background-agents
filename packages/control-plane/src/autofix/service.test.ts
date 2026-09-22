@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { GITHUB_AUTOFIX_DEFAULTS, type GitHubAutofixEnvelope } from "@open-inspect/shared";
+import {
+  GITHUB_AUTOFIX_DEFAULTS,
+  type GitHubAutofixEnvelope,
+  type GitHubAutofixSessionCommand,
+} from "@open-inspect/shared";
 import {
   AUTOFIX_MAX_HOLD_MS,
   AUTOFIX_OWNERSHIP_GRACE_MS,
@@ -372,6 +376,22 @@ describe("AutofixService", () => {
         body: expect.stringContaining('"authorType":"bot"'),
       })
     );
+    const [, , request] = h.sessions.fetch.mock.calls[0] as unknown as [
+      string,
+      string,
+      RequestInit,
+    ];
+    const command = JSON.parse(String(request.body)) as Extract<
+      GitHubAutofixSessionCommand,
+      { type: "enqueue_feedback" }
+    >;
+    expect(command.origin.feedback).toEqual({
+      version: 1,
+      kind: "review",
+      url: "https://github.com/acme/widgets/pull/42#pullrequestreview-5678",
+      body: "Please address this.",
+      comments: [],
+    });
   });
 
   it("does not let the Open Inspect review setting admit another bot", async () => {
@@ -410,6 +430,8 @@ describe("AutofixService", () => {
           path: "src/input.ts",
           line: 12,
           startLine: null,
+          originalLine: 12,
+          originalStartLine: null,
           side: "RIGHT",
           startSide: null,
           diffHunk: "x".repeat(5_000),
@@ -437,6 +459,8 @@ describe("AutofixService", () => {
     expect(command.prompt).toContain("Preserve this complete comment.");
     expect(command.prompt).toContain("x".repeat(4_000));
     expect(command.prompt).not.toContain("x".repeat(4_001));
+    expect(command.prompt).toContain('"side": "RIGHT"');
+    expect(command.prompt).toContain('"diffHunkTruncated": true');
   });
 
   it("escapes feedback that could close the untrusted-data delimiter", async () => {
@@ -487,6 +511,8 @@ describe("AutofixService", () => {
         path: "src/input.ts",
         line: index + 1,
         startLine: null,
+        originalLine: index + 1,
+        originalStartLine: null,
         side: "RIGHT",
         startSide: null,
         diffHunk: "@@ -1 +1 @@",
@@ -649,6 +675,8 @@ describe("AutofixService", () => {
             path: "src/input.ts",
             line: 12,
             startLine: null,
+            originalLine: 12,
+            originalStartLine: null,
             side: "RIGHT",
             startSide: null,
             diffHunk: "@@ -10,3 +10,3 @@",
@@ -682,6 +710,8 @@ describe("AutofixService", () => {
             path: "src/input.ts",
             line: null,
             startLine: null,
+            originalLine: 12,
+            originalStartLine: null,
             side: "RIGHT",
             startSide: null,
             diffHunk: "@@ -10,3 +10,3 @@",
@@ -711,6 +741,8 @@ describe("AutofixService", () => {
             path: "src/other.ts",
             line: null,
             startLine: null,
+            originalLine: 20,
+            originalStartLine: null,
             side: "RIGHT",
             startSide: null,
             diffHunk: "@@ -20,3 +20,3 @@",

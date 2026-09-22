@@ -1,5 +1,6 @@
 import type { SandboxEvent } from "@/types/session";
 import { toolCallIdentityKey } from "@open-inspect/shared/types/sandbox-events";
+import { isSubtaskRootTool } from "@/lib/tool-formatters";
 
 export type ToolCallEvent = Extract<SandboxEvent, { type: "tool_call" }>;
 
@@ -150,7 +151,7 @@ export function buildTimelineItems(events: SandboxEvent[]): TimelineItem[] {
   const tasks = new Map<string, ToolCallEvent>();
 
   for (const event of deduped) {
-    if (event.type === "tool_call" && event.tool.toLowerCase() === "task") {
+    if (event.type === "tool_call" && isSubtaskRootTool(event.tool)) {
       tasks.set(taskKey(event.messageId, event.callId), event);
     }
   }
@@ -179,7 +180,7 @@ export function buildTimelineItems(events: SandboxEvent[]): TimelineItem[] {
 
   for (const event of deduped) {
     if (nestedEvents.has(event)) continue;
-    if (event.type === "tool_call" && event.tool.toLowerCase() === "task") {
+    if (event.type === "tool_call" && isSubtaskRootTool(event.tool)) {
       const key = taskKey(event.messageId, event.callId);
       flushFlatEvents();
       items.push({

@@ -1,6 +1,10 @@
 {
-  "runtimeVersion": "v76-shared-images-mcp-cache",
-  "generation": 76,
+  "runtimeVersion": "v77-sandbox-preservation",
+  "generation": 77,
   "minimumCompatibleGeneration": 76,
-  "minimumRebuildGeneration": 76
+  "minimumPreservationGeneration": 77,
+  "minimumRebuildGeneration": 77,
+  "harnessMinimumGeneration": {
+    "claude": 76
+  }
 }

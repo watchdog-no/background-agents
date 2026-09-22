@@ -5,6 +5,11 @@
  * snake_case rows in the database, camelCase types at the API boundary.
  */
 
+import {
+  DEFAULT_HARNESS,
+  getValidHarnessOrDefault,
+  type HarnessId,
+} from "@open-inspect/shared/harnesses";
 import type {
   Automation,
   AutomationExecutionSummary,
@@ -16,13 +21,18 @@ import type {
   AutomationRunStatus,
 } from "@open-inspect/shared/types/automations";
 import { automationInvocationStatusSchema } from "@open-inspect/shared/types/automations";
-import type { TriggerConfig } from "@open-inspect/shared/triggers";
+import {
+  automationTriggerTypeSchema,
+  triggerConfigSchema,
+  type AutomationTriggerType,
+  type TriggerConfig,
+} from "@open-inspect/shared/triggers";
 import {
   toProviderSelections,
   type AutomationModelProviderAuthRow,
 } from "./automation-model-provider-auth";
 import type { SqlDatabase, SqlStatement } from "./sql-database";
-import type { AutomationListCursor } from "./automation-list-cursor";
+import type { CreatedAtCursor } from "../created-at-cursor";
 import { z } from "zod";
 import { UserStore } from "./user-store";
 
@@ -62,6 +72,7 @@ export interface AutomationRow {
   trigger_type: string;
   schedule_cron: string | null;
   schedule_tz: string;
+  harness: HarnessId;
   model: string;
   reasoning_effort: string | null;
   enabled: number; // SQLite integer boolean
@@ -79,8 +90,16 @@ export interface AutomationRow {
 
 type AutomationListResult = { automations: AutomationRow[] } & (
   | { hasMore: false; nextCursor: null }
-  | { hasMore: true; nextCursor: AutomationListCursor }
+  | { hasMore: true; nextCursor: CreatedAtCursor }
 );
+
+/**
+ * Failure reason the recovery sweep writes when a run outlives its execution
+ * deadline with no completion callback. Unlike every other terminal state this
+ * one is inferred from silence, which is why a late success callback is allowed
+ * to overturn it.
+ */
+export const EXECUTION_TIMEOUT_FAILURE_REASON = "execution_timeout";
 
 export interface AutomationRunRow {
   id: string;
@@ -94,6 +113,12 @@ export interface AutomationRunRow {
   scheduled_at: number;
   started_at: number | null;
   completed_at: number | null;
+  /**
+   * When the recovery sweep may declare this run lost, stamped at launch from
+   * the execution budget its session was created with. Null until the run
+   * claims a session, and on rows that predate the column.
+   */
+  execution_deadline_at: number | null;
   created_at: number;
   /** Repository snapshot taken at firing time (null for repo-less runs). */
   repo_owner: string | null;
@@ -144,6 +169,23 @@ export interface AutomationInvocationRow {
   failure_counted_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface AutomationTriggerFields {
+  triggerType: AutomationTriggerType;
+  triggerConfig: TriggerConfig | null;
+}
+
+export function parseAutomationTriggerFields(
+  row: Pick<AutomationRow, "trigger_type" | "trigger_config">
+): AutomationTriggerFields {
+  return {
+    triggerType: automationTriggerTypeSchema.parse(row.trigger_type),
+    triggerConfig:
+      row.trigger_config === null
+        ? null
+        : triggerConfigSchema.parse(JSON.parse(row.trigger_config)),
+  };
 }
 
 const enrichedAutomationInvocationRowSchema = z.object({
@@ -207,17 +249,16 @@ export function toAutomation(
   environmentRows: AutomationEnvironmentRow[],
   providerAuthRows: AutomationModelProviderAuthRow[]
 ): Automation {
-  const triggerConfig: TriggerConfig | null = row.trigger_config
-    ? JSON.parse(row.trigger_config)
-    : null;
+  const { triggerType, triggerConfig } = parseAutomationTriggerFields(row);
 
   return {
     id: row.id,
     name: row.name,
     instructions: row.instructions,
-    triggerType: row.trigger_type as Automation["triggerType"],
+    triggerType,
     scheduleCron: row.schedule_cron,
     scheduleTz: row.schedule_tz,
+    harness: getValidHarnessOrDefault(row.harness),
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     enabled: row.enabled === 1,
@@ -348,10 +389,10 @@ export class AutomationStore {
       .prepare(
         `INSERT INTO automations
          (id, name, instructions,
-          trigger_type, schedule_cron, schedule_tz, model, reasoning_effort, enabled, next_run_at,
+          trigger_type, schedule_cron, schedule_tz, harness, model, reasoning_effort, enabled, next_run_at,
           consecutive_failures, created_by, user_id, created_at, updated_at, deleted_at,
           event_type, trigger_config, trigger_auth_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         row.id,
@@ -360,6 +401,7 @@ export class AutomationStore {
         row.trigger_type,
         row.schedule_cron,
         row.schedule_tz,
+        row.harness ?? DEFAULT_HARNESS,
         row.model,
         row.reasoning_effort,
         row.enabled,
@@ -412,7 +454,7 @@ export class AutomationStore {
 
   async list(options: {
     limit: number;
-    cursor?: AutomationListCursor | null;
+    cursor?: CreatedAtCursor | null;
     nameSearch?: string;
     repoOwner?: string;
     repoName?: string;
@@ -519,6 +561,7 @@ export class AutomationStore {
       "instructions",
       "schedule_cron",
       "schedule_tz",
+      "harness",
       "model",
       "reasoning_effort",
       "next_run_at",
@@ -841,15 +884,58 @@ export class AutomationStore {
     return (result.meta?.changes ?? 0) > 0;
   }
 
-  /** Atomically assign a session only while a run still awaits launch. */
-  async claimRunSession(id: string, sessionId: string, startedAt: number): Promise<boolean> {
+  /**
+   * Atomically assign a session only while a run still awaits launch. The
+   * deadline lands in the same statement that makes the run sweepable, so a
+   * 'running' row never exists without one.
+   */
+  async claimRunSession(
+    id: string,
+    sessionId: string,
+    startedAt: number,
+    executionDeadlineAt: number
+  ): Promise<boolean> {
     const result = await this.db
       .prepare(
         `UPDATE automation_runs
-         SET status = 'running', session_id = ?, started_at = ?
+         SET status = 'running', session_id = ?, started_at = ?, execution_deadline_at = ?
          WHERE id = ? AND status = 'starting'`
       )
-      .bind(sessionId, startedAt, id)
+      .bind(sessionId, startedAt, executionDeadlineAt, id)
+      .run();
+    return (result.meta?.changes ?? 0) > 0;
+  }
+
+  /**
+   * Replace the deadline claimed with the deployment-wide budget once the
+   * session's own settings are known. Guarded on 'running' so it cannot revive
+   * the sweep's interest in a run that already finished.
+   */
+  async setRunExecutionDeadline(id: string, executionDeadlineAt: number): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE automation_runs SET execution_deadline_at = ?
+         WHERE id = ? AND status = 'running'`
+      )
+      .bind(executionDeadlineAt, id)
+      .run();
+    return (result.meta?.changes ?? 0) > 0;
+  }
+
+  /**
+   * Overturn a sweep-declared timeout with the completion callback that
+   * eventually arrived. `execution_timeout` is the only terminal state the
+   * scheduler infers rather than observes, so it is the only one a later
+   * success may correct — every other terminal state stays final.
+   */
+  async completeTimedOutRun(id: string, completedAt: number): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE automation_runs
+         SET status = 'completed', failure_reason = NULL, completed_at = ?
+         WHERE id = ? AND status = 'failed' AND failure_reason = ?`
+      )
+      .bind(completedAt, id, EXECUTION_TIMEOUT_FAILURE_REASON)
       .run();
     return (result.meta?.changes ?? 0) > 0;
   }
@@ -1383,12 +1469,18 @@ export class AutomationStore {
   }
 
   // --- Recovery sweep queries ---
-  // Backed by partial indexes (migration 0024); `status` must stay a literal, not
-  // a bound param, or the planner skips the index and full-scans automation_runs.
+  // Backed by partial indexes (migrations 0024 and 0079); `status` must stay a
+  // literal, not a bound param, or the planner skips the index and full-scans
+  // automation_runs.
   static readonly ORPHANED_STARTING_RUNS_SQL =
     "SELECT * FROM automation_runs WHERE status = 'starting' AND created_at < ?";
-  static readonly TIMED_OUT_RUNNING_RUNS_SQL =
-    "SELECT * FROM automation_runs WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?";
+  // A 'running' row without a deadline predates migration 0079, or was claimed
+  // by a worker that does (the migration applies before that worker is
+  // replaced). Those rows are held to the deployment-default deadline measured
+  // from started_at; leaving them out would let one lost callback keep the run
+  // 'running', and its automation blocked, forever.
+  static readonly RUNS_PAST_EXECUTION_DEADLINE_SQL =
+    "SELECT * FROM automation_runs WHERE status = 'running' AND (execution_deadline_at < ? OR (execution_deadline_at IS NULL AND started_at < ?))";
 
   async getOrphanedStartingRuns(thresholdMs: number, limit: number): Promise<AutomationRunRow[]> {
     const cutoff = Date.now() - thresholdMs;
@@ -1399,14 +1491,23 @@ export class AutomationStore {
     return result.results || [];
   }
 
-  async getTimedOutRunningRuns(
-    executionTimeoutMs: number,
+  /**
+   * Runs whose session should have reported in by now. The deadline is the
+   * run's own, stamped at launch, so this asks "has this run's budget been
+   * spent?" rather than "has it been running a long time?". A run with no
+   * deadline of its own is due `defaultDeadlineMs` after it started.
+   */
+  async getRunsPastExecutionDeadline(
+    now: number,
+    defaultDeadlineMs: number,
     limit: number
   ): Promise<AutomationRunRow[]> {
-    const cutoff = Date.now() - executionTimeoutMs;
     const result = await this.db
-      .prepare(`${AutomationStore.TIMED_OUT_RUNNING_RUNS_SQL} ORDER BY started_at ASC LIMIT ?`)
-      .bind(cutoff, limit)
+      .prepare(
+        `${AutomationStore.RUNS_PAST_EXECUTION_DEADLINE_SQL}
+         ORDER BY COALESCE(execution_deadline_at, started_at) ASC LIMIT ?`
+      )
+      .bind(now, now - defaultDeadlineMs, limit)
       .all<AutomationRunRow>();
     return result.results || [];
   }

@@ -7,6 +7,7 @@ import * as matchers from "@testing-library/jest-dom/matchers";
 import type { ReactNode } from "react";
 import { MAX_AUTOMATION_REPOSITORIES } from "@open-inspect/shared/types/automations";
 import { DEFAULT_MODEL } from "@open-inspect/shared/models";
+import { DEFAULT_HARNESS } from "@open-inspect/shared/harnesses";
 import { AutomationForm, type AutomationFormValues } from "./automation-form";
 import { CronPicker } from "./cron-picker";
 
@@ -314,7 +315,7 @@ describe("automation cron submission", () => {
     expect(screen.getByPlaceholderText(/Exact workflow name/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Event Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /PR Opened/ }));
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: /PR Opened/ }));
 
     expect(screen.queryByPlaceholderText(/Exact workflow name/)).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -351,11 +352,13 @@ describe("automation cron submission", () => {
     );
 
     fireEvent.click(screen.getByRole("combobox", { name: "Event Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /PR Opened/ }));
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: /PR Opened/ }));
     expect(screen.queryByPlaceholderText(/Exact workflow name/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Event Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /Workflow Run Completed/ }));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByRole("option", { name: /Workflow Run Completed/ })
+    );
 
     expect(screen.getByPlaceholderText(/Exact workflow name/)).toHaveValue("CI");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -385,22 +388,28 @@ describe("automation cron submission", () => {
     expect(screen.getAllByText("startup_failure").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("combobox", { name: "Event Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /Workflow Run Completed/ }));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByRole("option", { name: /Workflow Run Completed/ })
+    );
     expect(screen.getByRole("status")).toHaveTextContent(
       "Removed Conclusion — not available for this event type."
     );
 
     fireEvent.click(screen.getByText("Add condition..."));
-    fireEvent.click(screen.getByRole("option", { name: "Conclusion" }));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByRole("option", { name: "Conclusion" })
+    );
     const conclusionSelect = screen
       .getAllByRole("combobox")
       .find((element) => element.textContent?.includes("success"));
     expect(conclusionSelect).toBeDefined();
     fireEvent.click(conclusionSelect!);
-    fireEvent.click(screen.getByRole("option", { name: "failure" }));
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: "failure" }));
 
     fireEvent.click(screen.getByRole("combobox", { name: "Event Type" }));
-    fireEvent.click(screen.getByRole("option", { name: /Check Suite Completed/ }));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByRole("option", { name: /Check Suite Completed/ })
+    );
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
@@ -1209,5 +1218,104 @@ describe("model normalization", () => {
       />
     );
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+  });
+});
+
+describe("agent harness", () => {
+  const baseInitialValues = {
+    name: "Daily review",
+    repositories: singleRepository,
+    model: "openai/gpt-5.4",
+    scheduleCron: "0 9 * * *",
+    scheduleTz: "UTC",
+    instructions: "Review the repo.",
+    triggerType: "schedule" as const,
+  };
+
+  const renderForm = (initialValues: Partial<AutomationFormValues>, mode: "create" | "edit") => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <AutomationForm
+        mode={mode}
+        submitting={false}
+        onSubmit={onSubmit}
+        initialValues={{ ...baseInitialValues, ...initialValues }}
+      />
+    );
+    return { onSubmit, submit: () => fireEvent.submit(container.querySelector("form")!) };
+  };
+
+  it("submits the built-in harness when none was chosen", () => {
+    const { onSubmit, submit } = renderForm({}, "create");
+    expect(screen.getByRole("combobox", { name: "Agent harness" })).toHaveTextContent("OpenCode");
+
+    submit();
+
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      harness: DEFAULT_HARNESS,
+      model: "openai/gpt-5.4",
+    });
+  });
+
+  it("loads an existing automation's harness and keeps the model inside it", () => {
+    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    const { onSubmit, submit } = renderForm({ harness: "claude" }, "edit");
+    expect(screen.getByRole("combobox", { name: "Agent harness" })).toHaveTextContent(
+      "Claude Agent"
+    );
+
+    submit();
+
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ harness: "claude", model: DEFAULT_MODEL });
+  });
+
+  it("submits a newly selected harness and coerces the model to one it can run", () => {
+    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    const { onSubmit, submit } = renderForm({}, "create");
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Agent harness" }));
+    fireEvent.click(
+      within(screen.getByRole("listbox")).getByRole("option", { name: "Claude Agent" })
+    );
+    submit();
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ harness: "claude", model: DEFAULT_MODEL });
+  });
+
+  it("drops a connected Anthropic account pin when the harness switches to OpenCode", () => {
+    enabledModelsValue = ["openai/gpt-5.4", DEFAULT_MODEL];
+    const accountId = "b".repeat(32);
+    const { onSubmit, submit } = renderForm(
+      {
+        harness: "claude",
+        model: DEFAULT_MODEL,
+        providerSelections: { anthropic: { mode: "provider_account", accountId } },
+      },
+      "edit"
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Agent harness" }));
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: "OpenCode" }));
+    submit();
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      harness: "opencode",
+      model: DEFAULT_MODEL,
+      providerSelections: {},
+    });
+  });
+
+  it("blocks submission and says so when the harness can run none of the enabled models", () => {
+    enabledModelsValue = ["openai/gpt-5.4"];
+    const { onSubmit, submit } = renderForm({ harness: "claude" }, "edit");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No enabled models can run on Claude Agent."
+    );
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    submit();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

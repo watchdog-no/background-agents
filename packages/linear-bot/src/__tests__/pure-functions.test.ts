@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { VALID_MODELS } from "@open-inspect/shared/models";
 import {
   extractModelFromLabels,
   resolveSessionModelSettings,
@@ -86,33 +87,52 @@ describe("matchExplicitRepo", () => {
 // ─── extractModelFromLabels ──────────────────────────────────────────────────
 
 describe("extractModelFromLabels", () => {
-  it("returns model for a valid label", () => {
-    expect(extractModelFromLabels([{ name: "model:opus" }])).toBe("anthropic/claude-opus-4-5");
+  it.each([
+    ["haiku", "anthropic/claude-haiku-4-5"],
+    ["sonnet", "anthropic/claude-sonnet-4-5"],
+    ["opus", "anthropic/claude-opus-4-5"],
+    ["fable", "anthropic/claude-fable-5-1"],
+  ])("returns the configured model for the model:%s alias", (alias, expected) => {
+    expect(extractModelFromLabels([{ name: `model:${alias}` }])).toBe(expected);
   });
 
   it("returns model for case-insensitive label", () => {
     expect(extractModelFromLabels([{ name: "Model:Sonnet" }])).toBe("anthropic/claude-sonnet-4-5");
   });
 
-  it("returns GPT 5.4 for model:gpt-5.4 label", () => {
-    expect(extractModelFromLabels([{ name: "model:gpt-5.4" }])).toBe("openai/gpt-5.4");
+  const versionedModelLabels = VALID_MODELS.flatMap((model) => {
+    if (model.startsWith("anthropic/claude-")) {
+      return [[model.replace("anthropic/claude-", ""), model] as const];
+    }
+    if (model.startsWith("openai/gpt-")) {
+      return [[model.replace("openai/", ""), model] as const];
+    }
+    return [];
   });
 
-  it("returns GPT-6 Astra for model:gpt-6-astra label", () => {
-    expect(extractModelFromLabels([{ name: "model:gpt-6-astra" }])).toBe("openai/gpt-6-astra");
+  it.each(versionedModelLabels)("derives model:%s from the shared catalog", (label, expected) => {
+    expect(extractModelFromLabels([{ name: `model:${label}` }])).toBe(expected);
   });
 
-  it("returns GPT 5.5 for model:gpt-5.5 label", () => {
-    expect(extractModelFromLabels([{ name: "model:gpt-5.5" }])).toBe("openai/gpt-5.5");
-  });
+  it.each(["claude-fable-5-1", "anthropic/claude-fable-5-1"])(
+    "preserves the canonical model ID in model:%s",
+    (model) => {
+      expect(extractModelFromLabels([{ name: `model:${model}` }])).toBe(
+        "anthropic/claude-fable-5-1"
+      );
+    }
+  );
 
   it("returns GPT 5.5 Pro for model:gpt-5.5-pro label", () => {
     expect(extractModelFromLabels([{ name: "model:gpt-5.5-pro" }])).toBe("openai/gpt-5.5-pro");
   });
 
-  it.each(["gpt-5.2", "gpt-5.2-codex"])("returns null for unsupported model:%s label", (model) => {
-    expect(extractModelFromLabels([{ name: `model:${model}` }])).toBeNull();
-  });
+  it.each(["gpt-5.2", "gpt-5.2-codex", "opus-6"])(
+    "returns null for unsupported model:%s label",
+    (model) => {
+      expect(extractModelFromLabels([{ name: `model:${model}` }])).toBeNull();
+    }
+  );
 
   it.each([
     ["sol", "openai/gpt-5.6-sol"],
@@ -130,9 +150,12 @@ describe("extractModelFromLabels", () => {
     expect(extractModelFromLabels([{ name: "model:opus-4-8" }])).toBe("anthropic/claude-opus-4-8");
   });
 
-  it("returns Fable 5 for model:fable and model:fable-5 labels", () => {
-    expect(extractModelFromLabels([{ name: "model:fable" }])).toBe("anthropic/claude-fable-5");
+  it("resolves the Fable labels, with the bare alias on the newest generation", () => {
+    expect(extractModelFromLabels([{ name: "model:fable" }])).toBe("anthropic/claude-fable-5-1");
     expect(extractModelFromLabels([{ name: "model:fable-5" }])).toBe("anthropic/claude-fable-5");
+    expect(extractModelFromLabels([{ name: "model:fable-5-1" }])).toBe(
+      "anthropic/claude-fable-5-1"
+    );
   });
 
   it("returns Opus 5 for model:opus-5 label", () => {

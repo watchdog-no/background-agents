@@ -25,43 +25,39 @@ module "linear_bot_worker" {
   worker_subdomain = var.cloudflare_worker_subdomain
   script_path      = local.linear_bot_script_path
 
-  kv_namespaces = [
-    {
-      binding_name = "LINEAR_KV"
+  kv_namespaces = {
+    LINEAR_KV = {
       namespace_id = module.linear_kv[0].namespace_id
     }
-  ]
+  }
 
-  service_bindings = [
-    {
-      binding_name = "CONTROL_PLANE"
+  service_bindings = {
+    CONTROL_PLANE = {
       service_name = "open-inspect-control-plane-${local.name_suffix}"
     }
-  ]
+  }
 
   enable_service_bindings = var.enable_service_bindings
 
-  plain_text_bindings = [
-    { name = "CONTROL_PLANE_URL", value = local.control_plane_url },
-    { name = "WEB_APP_URL", value = local.web_app_url },
-    { name = "DEPLOYMENT_NAME", value = var.deployment_name },
-    { name = "APP_NAME", value = var.app_name },
-    { name = "DEFAULT_MODEL", value = "openai/gpt-6-astra" },
-    # The classifier only calls the provider when mappings, explicit mentions,
-    # Linear suggestions, and the configured default cannot resolve a target.
-    # Luna uses the control plane's metered OPENAI_API_KEY path.
-    { name = "CLASSIFICATION_MODEL", value = "openai/gpt-5.6-luna" },
-    { name = "CLASSIFICATION_DEFAULT_REPOSITORY", value = "watchdog-no/watchdog-monorepo" },
-    { name = "LINEAR_CLIENT_ID", value = var.linear_client_id },
-    { name = "WORKER_URL", value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" },
-  ]
+  plain_text_bindings = {
+    CONTROL_PLANE_URL     = { value = local.control_plane_url }
+    WEB_APP_URL           = { value = local.web_app_url }
+    DEPLOYMENT_NAME       = { value = var.deployment_name }
+    APP_NAME              = { value = var.app_name }
+    DEFAULT_MODEL         = { value = var.linear_bot_default_model }
+    CLASSIFICATION_MODEL  = { value = var.classification_model }
+    CLASSIFICATION_DEFAULT_REPOSITORY = { value = var.classification_default_repository }
+    LINEAR_CLIENT_ID      = { value = var.linear_client_id }
+    WORKER_URL            = { value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" }
+  }
 
-  secrets = [
-    { name = "LINEAR_WEBHOOK_SECRET", value = var.linear_webhook_secret },
-    { name = "LINEAR_CLIENT_SECRET", value = var.linear_client_secret },
-    { name = "SERVICE_AUTH_SECRET", value = random_password.service_auth_secret_linear_bot.result },
-    { name = "LINEAR_API_KEY", value = var.linear_api_key },
-  ]
+  # No classifier provider key: see workers-slack.tf.
+  secrets = {
+    LINEAR_WEBHOOK_SECRET = { value = var.linear_webhook_secret }
+    LINEAR_CLIENT_SECRET  = { value = var.linear_client_secret }
+    SERVICE_AUTH_SECRET   = { value = random_password.service_auth_secret_linear_bot.result }
+    LINEAR_API_KEY        = { value = var.linear_api_key }
+  }
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]

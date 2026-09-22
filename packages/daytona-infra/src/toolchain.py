@@ -2,36 +2,35 @@
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
 from daytona import CreateSnapshotParams, Daytona, Image, Resources
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from sandbox_images.bundle import PackedBundle
 
 
-def build_base_image(repo_root: Path) -> Image:
-    sys.path.insert(0, str(repo_root / "packages/sandbox-images/src"))
-    from sandbox_images.bundle import pack_bundle, plan_image
-
-    plan = plan_image(repo_root, "daytona")
-    bundle = pack_bundle(repo_root, "daytona", repo_root / ".cache/sandbox-images")
+def build_base_image(bundle: PackedBundle) -> Image:
+    plan = bundle.plan
     return (
         Image.base(plan["target"]["base"])
-        .add_local_dir(str(bundle), "/tmp/openinspect-image")
+        .add_local_dir(str(bundle.directory), "/tmp/openinspect-image")
         .run_commands("bash /tmp/openinspect-image/packages/sandbox-images/install/install.sh")
         .env(plan["runtimeEnv"] | {"SANDBOX_VERSION": plan["runtimeVersion"]})
         .workdir("/workspace")
     )
 
 
-def create_base_snapshot(daytona: Daytona, repo_root: Path, snapshot_name: str) -> None:
+def create_base_snapshot(
+    daytona: Daytona, bundle: PackedBundle, snapshot_name: str, memory_gib: int
+) -> None:
     daytona.snapshot.create(
         CreateSnapshotParams(
             name=snapshot_name,
-            image=build_base_image(repo_root),
-            resources=Resources(cpu=2, memory=4, disk=10),
+            image=build_base_image(bundle),
+            # The disk ceiling is the workspace quota, not the image size;
+            # 20 GiB snapshots are rejected against it.
+            resources=Resources(cpu=2, memory=memory_gib, disk=10),
             entrypoint=["python", "-m", "sandbox_runtime.entrypoint"],
         ),
         on_logs=lambda chunk: print(chunk, end="\n"),

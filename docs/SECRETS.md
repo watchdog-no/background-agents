@@ -66,15 +66,16 @@ repository, re-import it or update the environment secret directly.
 Use global secrets for keys that apply regardless of which repository a session runs against. The
 most common examples:
 
-| Key                             | Description                                                         |
-| ------------------------------- | ------------------------------------------------------------------- |
-| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Claude subscription OAuth token for the default Anthropic path.     |
-| `OPENAI_OAUTH_REFRESH_TOKEN`    | ChatGPT subscription OAuth token for OpenAI models.                 |
-| `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.              |
-| `ANTHROPIC_API_KEY`             | Optional metered Claude API key for standard SDK access.            |
-| `OPENAI_API_KEY`                | Optional metered OpenAI API key for standard SDK access.            |
-| `DEEPSEEK_API_KEY`              | Required for DeepSeek models with any sandbox provider.             |
-| `ZHIPU_API_KEY`                 | Required for Z.AI Coding Plan GLM models with any sandbox provider. |
+| Key                             | Description                                                                 |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Claude subscription OAuth token for the default Anthropic path.             |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | ChatGPT subscription OAuth token for OpenAI models.                         |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Account ID paired with the OpenAI OAuth refresh token.                      |
+| `ANTHROPIC_API_KEY`             | Optional metered Claude API key for standard SDK access.                    |
+| `OPENAI_API_KEY`                | Optional metered OpenAI API key for standard SDK access.                    |
+| `DEEPSEEK_API_KEY`              | Required for DeepSeek models with any sandbox provider.                     |
+| `ZHIPU_API_KEY`                 | Required for Z.AI Coding Plan GLM models with any sandbox provider.         |
+| `OPENCODE_API_KEY`              | Required for OpenCode Zen and OpenCode Go models with any sandbox provider. |
 
 > **Daytona and Vercel sandbox users**: For the default Claude subscription path, add
 > `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret after deploying. Add provider API keys only if
@@ -201,24 +202,33 @@ from it, even after you rotate the secret. Two guidelines:
   — stale on-disk material persists until the next commit-triggered rebuild, which is another reason
   to keep secrets out of the image filesystem.
 
+Where the trust boundary sits: Open-Inspect's own build plumbing never persists a credential into an
+image. The build's callback token stays in process memory, and the clone token and scope secrets
+reach only the build process and the setup scripts it starts — never the provider's container
+configuration, never a file the image captures. What a setup script does with those values in its
+environment is the script's own decision: Open-Inspect keeps no copy of its own, but a value the
+script writes to disk is captured in the image exactly as described above. Treat a scope's prebuilt
+image as no less sensitive than the scope's secrets.
+
 ---
 
 ## Common Examples
 
-| Key                             | Scope  | Purpose                                                         |
-| ------------------------------- | ------ | --------------------------------------------------------------- |
-| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md)) |
-| `ANTHROPIC_API_KEY`             | Global | Optional Claude API key for metered SDK access                  |
-| `DEEPSEEK_API_KEY`              | Global | DeepSeek API access                                             |
-| `ZHIPU_API_KEY`                 | Global | Z.AI Coding Plan GLM access                                     |
-| `OPENAI_API_KEY`                | Global | OpenAI API access when a session selects API-key mode           |
-| `OPENAI_OAUTH_REFRESH_TOKEN`    | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
-| `OPENAI_OAUTH_ACCOUNT_ID`       | Repo   | OpenAI Codex access ([setup guide](OPENAI_MODELS.md))           |
-| `XAI_API_KEY`                   | Global | xAI API access when a session selects API-key mode              |
-| `XAI_OAUTH_REFRESH_TOKEN`       | Any    | SuperGrok access ([setup guide](GROK_MODELS.md))                |
-| `DATABASE_URL`                  | Repo   | Database connection string                                      |
-| `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                          |
-| `STRIPE_SECRET_KEY`             | Repo   | Stripe API key for a specific project                           |
+| Key                             | Scope  | Purpose                                                                        |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------ |
+| `ANTHROPIC_OAUTH_REFRESH_TOKEN` | Global | Claude subscription access ([setup guide](ANTHROPIC_MODELS.md))                |
+| `ANTHROPIC_API_KEY`             | Global | Optional Claude API key for metered SDK access                                 |
+| `OPENAI_API_KEY`                | Global | OpenAI API access when a session selects API-key mode                          |
+| `XAI_API_KEY`                   | Global | xAI API access when a session selects API-key mode                             |
+| `DEEPSEEK_API_KEY`              | Global | DeepSeek API access                                                            |
+| `ZHIPU_API_KEY`                 | Global | Z.AI Coding Plan GLM access                                                    |
+| `OPENCODE_API_KEY`              | Global | OpenCode Zen and OpenCode Go access                                            |
+| `OPENAI_OAUTH_REFRESH_TOKEN`    | Any    | Legacy OpenAI Codex via ChatGPT subscription ([setup guide](OPENAI_MODELS.md)) |
+| `OPENAI_OAUTH_ACCOUNT_ID`       | Any    | Legacy OpenAI Codex via ChatGPT subscription ([setup guide](OPENAI_MODELS.md)) |
+| `XAI_OAUTH_REFRESH_TOKEN`       | Any    | Legacy SuperGrok access ([setup guide](GROK_MODELS.md))                        |
+| `DATABASE_URL`                  | Repo   | Database connection string                                                     |
+| `AWS_ACCESS_KEY_ID`             | Repo   | AWS credentials for a specific project                                         |
+| `STRIPE_SECRET_KEY`             | Repo   | Stripe API key for a specific project                                          |
 
 ---
 
@@ -231,9 +241,11 @@ provider-account mode, verify the account and model entitlement. For the default
 path on any sandbox provider, confirm that `ANTHROPIC_OAUTH_REFRESH_TOKEN` is saved as a global or
 repository secret; add `ANTHROPIC_API_KEY` only for intentional metered API access. For API-key
 mode, add the required key to the session's secret scope. OpenAI uses `OPENAI_API_KEY`; xAI uses
-`XAI_API_KEY`; DeepSeek uses `DEEPSEEK_API_KEY`; Z.AI Coding Plan uses `ZHIPU_API_KEY`. For other
-subscription authentication, follow the provider-account setup guidance in
-[OpenAI models](OPENAI_MODELS.md) or [Grok models](GROK_MODELS.md).
+`XAI_API_KEY`; DeepSeek uses `DEEPSEEK_API_KEY`; Z.AI Coding Plan uses `ZHIPU_API_KEY`; OpenCode Zen
+and OpenCode Go both use `OPENCODE_API_KEY`, and an `opencode-go/*` model additionally needs an
+active Go subscription on that key. For other subscription authentication, follow the
+provider-account setup guidance in [OpenAI models](OPENAI_MODELS.md) or
+[Grok models](GROK_MODELS.md).
 
 ### Secret not appearing in sandbox
 

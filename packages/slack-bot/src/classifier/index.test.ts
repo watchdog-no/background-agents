@@ -206,9 +206,10 @@ describe("RepoClassifier", () => {
       expect(result.target).toBeNull();
       expect(result.needsClarification).toBe(true);
       expect(
-        result.alternatives?.map((target) =>
-          target.kind === "repository" ? target.repo.fullName : target.environment.id
-        )
+        result.alternatives?.map((target) => {
+          if (target.kind === "repository") return target.repo.fullName;
+          return target.kind === "environment" ? target.environment.id : target.kind;
+        })
       ).toEqual(["acme/prod", "acme/web"]);
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -270,15 +271,21 @@ describe("RepoClassifier", () => {
     expect(result.failureReason).toBe("provider_error");
   });
 
-  it("skips the endpoint when only one repository is available", async () => {
+  it("consults the endpoint even when only one repository is available", async () => {
     mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[1]]);
+    mockClassifyResult({
+      targetId: "acme/web",
+      confidence: "high",
+      reasoning: "The request is about the web app.",
+      alternatives: [],
+    });
 
     const classifier = new RepoClassifier(TEST_ENV);
     const result = await classifier.classify("anything");
 
     expect(classifiedRepoFullName(result)).toBe("acme/web");
     expect(result.needsClarification).toBe(false);
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledOnce();
   });
 
   describe("routing rules", () => {
@@ -652,15 +659,22 @@ describe("RepoClassifier", () => {
       expect(mockFetch).toHaveBeenCalledOnce();
     });
 
-    it("keeps the single-repo shortcut when no environments exist", async () => {
+    it("still classifies when only one repository is available", async () => {
+      // A lone repository is not a foregone conclusion: the task may want no
+      // repository at all, so the classifier still gets to decide.
       mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
+      mockClassifyResult({
+        targetId: "acme/prod",
+        confidence: "high",
+        reasoning: "The task applies to the available repository.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("anything at all");
 
       expect(classifiedRepoFullName(result)).toBe("acme/prod");
-      expect(result.reasoning).toBe("Only one repository is available.");
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledOnce();
     });
 
     it("resolves mixed alternatives, deduplicated and excluding the match", async () => {
@@ -700,15 +714,21 @@ describe("RepoClassifier", () => {
       expect(result.target).toEqual({ kind: "environment", environment: TEST_ENVIRONMENT });
     });
 
-    it("asks for clarification when neither repos nor environments exist", async () => {
+    it("classifies into the repository-less target when the catalog is empty", async () => {
       mockGetAvailableRepos.mockResolvedValue([]);
+      mockClassifyResult({
+        targetId: "__no_repository__",
+        confidence: "high",
+        reasoning: "The task can run in an empty sandbox.",
+        alternatives: [],
+      });
 
       const classifier = new RepoClassifier(TEST_ENV);
       const result = await classifier.classify("anything");
 
-      expect(result.target).toBeNull();
-      expect(result.reasoning).toBe("No repositories or environments are currently available.");
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result.target).toEqual({ kind: "none" });
+      expect(result.needsClarification).toBe(false);
+      expect(mockFetch).toHaveBeenCalledOnce();
     });
 
     it("escapes the LLM reasoning for mrkdwn rendering", async () => {

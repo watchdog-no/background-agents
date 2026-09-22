@@ -23,6 +23,7 @@ import { keyboardShortcutRoutes } from "./keyboard-shortcuts";
 import { mcpServerRoutes } from "./mcp-servers";
 import { modelPreferencesRoutes } from "./model-preferences";
 import { modelProviderAccountRoutes } from "./model-provider-accounts";
+import { providerRuntimeCredentialRoutes } from "./provider-runtime-credentials";
 import { rbacRoutes } from "./rbac";
 import { reposRoutes } from "./repos";
 import { scmSettingsRoutes } from "./scm-settings";
@@ -62,6 +63,8 @@ export const catalog: readonly RouteModule[] = [
 
   // Subscription provider account management and sandbox access broker
   modelProviderAccountRoutes,
+  // Delivery of stored provider secrets to sandboxes (Anthropic)
+  providerRuntimeCredentialRoutes,
 
   // Integration settings
   integrationSettingsRoutes,

@@ -33,9 +33,15 @@ def _create_teardown_script(repo_path):
 
 
 def _fake_process(returncode=0, stdout=b""):
+    """Mirror tests/test_setup_script.py: hooks wait for the shell to exit."""
     process = MagicMock()
     process.returncode = returncode
-    process.communicate = AsyncMock(return_value=(stdout, None))
+    process.communicate = AsyncMock(side_effect=AssertionError("hooks must wait for shell exit"))
+    process.kill = MagicMock()
+    process.wait = AsyncMock(return_value=returncode)
+    process.stdout = asyncio.StreamReader()
+    process.stdout.feed_eof()
+    del stdout
     return process
 
 
@@ -80,23 +86,24 @@ async def test_teardown_failure_is_reported(tmp_path):
     assert result is False
 
 
-async def test_teardown_uses_60_second_default_timeout(tmp_path, monkeypatch):
+async def test_teardown_waits_for_the_shell_instead_of_its_own_deadline(tmp_path, monkeypatch):
+    """No hook-specific timeout: the enclosing shutdown budget is the only bound."""
     sup = _make_repository_boot(tmp_path)
     _create_teardown_script(sup.repo_path)
-    fake_process = _fake_process(stdout=b"done\n")
-    captured_timeout = None
+    fake_process = _fake_process()
+    wait_for_calls = []
     original_wait_for = asyncio.wait_for
 
-    async def capture_timeout(coro, *, timeout=None):
-        nonlocal captured_timeout
-        captured_timeout = timeout
+    async def record_wait_for(coro, *, timeout=None):
+        wait_for_calls.append(timeout)
         return await original_wait_for(coro, timeout=timeout)
 
     monkeypatch.delenv("TEARDOWN_TIMEOUT_SECONDS", raising=False)
     with (
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=fake_process),
-        patch("asyncio.wait_for", side_effect=capture_timeout),
+        patch("asyncio.wait_for", side_effect=record_wait_for),
     ):
-        await sup.hooks.run_teardown(sup.repositories[0], BootMode.FRESH)
+        assert await sup.hooks.run_teardown(sup.repositories[0], BootMode.FRESH) is True
 
-    assert captured_timeout == 60
+    fake_process.wait.assert_awaited()
+    assert wait_for_calls == []

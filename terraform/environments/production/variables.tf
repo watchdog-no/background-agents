@@ -206,6 +206,28 @@ variable "github_bot_username" {
   default     = ""
 }
 
+variable "github_bot_default_model" {
+  description = "Model the GitHub bot starts a session with when the repository's integration config does not pin one. A canonical \"provider/model\" id, or a bare \"claude-\"/\"gpt-\" id the bots normalize into that provider's namespace."
+  type        = string
+  default     = "anthropic/claude-haiku-4-5"
+  nullable    = false
+
+  # Each side of the id must name something, and name it without whitespace:
+  # "anthropic/", "claude-" and "/x" all pass a naive prefix or slash check
+  # while naming no model, and "anthropic/ claude-haiku-4-5" survives a
+  # trimspace check with the space still in the value. Either shape reaches the
+  # model provider verbatim. The same rule rejects a blank value, so an unset
+  # CI variable fails at plan time instead of deploying a bot that cannot start
+  # a session.
+  validation {
+    condition = can(regex(
+      "^(?:[^/[:space:]]+/[^/[:space:]]+|(?:claude-|gpt-)[^/[:space:]]+)$",
+      var.github_bot_default_model
+    ))
+    error_message = "github_bot_default_model must be a canonical \"provider/model\" id such as \"anthropic/claude-haiku-4-5\", or a bare \"claude-\"/\"gpt-\" id, naming a model with no whitespace on each side of any slash."
+  }
+}
+
 # =============================================================================
 # Slack App Credentials
 # =============================================================================
@@ -233,6 +255,31 @@ variable "slack_signing_secret" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+variable "github_bot_default_reasoning_effort" {
+  description = "Reasoning effort the GitHub bot starts a session with when the repository's integration config does not pin one. Empty leaves the model's own default in force."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "slack_bot_default_model" {
+  description = "Model the Slack bot starts a session with when the requesting user has no saved model preference. A canonical \"provider/model\" id, or a bare \"claude-\"/\"gpt-\" id the bots normalize into that provider's namespace."
+  type        = string
+  default     = "claude-haiku-4-5"
+  nullable    = false
+
+  # See github_bot_default_model: a prefix or slash with nothing after it names
+  # no model, whitespace anywhere in the id reaches the provider verbatim, and a
+  # blank value must fail at plan time rather than deploy.
+  validation {
+    condition = can(regex(
+      "^(?:[^/[:space:]]+/[^/[:space:]]+|(?:claude-|gpt-)[^/[:space:]]+)$",
+      var.slack_bot_default_model
+    ))
+    error_message = "slack_bot_default_model must be a canonical \"provider/model\" id such as \"anthropic/claude-haiku-4-5\", or a bare \"claude-\"/\"gpt-\" id, naming a model with no whitespace on each side of any slash."
+  }
 }
 
 # =============================================================================
@@ -281,6 +328,24 @@ variable "linear_api_key" {
   sensitive   = true
 }
 
+variable "linear_bot_default_model" {
+  description = "Model the Linear bot starts a session with when neither the repository's integration config, the requesting user's preference, nor a model label selects one. A canonical \"provider/model\" id, or a bare \"claude-\"/\"gpt-\" id the bots normalize into that provider's namespace."
+  type        = string
+  default     = "claude-sonnet-4-6"
+  nullable    = false
+
+  # See github_bot_default_model: a prefix or slash with nothing after it names
+  # no model, whitespace anywhere in the id reaches the provider verbatim, and a
+  # blank value must fail at plan time rather than deploy.
+  validation {
+    condition = can(regex(
+      "^(?:[^/[:space:]]+/[^/[:space:]]+|(?:claude-|gpt-)[^/[:space:]]+)$",
+      var.linear_bot_default_model
+    ))
+    error_message = "linear_bot_default_model must be a canonical \"provider/model\" id such as \"anthropic/claude-haiku-4-5\", or a bare \"claude-\"/\"gpt-\" id, naming a model with no whitespace on each side of any slash."
+  }
+}
+
 # =============================================================================
 # API Keys
 # =============================================================================
@@ -293,6 +358,13 @@ variable "anthropic_api_key" {
   nullable    = false
 
 
+}
+
+variable "classification_default_repository" {
+  description = "Repository the Slack and Linear classifiers fall back to when routing rules, channel associations, and explicit mentions resolve nothing. Empty leaves the provider classifier as the only fallback."
+  type        = string
+  default     = ""
+  nullable    = false
 }
 
 variable "classification_model" {
@@ -395,7 +467,7 @@ variable "daytona_api_key" {
 }
 
 variable "daytona_base_snapshot" {
-  description = "Prefix for the managed Daytona snapshot used for fresh sandbox creation"
+  description = "Name prefix for the Terraform-managed Daytona base snapshot"
   type        = string
   default     = ""
 
@@ -405,10 +477,33 @@ variable "daytona_base_snapshot" {
   }
 }
 
+variable "daytona_base_snapshot_memory_gib" {
+  description = "Memory in GiB reserved by sandboxes created from the Daytona base snapshot"
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.daytona_base_snapshot_memory_gib >= 1 && var.daytona_base_snapshot_memory_gib == floor(var.daytona_base_snapshot_memory_gib)
+    error_message = "daytona_base_snapshot_memory_gib must be a positive integer."
+  }
+}
+
 variable "daytona_target" {
   description = "Optional Daytona target name"
   type        = string
   default     = ""
+}
+
+variable "daytona_toolbox_api_url" {
+  description = "Optional explicit Daytona toolbox proxy base URL. Leave empty to use the proxy each sandbox reports."
+  type        = string
+  default     = ""
+}
+
+variable "daytona_prebuilds_enabled" {
+  description = "Admit new Daytona image builds and let fresh sessions boot from one. Off by default: callbacks, finalization, status and cleanup keep working while it is, so closing it is the rollback control."
+  type        = bool
+  default     = false
 }
 
 variable "opencomputer_api_url" {
@@ -580,6 +675,17 @@ variable "sandbox_inactivity_timeout_ms" {
   description = "Milliseconds of sandbox inactivity before OpenInspect snapshots and stops the sandbox when no clients are connected."
   type        = number
   default     = 600000
+}
+
+variable "sandbox_boot_timeout_ms" {
+  description = "Milliseconds a sandbox whose bridge has connected may keep booting (clone, setup.sh, start.sh, agent start) before OpenInspect fails it and the prompt it was for."
+  type        = number
+  default     = 1800000
+
+  validation {
+    condition     = var.sandbox_boot_timeout_ms > 240000
+    error_message = "sandbox_boot_timeout_ms must exceed the 240000 ms connect watchdog."
+  }
 }
 
 variable "web_platform" {

@@ -8,7 +8,7 @@ them. Previously they were silently dropped.
 
 from unittest.mock import MagicMock
 
-from sandbox_runtime.prompt_stream import OpenCodePromptStream, _PromptState
+from sandbox_runtime.harness.opencode_stream import OpenCodePromptStream, _PromptState
 
 
 def make_stream() -> OpenCodePromptStream:

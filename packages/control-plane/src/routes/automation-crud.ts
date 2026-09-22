@@ -10,25 +10,34 @@ import {
 import {
   conditionRegistry,
   normalizeSlackChannelConditions,
-  triggerConfigSchema,
   validateTriggerConditions,
   type TriggerConfig,
 } from "@open-inspect/shared/triggers";
 import type { AutomationTriggerType } from "@open-inspect/shared/triggers";
 import {
   MAX_AUTOMATION_INSTRUCTIONS_LENGTH,
+  MAX_AUTOMATION_NAME_LENGTH,
   updateAutomationRequestSchema,
 } from "@open-inspect/shared/types/automations";
 import type { ModelProviderSelections } from "@open-inspect/shared/types/provider-accounts";
 import type { PermissionId } from "@open-inspect/shared/rbac";
+import {
+  checkHarnessCompatibility,
+  getValidHarnessOrDefault,
+  selectedProviderAuthModes,
+} from "@open-inspect/shared/harnesses";
 import { getValidModelOrDefault, isValidModel } from "@open-inspect/shared/models";
 import {
   AutomationStore,
+  parseAutomationTriggerFields,
   type AutomationRow,
   type AutomationRepositoryInsert,
 } from "../db/automation-store";
 import { SlackChannelStore } from "../db/slack-channel-store";
-import { AutomationModelProviderAuthStore } from "../db/automation-model-provider-auth";
+import {
+  AutomationModelProviderAuthStore,
+  toProviderSelections,
+} from "../db/automation-model-provider-auth";
 import {
   AutomationProviderSelectionError,
   parseAndValidateAutomationProviderSelections,
@@ -59,7 +68,6 @@ import { AUTOMATIONS_READ, AUTOMATION_MANAGE, admittedAutomation } from "./autom
 import {
   type CreateAutomationBody,
   FAR_FUTURE_THRESHOLD_MS,
-  MAX_NAME_LENGTH,
   TargetSelectionError,
   createAutomationBodySchema,
   extractSlackChannels,
@@ -103,8 +111,8 @@ async function handleCreateAutomation(
   if (!body.name || typeof body.name !== "string" || body.name.trim().length === 0) {
     return error("name is required", 400);
   }
-  if (body.name.length > MAX_NAME_LENGTH) {
-    return error(`name must be at most ${MAX_NAME_LENGTH} characters`, 400);
+  if (body.name.length > MAX_AUTOMATION_NAME_LENGTH) {
+    return error(`name must be at most ${MAX_AUTOMATION_NAME_LENGTH} characters`, 400);
   }
   if (
     !body.instructions ||
@@ -200,8 +208,11 @@ async function handleCreateAutomation(
     };
   }
 
-  // Validate model
+  // Validate harness and model
+  const harness = getValidHarnessOrDefault(body.harness);
   const model = getValidModelOrDefault(body.model);
+  const harnessIncompatibility = checkHarnessCompatibility(harness, model);
+  if (harnessIncompatibility) return error(harnessIncompatibility.message, 400);
   const reasoningEffort = resolveReasoningEffort(model, body.reasoningEffort);
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null && !reasoningEffort) {
     return error("Invalid reasoning effort for selected model", 400);
@@ -220,6 +231,14 @@ async function handleCreateAutomation(
     if (e instanceof ProviderAccountSelectionPolicyError) return error(e.message, e.status);
     throw e;
   }
+  // The auth half of the harness rule: an explicit selection the harness
+  // cannot use must not be saved for every future run to trip over.
+  const harnessAuthIncompatibility = checkHarnessCompatibility(
+    harness,
+    model,
+    selectedProviderAuthModes(providerSelections)
+  );
+  if (harnessAuthIncompatibility) return error(harnessAuthIncompatibility.message, 400);
 
   // Compute next run (only for schedule triggers)
   const nextRunAt = isSchedule
@@ -262,6 +281,7 @@ async function handleCreateAutomation(
     trigger_type: triggerType,
     schedule_cron: body.scheduleCron ?? null,
     schedule_tz: body.scheduleTz ?? "UTC",
+    harness,
     model,
     reasoning_effort: reasoningEffort,
     enabled: 1,
@@ -369,7 +389,25 @@ async function handleUpdateAutomation(
   }
   const body = parsedBody.data;
 
-  if (body.triggerConfig !== undefined && existing.trigger_type === "schedule") {
+  let existingTriggerFields: ReturnType<typeof parseAutomationTriggerFields>;
+  try {
+    existingTriggerFields = parseAutomationTriggerFields(existing);
+  } catch {
+    if (body.triggerConfig === undefined) {
+      return error("Stored automation trigger fields are invalid", 500);
+    }
+    // A full replacement may repair corrupt config, but cannot repair the
+    // immutable trigger type or grant legacy-condition exemptions.
+    try {
+      existingTriggerFields = parseAutomationTriggerFields({ ...existing, trigger_config: null });
+    } catch {
+      return error("Stored automation trigger fields are invalid", 500);
+    }
+  }
+  const { triggerType: existingTriggerType, triggerConfig: existingTriggerConfig } =
+    existingTriggerFields;
+
+  if (body.triggerConfig !== undefined && existingTriggerType === "schedule") {
     return error("Cannot set triggerConfig on schedule automations", 400);
   }
 
@@ -392,8 +430,8 @@ async function handleUpdateAutomation(
     if (typeof body.name !== "string" || body.name.trim().length === 0) {
       return error("name cannot be empty", 400);
     }
-    if (body.name.length > MAX_NAME_LENGTH) {
-      return error(`name must be at most ${MAX_NAME_LENGTH} characters`, 400);
+    if (body.name.length > MAX_AUTOMATION_NAME_LENGTH) {
+      return error(`name must be at most ${MAX_AUTOMATION_NAME_LENGTH} characters`, 400);
     }
   }
 
@@ -423,6 +461,21 @@ async function handleUpdateAutomation(
   }
 
   const nextModel = body.model !== undefined ? getValidModelOrDefault(body.model) : existing.model;
+  const nextHarness =
+    body.harness !== undefined ? body.harness : getValidHarnessOrDefault(existing.harness);
+  // The selections the automation will have after this write: the replacement
+  // when one is given, else the stored pins whenever harness or model moves.
+  const nextProviderSelections =
+    replacementProviderSelections ??
+    (body.harness !== undefined || body.model !== undefined
+      ? toProviderSelections(await providerAuthStore.list(id))
+      : null);
+  const harnessIncompatibility = checkHarnessCompatibility(
+    nextHarness,
+    nextModel,
+    nextProviderSelections ? selectedProviderAuthModes(nextProviderSelections) : undefined
+  );
+  if (harnessIncompatibility) return error(harnessIncompatibility.message, 400);
   const requestedReasoningEffort = body.reasoningEffort;
   const resolvedReasoningEffort =
     requestedReasoningEffort !== undefined
@@ -445,6 +498,7 @@ async function handleUpdateAutomation(
   if (body.instructions !== undefined) updateFields.instructions = body.instructions;
   if (body.scheduleCron !== undefined) updateFields.schedule_cron = body.scheduleCron;
   if (body.scheduleTz !== undefined) updateFields.schedule_tz = body.scheduleTz;
+  if (body.harness !== undefined) updateFields.harness = nextHarness;
   if (body.model !== undefined) updateFields.model = nextModel;
   if (body.reasoningEffort !== undefined || body.model !== undefined) {
     updateFields.reasoning_effort = resolvedReasoningEffort;
@@ -487,11 +541,7 @@ async function handleUpdateAutomation(
         replacementEnvironmentIds !== null
           ? replacementEnvironmentIds.length
           : (await store.getEnvironmentsForAutomation(id)).length;
-      validateTargetCounts(
-        existing.trigger_type as AutomationTriggerType,
-        finalRepositoryCount,
-        finalEnvironmentCount
-      );
+      validateTargetCounts(existingTriggerType, finalRepositoryCount, finalEnvironmentCount);
       if (replacementEnvironmentIds !== null) {
         await resolveEnvironmentSelection(ctx.db, replacementEnvironmentIds);
       }
@@ -506,7 +556,7 @@ async function handleUpdateAutomation(
 
   // Update event type — only for non-schedule types
   if (body.eventType !== undefined) {
-    if (existing.trigger_type === "schedule") {
+    if (existingTriggerType === "schedule") {
       return error("Cannot set eventType on schedule automations", 400);
     }
     updateFields.event_type = body.eventType;
@@ -514,37 +564,27 @@ async function handleUpdateAutomation(
 
   const effectiveEventType =
     body.eventType !== undefined ? body.eventType : (existing.event_type ?? undefined);
-  const eventTypeError = getTriggerEventTypeError(
-    existing.trigger_type as AutomationTriggerType,
-    effectiveEventType
-  );
+  const eventTypeError = getTriggerEventTypeError(existingTriggerType, effectiveEventType);
   if (eventTypeError) return error(eventTypeError, 400);
 
   let triggerConfigToValidate = body.triggerConfig;
   if (
     body.eventType !== undefined &&
     triggerConfigToValidate === undefined &&
-    existing.trigger_config
+    existingTriggerConfig !== null
   ) {
-    // This column was written through parseTriggerConfig, so a failure here is a
-    // corrupt row, not user input — parseTriggerConfig's per-condition messages
-    // would have no one to help.
-    try {
-      triggerConfigToValidate = triggerConfigSchema.parse(JSON.parse(existing.trigger_config));
-    } catch {
-      return error("Stored triggerConfig is invalid", 500);
-    }
+    triggerConfigToValidate = existingTriggerConfig;
   }
 
   // A slack_event's trigger_config holds its required channel scope. Clearing it
   // would leave the automation enabled but untriggerable.
-  if (body.triggerConfig === null && existing.trigger_type === "slack_event") {
+  if (body.triggerConfig === null && existingTriggerType === "slack_event") {
     return error(
       "Cannot clear triggerConfig on slack_event automations; pause or delete instead",
       400
     );
   }
-  if (body.triggerConfig && existing.trigger_type === "slack_event") {
+  if (body.triggerConfig && existingTriggerType === "slack_event") {
     const slackError = validateSlackTriggerConfig(body.triggerConfig);
     if (slackError) return error(slackError, 400);
     body.triggerConfig = {
@@ -556,24 +596,18 @@ async function handleUpdateAutomation(
 
   if (triggerConfigToValidate) {
     let previousConfig: TriggerConfig | undefined;
-    if (existing.trigger_type === "github_event" && existing.trigger_config) {
-      try {
-        const parsedExisting = triggerConfigSchema.safeParse(JSON.parse(existing.trigger_config));
-        if (parsedExisting.success) previousConfig = parsedExisting.data;
-      } catch {
-        // A valid replacement should be able to repair malformed stored JSON.
-      }
+    if (existingTriggerType === "github_event" && existingTriggerConfig !== null) {
+      previousConfig = existingTriggerConfig;
     }
-    const triggerType = existing.trigger_type as AutomationTriggerType;
     const conditionErrors = validateTriggerConditions(
       {
-        type: triggerType,
+        type: existingTriggerType,
         conditions: triggerConfigToValidate.conditions,
         eventType: effectiveEventType,
       },
       conditionRegistry,
       previousConfig && {
-        type: triggerType,
+        type: existingTriggerType,
         conditions: previousConfig.conditions,
         eventType: existing.event_type ?? undefined,
       }
@@ -594,7 +628,7 @@ async function handleUpdateAutomation(
 
   // Recompute next_run_at if schedule changed (only for schedule types)
   if (
-    existing.trigger_type === "schedule" &&
+    existingTriggerType === "schedule" &&
     (body.scheduleCron !== undefined || body.scheduleTz !== undefined)
   ) {
     const cron = body.scheduleCron ?? existing.schedule_cron;
@@ -611,7 +645,7 @@ async function handleUpdateAutomation(
   // apart on a partial failure. Tolerates a null update statement (e.g. a
   // repositories-only edit).
   const resyncSlackChannels =
-    existing.trigger_type === "slack_event" && body.triggerConfig !== undefined;
+    existingTriggerType === "slack_event" && body.triggerConfig !== undefined;
   const statements: SqlStatement[] = [];
   const updateStatement = store.bindAutomationUpdate(id, updateFields);
   if (updateStatement) statements.push(updateStatement);

@@ -55,11 +55,13 @@ export function createQueueJobs(bindings: JobQueueBindings): Jobs {
       if (!queue) {
         throw new Error(`No queue is bound for ${job.kind} jobs on this deployment`);
       }
-      if (options) {
-        await queue.send(job.payload, { delaySeconds: Math.ceil(options.delayMs / 1000) });
-      } else {
+      if (options?.delayMs === undefined) {
         await queue.send(job.payload);
+        return;
       }
+      // Queues delay in whole seconds; round up so a delay is never shorter
+      // than the caller asked for.
+      await queue.send(job.payload, { delaySeconds: Math.ceil(options.delayMs / 1000) });
     },
   };
 }
