@@ -138,8 +138,11 @@ describe("extractModelFromLabels", () => {
     ["sol", "openai/gpt-5.6-sol"],
     ["terra", "openai/gpt-5.6-terra"],
     ["luna", "openai/gpt-5.6-luna"],
-  ])("returns GPT 5.6 %s for its model label", (variant, expected) => {
-    expect(extractModelFromLabels([{ name: `model:gpt-5.6-${variant}` }])).toBe(expected);
+    ["gpt-6-sol", "openai/gpt-6-sol"],
+    ["gpt-6-luna", "openai/gpt-6-luna"],
+  ])("returns %s for its model label", (variant, expected) => {
+    const model = variant.startsWith("gpt-") ? variant : `gpt-5.6-${variant}`;
+    expect(extractModelFromLabels([{ name: `model:${model}` }])).toBe(expected);
   });
 
   it("returns Opus 4.7 for model:opus-4-7 label", () => {

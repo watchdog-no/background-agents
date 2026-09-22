@@ -43,6 +43,8 @@ const OPENAI_MODELS = [
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
   "openai/gpt-6-astra",
+  "openai/gpt-6-sol",
+  "openai/gpt-6-luna",
   "openai/gpt-5.3-codex",
   "openai/gpt-5.3-codex-spark",
 ] as const;
@@ -159,6 +161,8 @@ describe("model utilities", () => {
     expect(normalizeModelId("claude-fable-5-1")).toBe("anthropic/claude-fable-5-1");
     expect(normalizeModelId("gpt-5.3-codex")).toBe("openai/gpt-5.3-codex");
     expect(normalizeModelId("gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
+    expect(normalizeModelId("gpt-6-sol")).toBe("openai/gpt-6-sol");
+    expect(normalizeModelId("gpt-6-luna")).toBe("openai/gpt-6-luna");
     expect(isValidModel("claude-sonnet-4-6")).toBe(true);
     expect(isValidModel("claude-opus-4-8")).toBe(true);
     expect(isValidModel("claude-opus-5")).toBe(true);
@@ -167,6 +171,8 @@ describe("model utilities", () => {
     expect(isValidModel("claude-fable-5-1")).toBe(true);
     expect(isValidModel("gpt-5.3-codex")).toBe(true);
     expect(isValidModel("gpt-5.6-sol")).toBe(true);
+    expect(isValidModel("gpt-6-sol")).toBe(true);
+    expect(isValidModel("gpt-6-luna")).toBe(true);
   });
 
   it("normalizes, filters, and deduplicates model lists", () => {
@@ -355,6 +361,8 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("openai/gpt-5.6-sol")).toBe("xhigh");
     expect(getDefaultReasoningEffort("openai/gpt-5.6-terra")).toBe("medium");
     expect(getDefaultReasoningEffort("openai/gpt-5.6-luna")).toBe("medium");
+    expect(getDefaultReasoningEffort("openai/gpt-6-sol")).toBe("medium");
+    expect(getDefaultReasoningEffort("openai/gpt-6-luna")).toBe("medium");
     expect(getDefaultReasoningEffort("xai/grok-build-0.1")).toBeUndefined();
     expect(getDefaultReasoningEffort("deepseek/deepseek-v4-pro")).toBeUndefined();
   });
@@ -396,6 +404,12 @@ describe("model utilities", () => {
       efforts: ["low", "medium", "high", "xhigh", "max"],
       default: "xhigh",
     });
+    for (const model of ["openai/gpt-6-sol", "openai/gpt-6-luna"]) {
+      expect(getReasoningConfig(model)).toEqual({
+        efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        default: "medium",
+      });
+    }
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: "xhigh",
@@ -445,6 +459,10 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("openai/gpt-6-astra", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-6-astra", "ultra")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-6-astra", "none")).toBe(false);
+    expect(isValidReasoningEffort("openai/gpt-6-sol", "none")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6-sol", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6-luna", "none")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6-luna", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "max")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-5.6-luna", "max")).toBe(true);
