@@ -1,3 +1,4 @@
+import { harnessIdSchema } from "../harnesses";
 import { z } from "zod";
 import {
   type AutomationTriggerType,
@@ -39,6 +40,15 @@ export const MAX_AUTOMATION_REPOSITORIES = MAX_TARGET_REPOSITORIES;
 
 /** Maximum length of an automation's instruction prompt. */
 export const MAX_AUTOMATION_INSTRUCTIONS_LENGTH = 15_000;
+
+/** Maximum length of an automation's name. */
+export const MAX_AUTOMATION_NAME_LENGTH = 200;
+
+/** Largest page `GET /automations` serves; larger limits are refused. */
+export const MAX_AUTOMATION_LIST_PAGE_SIZE = 100;
+
+/** Page size `GET /automations` serves when the client sends no limit. */
+export const DEFAULT_AUTOMATION_LIST_PAGE_SIZE = 25;
 
 /**
  * Validate target-count rules shared by automation clients and the API.
@@ -109,6 +119,7 @@ const automationSchema = z.object({
   triggerType: automationTriggerTypeSchema,
   scheduleCron: z.string().nullable(),
   scheduleTz: z.string(),
+  harness: harnessIdSchema,
   model: z.string(),
   reasoningEffort: z.string().nullable(),
   enabled: z.boolean(),
@@ -173,6 +184,8 @@ export const createAutomationRequestSchema = z.object({
   triggerType: automationTriggerTypeSchema.optional(),
   scheduleCron: z.string().optional(),
   scheduleTz: z.string().optional(),
+  /** Agent harness for the sessions this automation creates. Omission means the built-in harness. */
+  harness: harnessIdSchema.optional(),
   model: z.string().optional(),
   reasoningEffort: z.string().nullable().optional(),
   eventType: z.string().optional(),
@@ -192,6 +205,7 @@ export const updateAutomationRequestSchema = z.object({
   instructions: z.string().optional(),
   scheduleCron: z.string().optional(),
   scheduleTz: z.string().optional(),
+  harness: harnessIdSchema.optional(),
   model: z.string().optional(),
   reasoningEffort: z.string().nullable().optional(),
   eventType: z.string().optional(),

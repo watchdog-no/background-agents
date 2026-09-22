@@ -168,9 +168,13 @@ export const sampleRow = {
   next_run_at: now,
   consecutive_failures: 0,
   created_by: "user-1",
+  user_id: "user-1",
   created_at: now,
   updated_at: now,
   deleted_at: null,
+  event_type: null,
+  trigger_config: null,
+  trigger_auth_data: null,
 };
 
 /**
@@ -212,6 +216,13 @@ export function applyMockDefaults(): void {
     archivedAt: null,
   });
   mockProviderAdapterGet.mockReturnValue({});
-  mockResolveGitHubCredentialAuthority.mockResolvedValue({ kind: "legacy" });
+  mockResolveGitHubCredentialAuthority.mockResolvedValue({
+    kind: "service_principal",
+    accountClient: {
+      listUserAccounts: vi.fn(async () => []),
+      getAccessToken: vi.fn(async () => null),
+      accountInfo: vi.fn(async () => null),
+    },
+  });
   mockResolveGitHubEnrichmentForRequest.mockResolvedValue(null);
 }

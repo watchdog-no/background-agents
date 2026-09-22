@@ -1,3 +1,4 @@
+import type { HarnessId } from "@open-inspect/shared/harnesses";
 import type { McpServerConfig } from "@open-inspect/shared/types/integrations";
 import { computeHmacHex } from "@open-inspect/shared/auth";
 import type { SourceControlProviderName } from "../source-control";
@@ -40,6 +41,8 @@ export interface SessionConfigPayload {
   session_id: string;
   repo_owner: string | null;
   repo_name: string | null;
+  /** Agent harness the runtime must boot. */
+  harness: HarnessId;
   provider: string;
   model: string;
   /** Omitted from the serialized payload when undefined. */
@@ -48,6 +51,13 @@ export interface SessionConfigPayload {
   branch?: string | null;
   /** Ordered member list; only present for multi-repo sessions. */
   repositories?: SessionRepositoryConfigPayload[];
+  /**
+   * Ask the runtime to connect its bridge before the repository boot and to
+   * report boot phases over it. Always true from this control plane, which
+   * treats the runtime's `ready` event, not the socket, as readiness. A
+   * runtime that predates the flag ignores it and boots in its old order.
+   */
+  bridge_early_connect: true;
 }
 
 /** Provider-agnostic inputs needed to assemble a {@link SessionConfigPayload}. */
@@ -55,6 +65,7 @@ export interface SessionConfigInput {
   sessionId: string;
   repoOwner: string | null;
   repoName: string | null;
+  harness: HarnessId;
   provider: string;
   model: string;
   mcpServers?: McpServerConfig[];
@@ -75,9 +86,11 @@ export function buildSessionConfig(input: SessionConfigInput): SessionConfigPayl
     session_id: input.sessionId,
     repo_owner: input.repoOwner,
     repo_name: input.repoName,
+    harness: input.harness,
     provider: input.provider,
     model: input.model,
     mcp_servers: input.mcpServers,
+    bridge_early_connect: true,
   };
   if (input.branch !== undefined) {
     payload.branch = input.branch;
@@ -106,16 +119,34 @@ export const IMAGE_BUILD_MODE_ENV_VAR = "IMAGE_BUILD_MODE";
 export const IMAGE_BUILD_EXECUTION_TIMEOUT_ENV_KEY = "OI_IMAGE_BUILD_EXECUTION_TIMEOUT_SECONDS";
 
 /**
- * Every env var `BootMode.from_env` (sandbox_runtime/runtime_config.py) reads to
- * decide how the runtime boots. Control-plane-owned: providers set these
- * themselves when the mode applies, so they are stripped from the user layer.
- * Keep in sync with that enum.
+ * Marker (`=== "true"`) that holds a freshly created build sandbox dormant:
+ * the baked entrypoint composes nothing until the control plane launches the
+ * build on it. Mirrors `DEFERRED_START_ENV_VAR` in
+ * `sandbox_runtime/image_build_context_start.py`.
+ */
+export const DEFERRED_START_ENV_VAR = "OI_DEFERRED_START";
+
+/**
+ * Entrypoint argument that launches an image build from a context written to
+ * the process's stdin, for providers whose image capture would otherwise bake
+ * build credentials into the container's configuration. Mirrors
+ * `IMAGE_BUILD_CONTEXT_START_ARGUMENT` in the runtime module above.
+ */
+export const IMAGE_BUILD_CONTEXT_START_ARGUMENT = "--image-build-context-stdin-v1";
+
+/**
+ * Control-plane-owned boot controls: every env var `BootMode.from_env`
+ * (sandbox_runtime/runtime_config.py) reads to decide how the runtime boots,
+ * plus the deferred-start marker that decides whether it boots at all.
+ * Providers set these themselves when the mode applies, so they are stripped
+ * from the user layer. Keep in sync with that enum and the launcher module.
  */
 export const BOOT_MODE_ENV_KEYS = [
   IMAGE_BUILD_MODE_ENV_VAR,
   "RESTORED_FROM_SNAPSHOT",
   "FROM_REPO_IMAGE",
   "REPO_IMAGE_SHA",
+  DEFERRED_START_ENV_VAR,
 ] as const;
 
 /**

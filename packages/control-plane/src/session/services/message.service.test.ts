@@ -202,6 +202,7 @@ describe("MessageService", () => {
         status: "pending",
         error_message: null,
         stop_confirmation_deadline: null,
+        reported_cost_usd: 0,
         created_at: 3000,
         started_at: null,
         completed_at: null,
@@ -224,6 +225,7 @@ describe("MessageService", () => {
         status: "pending",
         error_message: null,
         stop_confirmation_deadline: null,
+        reported_cost_usd: 0,
         created_at: 2000,
         started_at: null,
         completed_at: null,
@@ -246,6 +248,7 @@ describe("MessageService", () => {
         status: "pending",
         error_message: null,
         stop_confirmation_deadline: null,
+        reported_cost_usd: 0,
         created_at: 1000,
         started_at: null,
         completed_at: null,
@@ -256,7 +259,7 @@ describe("MessageService", () => {
     const result = service.listMessages({ cursor: null, limit: 2, status: "pending" });
 
     expect(result.hasMore).toBe(true);
-    expect(result.cursor).toBe("2000");
+    expect(result.cursor).toBe("2000:m2");
     expect(result.messages).toHaveLength(2);
     expect(result.messages[0]?.attachments).toEqual([
       {
@@ -294,6 +297,7 @@ describe("MessageService", () => {
         status: "pending",
         error_message: null,
         stop_confirmation_deadline: null,
+        reported_cost_usd: 0,
         created_at: 1000,
         started_at: null,
         completed_at: null,

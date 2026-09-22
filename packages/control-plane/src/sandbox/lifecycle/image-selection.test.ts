@@ -5,9 +5,10 @@
 import { describe, it, expect } from "vitest";
 import { evaluateImageBuildForSpawn, type ImageBuildSpawnRow } from "./image-selection";
 import { computeRepositoriesFingerprint } from "../../image-builds/fingerprint";
-import { MIN_VNC_RUNTIME_VERSION } from "../../image-builds/model";
+import { MIN_VNC_RUNTIME_VERSION, minCompatibleRuntimeVersionFor } from "../../image-builds/model";
 import { COMPATIBLE_RUNTIME_VERSION } from "../../image-builds/test-helpers";
-import { MIN_COMPATIBLE_RUNTIME_VERSION } from "../../image-builds/model";
+import { MIN_SHUTDOWN_PROTOCOL_RUNTIME_GENERATION } from "../runtime-manifest";
+import { DEFAULT_HARNESS } from "@open-inspect/shared/harnesses";
 
 const SESSION_REPOSITORIES = [
   { repoOwner: "acme", repoName: "web", baseBranch: "main" },
@@ -86,12 +87,12 @@ describe("evaluateImageBuildForSpawn", () => {
     });
   });
 
-  it("enforces the runtime compatibility floor", async () => {
+  it("enforces the shutdown protocol floor", async () => {
     expect(
       (
         await evaluateImageBuildForSpawn(
           await readyImage({
-            runtime_version: `v${MIN_COMPATIBLE_RUNTIME_VERSION}-compatible-runtime`,
+            runtime_version: `v${MIN_SHUTDOWN_PROTOCOL_RUNTIME_GENERATION}-preservation-runtime`,
           }),
           SESSION_REPOSITORIES
         )
@@ -99,7 +100,7 @@ describe("evaluateImageBuildForSpawn", () => {
     ).toBe("selected");
 
     for (const runtimeVersion of [
-      `v${MIN_COMPATIBLE_RUNTIME_VERSION - 1}-legacy-runtime`,
+      `v${MIN_SHUTDOWN_PROTOCOL_RUNTIME_GENERATION - 1}-before-preservation`,
       "dev",
       "",
     ]) {
@@ -113,10 +114,34 @@ describe("evaluateImageBuildForSpawn", () => {
     }
   });
 
-  it("requires a v57 image when the session needs VNC support", async () => {
-    const v56Image = await readyImage({ runtime_version: "v56-managed-provider-runtime" });
+  it("applies the higher of the harness and shutdown protocol floors", async () => {
+    const claudeFloor = minCompatibleRuntimeVersionFor("claude");
+    const floor = Math.max(claudeFloor, MIN_SHUTDOWN_PROTOCOL_RUNTIME_GENERATION);
+    const stale = await readyImage({ runtime_version: `v${floor - 1}-before-preservation` });
+
+    expect(await evaluateImageBuildForSpawn(stale, SESSION_REPOSITORIES, "claude")).toEqual({
+      outcome: "miss",
+      reason: "runtime_below_floor",
+      imageBuildId: "imgb-1",
+    });
+
+    const current = await readyImage({ runtime_version: `v${floor}-preservation` });
     expect(
-      await evaluateImageBuildForSpawn(v56Image, SESSION_REPOSITORIES, MIN_VNC_RUNTIME_VERSION)
+      (await evaluateImageBuildForSpawn(current, SESSION_REPOSITORIES, "claude")).outcome
+    ).toBe("selected");
+  });
+
+  it("raises the floor to the capability the session asks for", async () => {
+    const belowVnc = await readyImage({
+      runtime_version: `v${MIN_VNC_RUNTIME_VERSION - 1}-before-vnc`,
+    });
+    expect(
+      await evaluateImageBuildForSpawn(
+        belowVnc,
+        SESSION_REPOSITORIES,
+        DEFAULT_HARNESS,
+        MIN_VNC_RUNTIME_VERSION
+      )
     ).toEqual({
       outcome: "miss",
       reason: "runtime_below_floor",
@@ -126,8 +151,9 @@ describe("evaluateImageBuildForSpawn", () => {
     expect(
       (
         await evaluateImageBuildForSpawn(
-          await readyImage({ runtime_version: "v57-vnc-runtime" }),
+          await readyImage(),
           SESSION_REPOSITORIES,
+          DEFAULT_HARNESS,
           MIN_VNC_RUNTIME_VERSION
         )
       ).outcome

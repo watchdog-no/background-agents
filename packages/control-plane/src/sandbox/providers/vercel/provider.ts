@@ -2,7 +2,10 @@
  * Vercel Sandbox provider implementation.
  */
 
-import type { SandboxSettings } from "@open-inspect/shared/types/integrations";
+import {
+  supportsConfigurableSandboxTimeout,
+  type SandboxSettings,
+} from "@open-inspect/shared/types/integrations";
 import { resolveServicePorts, resolveTunnelPorts } from "../port-resolution";
 import { createLogger } from "../../../logger";
 import type { SourceControlProviderName } from "../../../source-control";
@@ -18,8 +21,10 @@ import {
 } from "../../sandbox-env";
 import {
   DEFAULT_SANDBOX_TIMEOUT_SECONDS,
+  PrebuiltImageUnavailableError,
   SandboxProviderError,
   createVncAccess,
+  signalUntilDeadline,
   type CreateSandboxConfig,
   type CreateSandboxResult,
   type ImageBuildProviderTriggerConfig,
@@ -82,11 +87,12 @@ export class VercelSandboxProvider implements SandboxProvider {
   private baseSnapshotIdPromise?: Promise<string>;
 
   readonly capabilities: SandboxProviderCapabilities = {
-    supportsSandboxTimeout: true,
+    supportsSandboxTimeout: supportsConfigurableSandboxTimeout(this.name),
     supportsSnapshots: true,
     supportsRestore: true,
     supportsPersistentResume: false,
     supportsExplicitStop: true,
+    snapshotStopsSandbox: true,
   };
 
   constructor(
@@ -117,19 +123,32 @@ export class VercelSandboxProvider implements SandboxProvider {
         );
       }
 
-      const created = await this.client.createSandbox(
-        {
-          name: config.sandboxId,
-          runtime: this.providerConfig.runtime || DEFAULT_VERCEL_RUNTIME,
-          timeoutMs,
-          resources: resolveVercelResources(config.sandboxSettings),
-          ports,
-          env,
-          tags: this.buildTags(config),
-          sourceSnapshotId,
-        },
-        config.correlation
-      );
+      let created: VercelCreateSandboxResponse;
+      try {
+        created = await this.client.createSandbox(
+          {
+            name: config.sandboxId,
+            runtime: this.providerConfig.runtime || DEFAULT_VERCEL_RUNTIME,
+            timeoutMs,
+            resources: resolveVercelResources(config.sandboxSettings),
+            ports,
+            env,
+            tags: this.buildTags(config),
+            sourceSnapshotId,
+          },
+          config.correlation
+        );
+      } catch (error) {
+        if (
+          config.prebuiltImageId &&
+          error instanceof VercelSandboxApiError &&
+          error.status === 404
+        ) {
+          throw new PrebuiltImageUnavailableError("Vercel prebuilt snapshot is unavailable", error);
+        }
+        throw error;
+      }
+      const sessionCreatedAt = created.session.createdAt || Date.now();
 
       const access = await this.prepareSandboxAccess(
         created,
@@ -145,7 +164,13 @@ export class VercelSandboxProvider implements SandboxProvider {
       return {
         sandboxId: config.sandboxId,
         providerObjectId: created.session.id,
-        createdAt: created.session.createdAt || Date.now(),
+        createdAt: sessionCreatedAt,
+        lifetime: {
+          kind: "finite",
+          expiresAtMs: sessionCreatedAt + created.session.timeout,
+          observedAtMs: Date.now(),
+          source: "provider",
+        },
         codeServerUrl: access.codeServerUrl,
         codeServerPassword: access.codeServerPassword,
         ttydUrl: access.ttydUrl,
@@ -153,6 +178,7 @@ export class VercelSandboxProvider implements SandboxProvider {
         tunnelUrls: access.tunnelUrls,
       };
     } catch (error) {
+      if (error instanceof SandboxProviderError) throw error;
       throw this.classifyError("Failed to create Vercel sandbox", error);
     }
   }
@@ -199,6 +225,12 @@ export class VercelSandboxProvider implements SandboxProvider {
         success: true,
         sandboxId: config.sandboxId,
         providerObjectId: created.session.id,
+        lifetime: {
+          kind: "finite",
+          expiresAtMs: created.session.createdAt + created.session.timeout,
+          observedAtMs: Date.now(),
+          source: "provider",
+        },
         codeServerUrl: access.codeServerUrl,
         codeServerPassword: access.codeServerPassword,
         ttydUrl: access.ttydUrl,
@@ -213,11 +245,12 @@ export class VercelSandboxProvider implements SandboxProvider {
 
   async takeSnapshot(config: SnapshotConfig): Promise<SnapshotResult> {
     try {
+      const signal = signalUntilDeadline(config.deadlineAtMs, config.signal);
       const snapshot = await this.client.snapshotSession(
         config.providerObjectId,
         {
           expirationMs: this.providerConfig.snapshotExpirationMs ?? DEFAULT_SNAPSHOT_EXPIRATION_MS,
-          signal: config.signal,
+          signal,
         },
         config.correlation
       );
@@ -229,7 +262,14 @@ export class VercelSandboxProvider implements SandboxProvider {
         };
       }
 
-      return { success: true, imageId: snapshot.snapshot.id };
+      if (snapshot.session.status !== "stopped") {
+        return {
+          success: false,
+          error: `Source session status was ${snapshot.session.status} after snapshot`,
+        };
+      }
+
+      return { success: true, imageId: snapshot.snapshot.id, sourceStopped: true };
     } catch (error) {
       if (error instanceof SandboxProviderError) throw error;
       throw this.classifyError("Failed to snapshot Vercel sandbox", error);
@@ -238,10 +278,11 @@ export class VercelSandboxProvider implements SandboxProvider {
 
   async stopSandbox(config: StopConfig): Promise<StopResult> {
     try {
+      const signal = signalUntilDeadline(config.deadlineAtMs, config.signal);
       await this.client.stopSession(
         config.providerObjectId,
         config.correlation,
-        ...(config.signal ? [config.signal] : [])
+        ...(signal ? [signal] : [])
       );
       return { success: true };
     } catch (error) {

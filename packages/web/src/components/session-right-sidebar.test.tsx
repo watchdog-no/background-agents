@@ -7,7 +7,10 @@ import { SessionDetailsOverlay } from "./session-details-overlay";
 import { SessionRightSidebar } from "./session-right-sidebar";
 import type { SessionCapabilities } from "@/lib/session-capabilities";
 
-vi.mock("swr", () => ({ default: () => ({ data: undefined }) }));
+vi.mock("swr", () => ({
+  default: () => ({ data: undefined }),
+  useSWRConfig: () => ({ fetcher: undefined }),
+}));
 
 afterEach(cleanup);
 
@@ -28,6 +31,7 @@ describe("SessionRightSidebar", () => {
     branchName: null,
     status: "active",
     sandboxStatus: "ready",
+    harness: "opencode",
     messageCount: 0,
     createdAt: 1,
     totalCost: 3,
@@ -44,6 +48,7 @@ describe("SessionRightSidebar", () => {
       branchName: "viewer",
       status: "active",
       sandboxStatus: "ready",
+      harness: "opencode",
       messageCount: 0,
       createdAt: 1,
       codeServerUrl: "https://code.example",
