@@ -40,15 +40,15 @@ module "linear_bot_worker" {
   enable_service_bindings = var.enable_service_bindings
 
   plain_text_bindings = {
-    CONTROL_PLANE_URL     = { value = local.control_plane_url }
-    WEB_APP_URL           = { value = local.web_app_url }
-    DEPLOYMENT_NAME       = { value = var.deployment_name }
-    APP_NAME              = { value = var.app_name }
-    DEFAULT_MODEL         = { value = var.linear_bot_default_model }
-    CLASSIFICATION_MODEL  = { value = var.classification_model }
+    CONTROL_PLANE_URL                 = { value = local.control_plane_url }
+    WEB_APP_URL                       = { value = local.web_app_url }
+    DEPLOYMENT_NAME                   = { value = var.deployment_name }
+    APP_NAME                          = { value = var.app_name }
+    DEFAULT_MODEL                     = { value = var.linear_bot_default_model }
+    CLASSIFICATION_MODEL              = { value = var.classification_model }
     CLASSIFICATION_DEFAULT_REPOSITORY = { value = var.classification_default_repository }
-    LINEAR_CLIENT_ID      = { value = var.linear_client_id }
-    WORKER_URL            = { value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" }
+    LINEAR_CLIENT_ID                  = { value = var.linear_client_id }
+    WORKER_URL                        = { value = "https://open-inspect-linear-bot-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev" }
   }
 
   # No classifier provider key: see workers-slack.tf.

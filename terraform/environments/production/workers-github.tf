@@ -60,11 +60,11 @@ module "github_bot_worker" {
   }
 
   plain_text_bindings = {
-    DEPLOYMENT_NAME         = { value = var.deployment_name }
-    APP_NAME                = { value = var.app_name }
-    DEFAULT_MODEL           = { value = var.github_bot_default_model }
+    DEPLOYMENT_NAME          = { value = var.deployment_name }
+    APP_NAME                 = { value = var.app_name }
+    DEFAULT_MODEL            = { value = var.github_bot_default_model }
     DEFAULT_REASONING_EFFORT = { value = var.github_bot_default_reasoning_effort }
-    GITHUB_BOT_USERNAME     = { value = var.github_bot_username }
+    GITHUB_BOT_USERNAME      = { value = var.github_bot_username }
   }
 
   secrets = {

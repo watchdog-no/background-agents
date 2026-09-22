@@ -202,7 +202,9 @@ def test_daytona_snapshot_uses_configured_memory(monkeypatch, tmp_path):
 
     create_base_snapshot(daytona, bundle.PackedBundle(tmp_path, PLAN), "snapshot-name", 4)
 
-    resources.assert_called_once_with(memory=4)
+    # Memory is the configured dimension; cpu and disk are this deployment's
+    # fixed workspace allowance (see packages/daytona-infra/src/toolchain.py).
+    resources.assert_called_once_with(cpu=2, memory=4, disk=10)
     snapshot_params.assert_called_once_with(
         name="snapshot-name",
         image=image,

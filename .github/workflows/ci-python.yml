@@ -254,4 +254,6 @@ jobs:
       - name: Install snapshot test dependencies
         run: pip install 'daytona==0.161.0' pytest
       - name: Test snapshot build and retries
-        run: PYTHONPATH=packages/daytona-infra pytest packages/daytona-infra/tests -q
+        # bootstrap.py packs its image bundle through sandbox_images, which is
+        # path-inserted at runtime; the tests import it directly.
+        run: PYTHONPATH=packages/daytona-infra:packages/sandbox-images/src pytest packages/daytona-infra/tests -q
