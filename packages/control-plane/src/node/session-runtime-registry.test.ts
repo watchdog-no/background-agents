@@ -859,35 +859,39 @@ describe("SessionRuntimeRegistry", () => {
 
 if (isGcChild) {
   describe("session registry eviction under late garbage collection", () => {
-    it(GC_CHILD_TEST, async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "session-registry-gc-"));
-      const alarms = fakeAlarms();
-      const registry = new SessionRuntimeRegistry<FakeRuntime>({
-        db: {} as SqlDatabase,
-        storeProvider: createFileSessionStoreProvider(dataDir),
-        sessionIndex: { exists: async () => false },
-        alarmStoreFor: alarms.alarmStoreFor,
-        buildRuntime: (platform) => fakeRuntime(platform),
-        log: spyLogger() as never,
-        idleAfterMs: 0,
-      });
-      try {
-        for (let round = 0; round < 20; round += 1) {
-          await registry.withRuntime(`s${round % 5}`, async (runtime) => {
-            const { sql } = runtime.platform.storage;
-            sql.exec("SELECT count(*) AS n FROM session").one();
-            sql.exec("SELECT 1;\n");
-          });
-          await registry.sweep();
+    it(
+      GC_CHILD_TEST,
+      async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), "session-registry-gc-"));
+        const alarms = fakeAlarms();
+        const registry = new SessionRuntimeRegistry<FakeRuntime>({
+          db: {} as SqlDatabase,
+          storeProvider: createFileSessionStoreProvider(dataDir),
+          sessionIndex: { exists: async () => false },
+          alarmStoreFor: alarms.alarmStoreFor,
+          buildRuntime: (platform) => fakeRuntime(platform),
+          log: spyLogger() as never,
+          idleAfterMs: 0,
+        });
+        try {
+          for (let round = 0; round < 20; round += 1) {
+            await registry.withRuntime(`s${round % 5}`, async (runtime) => {
+              const { sql } = runtime.platform.storage;
+              sql.exec("SELECT count(*) AS n FROM session").one();
+              sql.exec("SELECT 1;\n");
+            });
+            await registry.sweep();
+          }
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            (globalThis as { gc?: () => void }).gc?.();
+            await new Promise<void>((done) => setImmediate(done));
+          }
+        } finally {
+          await registry.shutdown();
+          rmSync(dataDir, { recursive: true, force: true });
         }
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          (globalThis as { gc?: () => void }).gc?.();
-          await new Promise<void>((done) => setImmediate(done));
-        }
-      } finally {
-        await registry.shutdown();
-        rmSync(dataDir, { recursive: true, force: true });
-      }
-    });
+      },
+      GC_CHILD_TIMEOUT_MS
+    );
   });
 }
