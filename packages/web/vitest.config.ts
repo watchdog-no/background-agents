@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
+    // Node 25+ ships a global localStorage that is undefined without
+    // --localstorage-file and shadows jsdom's, so jsdom tests see no storage.
+    execArgv: ["--no-experimental-webstorage"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json"],
