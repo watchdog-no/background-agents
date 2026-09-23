@@ -10,7 +10,7 @@
 /** Legacy identity retained for compatibility with earlier request-shape tests. */
 export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-export const CLAUDE_CODE_CLIENT_VERSION = "2.1.162";
+export const CLAUDE_CODE_CLIENT_VERSION = "2.1.280";
 
 export const CLAUDE_CODE_MAX_TOKENS = 64000;
 
