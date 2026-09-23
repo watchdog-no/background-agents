@@ -356,7 +356,7 @@ class TestAnthropicAuthPluginSetup:
               assert(!("x-api-key" in headers), "x-api-key leaked upstream");
               assert(headers["anthropic-dangerous-direct-browser-access"] === "true", "browser access marker missing");
               assert(headers["anthropic-version"] === "2023-06-01", "anthropic-version missing");
-              assert(headers["user-agent"] === "claude-cli/2.1.162 (external, sdk-cli)", "Claude Code user-agent missing");
+              assert(headers["user-agent"] === "claude-cli/2.1.280 (external, sdk-cli)", "Claude Code user-agent missing");
               assert(headers["x-app"] === "cli", "Claude Code app marker missing");
               assert(headers["x-claude-code-session-id"] === "sess-1", "Claude Code session id missing");
 
@@ -486,7 +486,7 @@ class TestAnthropicAuthPluginSetup:
             );
             for (const sentBody of upstreamBodies) {
               assert(
-                sentBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.162.518;"),
+                sentBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.280.518;"),
                 "Claude Code billing header was not prepended"
               );
               assert(
@@ -609,7 +609,7 @@ Repo-specific instructions that must not stay in the system prompt.`;
 
             assert(upstreamBody, "upstream body was not captured");
             assert(
-              upstreamBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.162.518;"),
+              upstreamBody.system[0].text.startsWith("x-anthropic-billing-header: cc_version=2.1.280.518;"),
               "Claude Code billing header was not prepended"
             );
             assert(
