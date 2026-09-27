@@ -239,13 +239,13 @@ describe("automation read, update, and delete routes", () => {
 
     it("moves a Claude automation to OpenCode when its model changes to OpenAI", async () => {
       const res = await callRoute("PUT", "/automations/auto-1", {
-        body: { model: "openai/gpt-5.4" },
+        body: { model: "openai/gpt-6-sol" },
       });
 
       expect(res.status).toBe(200);
       expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
         "auto-1",
-        expect.objectContaining({ harness: "opencode", model: "openai/gpt-5.4" })
+        expect.objectContaining({ harness: "opencode", model: "openai/gpt-6-sol" })
       );
     });
 

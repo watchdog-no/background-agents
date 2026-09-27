@@ -38,7 +38,7 @@ describe("harness catalog", () => {
 
   it("routes Anthropic models to the Claude harness whatever was requested", () => {
     expect(harnessForModel("anthropic/claude-opus-5-5")).toBe("claude");
-    expect(harnessForModel("claude-sonnet-4-6")).toBe("claude");
+    expect(harnessForModel("claude-haiku-4-5")).toBe("claude");
     expect(harnessForModel("openai/gpt-6-sol")).toBeNull();
     expect(resolveHarnessForModel(undefined, "anthropic/claude-opus-5-5")).toBe("claude");
     expect(resolveHarnessForModel("opencode", "anthropic/claude-opus-5-5")).toBe("claude");
@@ -134,7 +134,7 @@ describe("selectedProviderAuthModes", () => {
 
 describe("checkHarnessCompatibility", () => {
   it("accepts a compatible harness, model and auth", () => {
-    expect(checkHarnessCompatibility("opencode", "openai/gpt-5.5")).toBeNull();
+    expect(checkHarnessCompatibility("opencode", "openai/gpt-6-sol")).toBeNull();
     expect(
       checkHarnessCompatibility("claude", "anthropic/claude-sonnet-4-6", {
         anthropic: "provider_account",

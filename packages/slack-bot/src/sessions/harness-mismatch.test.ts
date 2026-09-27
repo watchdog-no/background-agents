@@ -3,9 +3,9 @@ import { followUpHarnessMismatch } from "./harness-mismatch";
 
 describe("followUpHarnessMismatch", () => {
   it("allows a follow-up model the thread's harness can run", () => {
-    expect(followUpHarnessMismatch("openai/gpt-6-sol", "openai/gpt-5.5")).toBeNull();
+    expect(followUpHarnessMismatch("openai/gpt-6-sol", "openai/gpt-6-luna")).toBeNull();
     expect(
-      followUpHarnessMismatch("anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5")
+      followUpHarnessMismatch("anthropic/claude-opus-5-5", "anthropic/claude-haiku-4-5")
     ).toBeNull();
   });
 

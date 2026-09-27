@@ -1314,7 +1314,7 @@ describe("SessionMessageQueue", () => {
   );
 
   it("fails an unavailable prompt model before spawning or dispatching", async () => {
-    const h = buildQueue({ session: createSession({ model: "openai/gpt-5.4" }) });
+    const h = buildQueue({ session: createSession({ model: "openai/gpt-6-sol" }) });
     h.repository.getNextPendingMessage.mockReturnValueOnce(
       createMessage({ model: "xai/grok-4.5" })
     );
@@ -1339,11 +1339,11 @@ describe("SessionMessageQueue", () => {
   });
 
   it("continues with the next prompt after rejecting unavailable authentication", async () => {
-    const h = buildQueue({ session: createSession({ model: "openai/gpt-5.4" }) });
+    const h = buildQueue({ session: createSession({ model: "openai/gpt-6-sol" }) });
     const sandboxWs = { readyState: 1 } as WebSocket;
     h.repository.getNextPendingMessage
       .mockReturnValueOnce(createMessage({ id: "blocked", model: "xai/grok-4.5" }))
-      .mockReturnValueOnce(createMessage({ id: "eligible", model: "openai/gpt-5.4" }));
+      .mockReturnValueOnce(createMessage({ id: "eligible", model: "openai/gpt-6-sol" }));
     h.getProviderAuthenticationError.mockImplementation(async (model) =>
       model === "xai/grok-4.5" ? "No xAI authentication is configured" : null
     );

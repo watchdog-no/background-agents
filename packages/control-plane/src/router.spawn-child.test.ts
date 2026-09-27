@@ -77,7 +77,7 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     repoName: "web-app",
     repoId: 12345,
     harness: "opencode",
-    model: "openai/gpt-5.5",
+    model: "openai/gpt-6-astra",
     reasoningEffort: null,
     sandboxTimeoutMs: 14_400_000,
     baseBranch: "main",
@@ -120,7 +120,7 @@ describe("handleSpawnChild prompt enqueue handling", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["openai/gpt-5.5"]);
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["openai/gpt-6-astra"]);
     integrationSettingsMocks.resolveCodeServerEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveVncEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveSandboxSettings.mockResolvedValue({});
@@ -163,8 +163,8 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     vi.mocked(SessionIndexStore).mockImplementation(function () {
       return store as never;
     });
-    const anthropicParent = { ...spawnContext, model: "anthropic/claude-sonnet-4-6" };
-    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["anthropic/claude-sonnet-4-6"]);
+    const anthropicParent = { ...spawnContext, model: "anthropic/claude-haiku-4-5" };
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["anthropic/claude-haiku-4-5"]);
     const { env } = makeSuccessfulEnv(anthropicParent);
 
     const response = await makeRequest(env);
@@ -322,13 +322,13 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     const response = await makeRequest(env, {
       title: "Child task",
       prompt: "Do the thing",
-      reasoningEffort: "max",
+      reasoningEffort: "none",
     });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        'Invalid reasoning effort "max" for model "openai/gpt-5.5". Valid efforts: none, low, medium, high, xhigh',
+        'Invalid reasoning effort "none" for model "openai/gpt-6-astra". Valid efforts: low, medium, high, xhigh, max',
     });
     expect(childStub.fetch).not.toHaveBeenCalled();
   });

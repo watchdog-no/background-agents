@@ -1105,7 +1105,7 @@ describe("POST /events", () => {
         repoId: "acme/app",
         repoFullName: "acme/app",
         // Disabled, and on the same Claude Agent harness as the enabled fallback.
-        model: "anthropic/claude-sonnet-4-5",
+        model: "anthropic/claude-opus-5-5",
         reasoningEffort: "high",
         createdAt: Date.now(),
       })
