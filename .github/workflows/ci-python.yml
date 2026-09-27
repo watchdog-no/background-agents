@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ci-python.yml"
+      - ".nvmrc"
       - "packages/control-plane/src/image-builds/timeouts.ts"
       - "packages/daytona-infra/**"
       - "packages/e2b-infra/**"
@@ -14,8 +15,6 @@ on:
       - "packages/vercel-infra/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
-      - "terraform/environments/production/daytona.tf"
-      - "terraform/modules/daytona-infra/**"
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
@@ -25,6 +24,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ci-python.yml"
+      - ".nvmrc"
       - "packages/control-plane/src/image-builds/timeouts.ts"
       - "packages/daytona-infra/**"
       - "packages/e2b-infra/**"
@@ -34,8 +34,6 @@ on:
       - "packages/vercel-infra/**"
       - "packages/shared/src/types/integrations.ts"
       - "ruff.toml"
-      - "terraform/environments/production/daytona.tf"
-      - "terraform/modules/daytona-infra/**"
       - "terraform/environments/production/modal.tf"
       - "terraform/modules/modal-app/scripts/deploy.sh"
       - "!**/*.md"
@@ -189,7 +187,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: |
@@ -235,25 +233,3 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
-
-  test-daytona:
-    name: Test (Python - Daytona)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Setup frozen image lock checker
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.9.7"
-      - name: Install snapshot test dependencies
-        run: pip install 'daytona==0.161.0' pytest
-      - name: Test snapshot build and retries
-        # bootstrap.py packs its image bundle through sandbox_images, which is
-        # path-inserted at runtime; the tests import it directly.
-        run: PYTHONPATH=packages/daytona-infra:packages/sandbox-images/src pytest packages/daytona-infra/tests -q

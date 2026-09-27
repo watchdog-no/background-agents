@@ -527,7 +527,8 @@ describe("DaytonaSandboxProvider", () => {
         });
 
         const env = vi.mocked(client.createSandbox).mock.calls[0][0].env;
-        expect(env?.TERMINAL_ENABLED).toBeUndefined();
+        // Stated as empty, not omitted, so a captured image's value cannot re-enable it.
+        expect(env?.TERMINAL_ENABLED).toBe("");
         expect(env?.TTYD_PROXY_PORT).toBeUndefined();
         expect(result.ttydUrl).toBeUndefined();
         expect(client.getSignedPreviewUrl).not.toHaveBeenCalled();
@@ -571,6 +572,7 @@ describe("DaytonaSandboxProvider", () => {
       expect(result.success).toBe(true);
       expect(result.providerObjectId).toBe("daytona-sandbox-id");
       expect(client.startSandbox).toHaveBeenCalledWith("daytona-sandbox-id");
+      expect(client.getSignedPreviewUrl).not.toHaveBeenCalled();
     });
 
     it("returns shouldSpawnFresh when sandbox not found", async () => {
@@ -845,7 +847,10 @@ describe("DaytonaSandboxProvider prebuilt images", () => {
       url: "https://preview.test/signed",
     }));
 
-    await prebuiltProvider(client).createSandbox(prebuiltConfig);
+    const result = await prebuiltProvider(client).createSandbox({
+      ...prebuiltConfig,
+      sandboxSettings: { terminalEnabled: true },
+    });
 
     const params = client.createSandbox.mock.calls[0][0];
     expect(params.snapshot).toBe("snapshot-1");
@@ -855,7 +860,10 @@ describe("DaytonaSandboxProvider prebuilt images", () => {
       IMAGE_BUILD_MODE: "false",
       RESTORED_FROM_SNAPSHOT: "false",
       OI_DEFERRED_START: "false",
+      TERMINAL_ENABLED: "true",
+      TTYD_PROXY_PORT: String(DEFAULT_TERMINAL_PORT),
     });
+    expect(result.ttydUrl).toBe("https://preview.test/signed");
     // Presence of any callback key is what the runtime reads as a build
     // context, so a session create must set none of them.
     for (const key of Object.keys(params.env ?? {})) {
@@ -1104,6 +1112,6 @@ describe("DaytonaSandboxProvider prebuilt images", () => {
     expect(result.vncAccess).toBeUndefined();
     expect(result.tunnelUrls).toBeUndefined();
     expect(client.deleteSandbox).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("daytona.create_tunnel_urls_failed"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("daytona.preview_url_failed"));
   });
 });

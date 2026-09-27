@@ -26,6 +26,7 @@ from .opencode_client import (
     SSEInactivityTimeoutError,
     SSEStreamDisconnectedError,
 )
+from .opencode_step_ids import StepIdTracker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -75,6 +76,7 @@ class _PromptState:
     # Priced step costs keyed by OpenCode part id. Last write wins, so a part
     # OpenCode re-emits with a corrected cost replaces its earlier value.
     step_costs: dict[str, float] = field(default_factory=dict)
+    step_ids: StepIdTracker = field(default_factory=StepIdTracker)
     # Set when a parent context-overflow announcement was swallowed; cleared by
     # session.compacted. If still set at idle with no error emitted, the
     # promised compaction never happened and the prompt must fail.
@@ -747,6 +749,7 @@ class OpenCodePromptStream:
                         "type": "token",
                         "content": next_text,
                         "messageId": state.message_id,
+                        **({"partId": part_id} if isinstance(part_id, str) and part_id else {}),
                     }
                 )
 
@@ -786,30 +789,46 @@ class OpenCodePromptStream:
                     events.append(tool_event)
 
         elif part_type == "step-start":
+            message_id = part.get("messageID") or part.get("sessionID") or ""
+            step_id = state.step_ids.start(
+                message_id, part_id if isinstance(part_id, str) else None
+            )
             events.append(
                 {
                     "type": "step_start",
                     "messageId": state.message_id,
+                    "stepId": step_id,
                 }
             )
 
         elif part_type == "step-finish":
+            message_id = part.get("messageID") or part.get("sessionID") or ""
+            step_id = state.step_ids.finish(
+                message_id, part_id if isinstance(part_id, str) else None
+            )
             cost = part.get("cost")
+            # Only a part with an id can be recognised as a replay; id-less
+            # finishes are distinct steps.
             if (
-                part_id in state.emitted_step_finish_part_ids
+                part_id
+                and part_id in state.emitted_step_finish_part_ids
                 and state.step_costs.get(part_id) == cost
             ):
                 return events
-            state.emitted_step_finish_part_ids.add(part_id)
+            if part_id:
+                state.emitted_step_finish_part_ids.add(part_id)
             if isinstance(cost, int | float) and not isinstance(cost, bool):
                 state.step_costs[str(part.get("id", ""))] = float(cost)
             finish_event = {
                 "type": "step_finish",
-                "tokens": part.get("tokens"),
-                "reason": part.get("reason"),
                 "messageId": state.message_id,
+                "stepId": step_id,
                 "messageCostUsd": state.message_cost_usd(),
             }
+            if part.get("tokens") is not None:
+                finish_event["tokens"] = part["tokens"]
+            if part.get("reason") is not None:
+                finish_event["reason"] = part["reason"]
             if cost is not None:
                 finish_event["cost"] = cost
             if state.context_limit is not None:
@@ -1166,14 +1185,7 @@ class OpenCodePromptStream:
                                 prev_len=len(previously_sent),
                                 new_len=len(text),
                             )
-                            state.cumulative_text[part_id] = text
-                            result.events.append(
-                                {
-                                    "type": "token",
-                                    "content": text,
-                                    "messageId": state.message_id,
-                                }
-                            )
+                            result.events.extend(self._handle_part(state, part, None))
                     elif part_type == "reasoning":
                         msg_session_id = info.get("sessionID", "")
                         if msg_session_id and msg_session_id != state.opencode_session_id:

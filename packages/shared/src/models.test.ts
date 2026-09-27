@@ -404,12 +404,14 @@ describe("model utilities", () => {
       efforts: ["low", "medium", "high", "xhigh", "max"],
       default: "xhigh",
     });
-    for (const model of ["openai/gpt-6-sol", "openai/gpt-6-luna"]) {
-      expect(getReasoningConfig(model)).toEqual({
-        efforts: ["none", "low", "medium", "high", "xhigh", "max"],
-        default: "medium",
-      });
-    }
+    expect(getReasoningConfig("openai/gpt-6-sol")).toEqual({
+      efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      default: "medium",
+    });
+    expect(getReasoningConfig("openai/gpt-6-luna")).toEqual({
+      efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      default: "medium",
+    });
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: "xhigh",

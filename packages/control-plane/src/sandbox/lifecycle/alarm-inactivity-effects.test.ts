@@ -10,10 +10,10 @@ describe("inactivity alarm effects", () => {
 
   it.each([
     {
-      name: "remaining inactivity",
+      name: "heartbeat before remaining inactivity",
       ageMs: 120_000,
       clients: 0,
-      delayMs: DEFAULT_LIFECYCLE_CONFIG.inactivity.timeoutMs - 120_000,
+      delayMs: DEFAULT_LIFECYCLE_CONFIG.heartbeat.timeoutMs + 1,
     },
     {
       name: "minimum interval",
@@ -140,7 +140,7 @@ describe("inactivity alarm effects", () => {
       sandbox,
       createMockProvider({
         capabilities: {
-          snapshotStopsSandbox: true,
+          snapshotRequiresShutdown: true,
           supportsExplicitStop: true,
           supportsPersistentResume: false,
         },
@@ -195,9 +195,6 @@ describe("inactivity alarm effects", () => {
     expect(h.storage.clearSandboxAccess).not.toHaveBeenCalledWith("codeServer");
     expect(h.storage.clearSandboxAccess).not.toHaveBeenCalledWith("vnc");
     expect(h.storage.clearSandboxAccess).not.toHaveBeenCalledWith("ttyd");
-    // The terminal token outlives the stop: a resume reissues only the URL
-    // (see the manager's resume path), so clearing it would strand the
-    // restored terminal without credentials.
     expect(sandbox).toMatchObject({
       code_server_url: null,
       code_server_password: "code-secret",
