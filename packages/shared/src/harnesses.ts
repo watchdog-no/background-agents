@@ -30,6 +30,12 @@ export interface HarnessCapabilities {
   readonly label: string;
   /** Model providers (catalog id prefixes) the harness can run, or any. */
   readonly modelFamilies: "any" | readonly string[];
+  /**
+   * Model providers that run only on this harness. A session on one of these
+   * models is created on this harness whatever the caller asked for, and no
+   * other harness accepts it.
+   */
+  readonly ownsModelFamilies?: readonly string[];
   /** Provider id → auth modes the harness can *select* for that provider. */
   readonly providerAuth: Readonly<Partial<Record<string, readonly ProviderAuthMode[]>>>;
   /** How a sandbox restore resumes the conversation. */
@@ -50,6 +56,8 @@ export const HARNESS_CATALOG = {
   claude: {
     label: "Claude Agent",
     modelFamilies: ["anthropic"],
+    // Claude subscriptions authenticate only through the official Agent SDK.
+    ownsModelFamilies: ["anthropic"],
     providerAuth: {
       anthropic: ["api_key", "provider_account"],
     },
@@ -75,8 +83,31 @@ export function getHarnessLabel(harness: HarnessId): string {
   return HARNESS_CATALOG[harness].label;
 }
 
+/** The harness that owns a model's provider, if any harness does. */
+export function harnessForModel(model: string): HarnessId | null {
+  const { provider } = extractProviderAndModel(model);
+  return (
+    HARNESS_IDS.find((harness) =>
+      getHarnessCapabilities(harness).ownsModelFamilies?.includes(provider)
+    ) ?? null
+  );
+}
+
+/**
+ * Resolve the harness a new session or automation runs on: the owning harness
+ * for its model when there is one, otherwise the requested (or built-in) one.
+ */
+export function resolveHarnessForModel(
+  requested: string | null | undefined,
+  model: string
+): HarnessId {
+  return harnessForModel(model) ?? getValidHarnessOrDefault(requested);
+}
+
 /** Whether the harness can run a model (by its catalog provider prefix). */
 export function harnessSupportsModel(harness: HarnessId, model: string): boolean {
+  const owner = harnessForModel(model);
+  if (owner) return owner === harness;
   const families = getHarnessCapabilities(harness).modelFamilies;
   if (families === "any") return true;
   const { provider } = extractProviderAndModel(model);

@@ -24,6 +24,8 @@ import type { PermissionId } from "@open-inspect/shared/rbac";
 import {
   checkHarnessCompatibility,
   getValidHarnessOrDefault,
+  harnessSupportsModel,
+  resolveHarnessForModel,
   selectedProviderAuthModes,
 } from "@open-inspect/shared/harnesses";
 import { getValidModelOrDefault, isValidModel } from "@open-inspect/shared/models";
@@ -209,8 +211,8 @@ async function handleCreateAutomation(
   }
 
   // Validate harness and model
-  const harness = getValidHarnessOrDefault(body.harness);
   const model = getValidModelOrDefault(body.model);
+  const harness = resolveHarnessForModel(body.harness, model);
   const harnessIncompatibility = checkHarnessCompatibility(harness, model);
   if (harnessIncompatibility) return error(harnessIncompatibility.message, 400);
   const reasoningEffort = resolveReasoningEffort(model, body.reasoningEffort);
@@ -461,8 +463,13 @@ async function handleUpdateAutomation(
   }
 
   const nextModel = body.model !== undefined ? getValidModelOrDefault(body.model) : existing.model;
-  const nextHarness =
-    body.harness !== undefined ? body.harness : getValidHarnessOrDefault(existing.harness);
+  // A harness carried over from the stored row follows a model change; only an
+  // explicit request can pin a harness the new model cannot run on.
+  const storedHarness = getValidHarnessOrDefault(existing.harness);
+  const nextHarness = resolveHarnessForModel(
+    body.harness ?? (harnessSupportsModel(storedHarness, nextModel) ? storedHarness : null),
+    nextModel
+  );
   // The selections the automation will have after this write: the replacement
   // when one is given, else the stored pins whenever harness or model moves.
   const nextProviderSelections =
@@ -498,7 +505,7 @@ async function handleUpdateAutomation(
   if (body.instructions !== undefined) updateFields.instructions = body.instructions;
   if (body.scheduleCron !== undefined) updateFields.schedule_cron = body.scheduleCron;
   if (body.scheduleTz !== undefined) updateFields.schedule_tz = body.scheduleTz;
-  if (body.harness !== undefined) updateFields.harness = nextHarness;
+  if (body.harness !== undefined || body.model !== undefined) updateFields.harness = nextHarness;
   if (body.model !== undefined) updateFields.model = nextModel;
   if (body.reasoningEffort !== undefined || body.model !== undefined) {
     updateFields.reasoning_effort = resolvedReasoningEffort;

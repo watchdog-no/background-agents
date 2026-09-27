@@ -163,6 +163,7 @@ class ClaudeHarnessConfig:
 class _MessageText:
     message_id: str | None
     text: str = ""
+    sent: str = ""
 
 
 def _injected_origin(origin: MessageOrigin | None) -> MessageOrigin | None:
@@ -179,7 +180,6 @@ class _TurnState:
     # cannot be split between the two turns.
     cost_baseline: float | None
     texts: list[_MessageText] = field(default_factory=list)
-    last_token_content: str = ""
     tool_names: dict[str, str] = field(default_factory=dict)
     tool_args: dict[str, dict[str, Any]] = field(default_factory=dict)
     emitted_error: bool = False
@@ -187,9 +187,6 @@ class _TurnState:
     # Inside a turn the session injected (background task, channel, peer):
     # skip everything until that turn's result.
     injected: bool = False
-
-    def turn_text(self) -> str:
-        return "\n\n".join(entry.text for entry in self.texts if entry.text)
 
     def entry_for(self, message_id: str | None) -> _MessageText:
         for entry in self.texts:
@@ -245,6 +242,28 @@ def mcp_server_options(servers: tuple[Mapping[str, Any], ...]) -> dict[str, Any]
                 entry["env"] = dict(server["env"])
         config[str(name)] = entry
     return config
+
+
+def mcp_allowed_tools(
+    servers: tuple[Mapping[str, Any], ...], configured: Mapping[str, Any]
+) -> list[str]:
+    """Permission rules for the configured MCP servers.
+
+    A server with a ``toolAllowlist`` gets one rule per listed tool; any other
+    server gets all of its tools. The session runs in ``dontAsk`` mode, so a
+    tool without a rule is denied.
+    """
+    allowlists = {str(server.get("name")): server.get("toolAllowlist") for server in servers}
+    rules: list[str] = []
+    for name in configured:
+        allowlist = allowlists.get(name)
+        if isinstance(allowlist, (list, tuple)):
+            rules.extend(
+                f"mcp__{name}__{tool}" for tool in allowlist if isinstance(tool, str) and tool
+            )
+        else:
+            rules.append(f"mcp__{name}__*")
+    return rules
 
 
 def _canonical_tool_name(name: str) -> str:
@@ -403,7 +422,7 @@ class ClaudeHarness:
             raise RuntimeError("Claude harness is not open")
         mcp_servers: dict[str, Any] = mcp_server_options(self.config.mcp_servers)
         allowed_tools = [*ALLOWED_TOOLS]
-        allowed_tools.extend(f"mcp__{name}__*" for name in mcp_servers)
+        allowed_tools.extend(mcp_allowed_tools(self.config.mcp_servers, mcp_servers))
         if self._tool_client is not None:
             if self._tool_server is None:
                 factory = self._tool_server_factory or _default_tool_server
@@ -753,7 +772,7 @@ class ClaudeHarness:
                 if delta.get("type") == "text_delta" and delta.get("text"):
                     entry = state.texts[-1] if state.texts else state.entry_for(None)
                     entry.text += str(delta["text"])
-                    events.extend(self._token_event(state))
+                    events.extend(self._token_event(state, entry))
             return events, None
 
         if isinstance(message, AssistantMessage):
@@ -775,7 +794,7 @@ class ClaudeHarness:
                     entry = state.entry_for(message.message_id)
                     if len(final_text) > len(entry.text):
                         entry.text = final_text
-                        events.extend(self._token_event(state))
+                        events.extend(self._token_event(state, entry))
             for block in message.content:
                 if isinstance(block, ToolUseBlock):
                     state.tool_names[block.id] = _canonical_tool_name(block.name)
@@ -901,12 +920,24 @@ class ClaudeHarness:
 
         return events, None
 
-    def _token_event(self, state: _TurnState) -> list[BridgeEvent]:
-        content = state.turn_text()
-        if not content or content == state.last_token_content:
+    def _token_event(self, state: _TurnState, entry: _MessageText) -> list[BridgeEvent]:
+        """One text part per assistant message, as OpenCode emits per text part.
+
+        Each part keeps its own timeline row, so completion text (Slack, Linear,
+        child results) is the turn's last message rather than all its narration.
+        """
+        if not entry.text or entry.text == entry.sent:
             return []
-        state.last_token_content = content
-        return [{"type": "token", "content": content, "messageId": state.message_id}]
+        entry.sent = entry.text
+        part_id = entry.message_id or f"{state.message_id}:text:{state.texts.index(entry)}"
+        return [
+            {
+                "type": "token",
+                "content": entry.text,
+                "messageId": state.message_id,
+                "partId": part_id,
+            }
+        ]
 
     def _tool_event(
         self,

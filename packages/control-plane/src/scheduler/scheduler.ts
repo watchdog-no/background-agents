@@ -10,7 +10,7 @@
 
 import {
   DEFAULT_HARNESS,
-  getValidHarnessOrDefault,
+  resolveHarnessForModel,
   type HarnessId,
 } from "@open-inspect/shared/harnesses";
 import {
@@ -506,7 +506,7 @@ export class Scheduler {
           providerAuth: await resolveAutomationProviderAuth(
             this.db,
             automation.id,
-            getValidHarnessOrDefault(automation.harness)
+            resolveHarnessForModel(automation.harness, automation.model)
           ),
         };
       } catch (error) {
@@ -1599,7 +1599,7 @@ export class Scheduler {
       sessionId,
       ...target,
       title: `[Auto] ${automation.name}`,
-      harness: getValidHarnessOrDefault(automation.harness),
+      harness: resolveHarnessForModel(automation.harness, automation.model),
       model: automation.model,
       reasoningEffort: automation.reasoning_effort,
       participantUserId: executionPrincipal.participantUserId,

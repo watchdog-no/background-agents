@@ -6,9 +6,11 @@ import {
   checkHarnessCompatibility,
   filterModelsForHarness,
   getValidHarnessOrDefault,
+  harnessForModel,
   harnessSupportsModel,
   harnessSupportsProviderAuth,
   isValidHarness,
+  resolveHarnessForModel,
   selectedProviderAuthModes,
   reconcileProviderSelectionsForHarness,
 } from "./harnesses";
@@ -33,12 +35,22 @@ describe("harness catalog", () => {
     expect(isValidHarness("codex")).toBe(false);
     expect(isValidHarness(42)).toBe(false);
   });
+
+  it("routes Anthropic models to the Claude harness whatever was requested", () => {
+    expect(harnessForModel("anthropic/claude-opus-5-5")).toBe("claude");
+    expect(harnessForModel("claude-haiku-4-5")).toBe("claude");
+    expect(harnessForModel("openai/gpt-6-sol")).toBeNull();
+    expect(resolveHarnessForModel(undefined, "anthropic/claude-opus-5-5")).toBe("claude");
+    expect(resolveHarnessForModel("opencode", "anthropic/claude-opus-5-5")).toBe("claude");
+    expect(resolveHarnessForModel(undefined, "openai/gpt-6-sol")).toBe("opencode");
+    expect(resolveHarnessForModel("claude", "openai/gpt-6-sol")).toBe("claude");
+  });
 });
 
 describe("harnessSupportsModel", () => {
-  it("lets OpenCode run every catalog model", () => {
+  it("lets OpenCode run every catalog model except Anthropic's", () => {
     for (const model of VALID_MODELS) {
-      expect(harnessSupportsModel("opencode", model)).toBe(true);
+      expect(harnessSupportsModel("opencode", model)).toBe(!model.startsWith("anthropic/"));
     }
   });
 
@@ -53,7 +65,9 @@ describe("harnessSupportsModel", () => {
     const filtered = filterModelsForHarness("claude", VALID_MODELS);
     expect(filtered.length).toBeGreaterThan(0);
     expect(filtered.every((model) => model.startsWith("anthropic/"))).toBe(true);
-    expect(filterModelsForHarness("opencode", VALID_MODELS)).toEqual([...VALID_MODELS]);
+    expect(filterModelsForHarness("opencode", VALID_MODELS)).toEqual(
+      VALID_MODELS.filter((model) => !model.startsWith("anthropic/"))
+    );
   });
 });
 
@@ -120,7 +134,7 @@ describe("selectedProviderAuthModes", () => {
 
 describe("checkHarnessCompatibility", () => {
   it("accepts a compatible harness, model and auth", () => {
-    expect(checkHarnessCompatibility("opencode", "anthropic/claude-sonnet-4-6")).toBeNull();
+    expect(checkHarnessCompatibility("opencode", "openai/gpt-6-sol")).toBeNull();
     expect(
       checkHarnessCompatibility("claude", "anthropic/claude-sonnet-4-6", {
         anthropic: "provider_account",
@@ -135,12 +149,12 @@ describe("checkHarnessCompatibility", () => {
     expect(result?.message).toContain("Claude Agent");
   });
 
-  it("rejects an auth mode the harness cannot select for the model's provider", () => {
+  it("rejects Anthropic models on OpenCode before considering auth", () => {
     const result = checkHarnessCompatibility("opencode", "anthropic/claude-sonnet-4-6", {
       anthropic: "provider_account",
     });
-    expect(result?.code).toBe("provider_auth");
-    expect(result?.message).toContain("API key");
+    expect(result?.code).toBe("model");
+    expect(result?.message).toContain("OpenCode");
   });
 
   it("ignores auth modes for providers the model does not use", () => {

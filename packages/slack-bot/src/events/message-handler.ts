@@ -35,6 +35,7 @@ import {
   formatInterimThreadContext,
 } from "../messages/context";
 import { storePendingRequest } from "../pending-requests/pending-request-store";
+import { followUpHarnessMismatch } from "../sessions/harness-mismatch";
 import { deliverPrompt } from "../sessions/prompt-delivery";
 import {
   loadAuthoritativeSlackLaunchSettings,
@@ -168,6 +169,16 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
           return;
         }
         turnPlan = resolvedTurn.turnPlan;
+        const harnessMismatch = followUpHarnessMismatch(
+          existingSession.model,
+          turnPlan.effective.model
+        );
+        if (harnessMismatch) {
+          await postMessage(env.SLACK_BOT_TOKEN, channel, harnessMismatch, {
+            thread_ts: threadTs,
+          });
+          return;
+        }
       }
       if (hasInlineOverrides) {
         scheduleStartingStatus(scheduleBackground, env, channel, threadTs, traceId);

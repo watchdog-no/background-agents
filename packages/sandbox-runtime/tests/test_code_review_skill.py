@@ -43,15 +43,21 @@ def sample_output(path: str = "/repo/src/app.ts", *, priority: int = 1) -> dict:
 
 
 class SkillDocumentTests(unittest.TestCase):
-    def test_skill_uses_opencode_frontmatter(self) -> None:
+    def test_skill_frontmatter_is_harness_neutral(self) -> None:
         text = SKILL_FILE.read_text()
         frontmatter = text.split("---", 2)[1]
 
         self.assertIn("name: code-review", frontmatter)
-        self.assertIn("compatibility: opencode", frontmatter)
+        self.assertNotIn("compatibility:", frontmatter)
         self.assertIn("workflow: github-pr-review", frontmatter)
         self.assertNotIn("allowed-tools:", frontmatter)
         self.assertNotIn("user-invocable:", frontmatter)
+
+    def test_skill_resolves_its_directory_under_both_harnesses(self) -> None:
+        text = SKILL_FILE.read_text()
+
+        self.assertIn(".opencode/skills/code-review", text)
+        self.assertIn("${CLAUDE_CONFIG_DIR:-$HOME/.openinspect/claude}/skills/code-review", text)
 
     def test_skill_starts_with_resolver_workflow(self) -> None:
         text = SKILL_FILE.read_text()

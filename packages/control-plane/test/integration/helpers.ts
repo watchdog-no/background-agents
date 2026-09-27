@@ -10,6 +10,7 @@ import type { SessionDO } from "../../src/cloudflare/durable-object";
 import { hashToken } from "../../src/auth/crypto";
 import type { SqlDatabase } from "../../src/db/sql-database";
 import { SessionIndexStore } from "../../src/db/session-index";
+import { resolveHarnessForModel } from "@open-inspect/shared/harnesses";
 import type { SessionModelProviderAuthInput } from "../../src/model-provider-accounts/provider-auth-contracts";
 
 /**
@@ -249,6 +250,8 @@ export async function initSession(overrides?: {
     model: TEST_SESSION_MODEL,
     ...overrides,
   };
+  // As session create does: the model decides the harness (Anthropic → Claude Agent).
+  const harness = resolveHarnessForModel(null, defaults.model);
   const id = env.SESSION.idFromName(defaults.sessionName);
   const stub = env.SESSION.get(id);
   const { providerAuth = TEST_SESSION_PROVIDER_AUTH, ...doDefaults } = defaults;
@@ -258,6 +261,7 @@ export async function initSession(overrides?: {
     title: defaults.title ?? null,
     repoOwner: defaults.repoOwner,
     repoName: defaults.repoName,
+    harness,
     model: defaults.model,
     reasoningEffort: defaults.reasoningEffort ?? null,
     baseBranch: defaults.defaultBranch ?? "main",
@@ -272,7 +276,7 @@ export async function initSession(overrides?: {
   const res = await stub.fetch("http://internal/internal/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(doDefaults),
+    body: JSON.stringify({ ...doDefaults, harness }),
   });
   if (res.status !== 200) throw new Error(`Init failed: ${res.status}`);
   return { stub, id, sessionName: defaults.sessionName };
@@ -412,6 +416,7 @@ export async function initNamedSession(
     title: defaults.title ?? null,
     repoOwner: defaults.repoOwner ?? null,
     repoName: defaults.repoName ?? null,
+    harness: resolveHarnessForModel(null, defaults.model),
     model: defaults.model,
     reasoningEffort: defaults.reasoningEffort ?? null,
     baseBranch: defaults.defaultBranch ?? "main",
@@ -432,10 +437,12 @@ export async function initNamedSession(
 export async function initNamedSessionDO(sessionName: string, init: Record<string, unknown> = {}) {
   const id = env.SESSION.idFromName(sessionName);
   const stub = env.SESSION.get(id);
+  const body: Record<string, unknown> = { sessionName, ...TEST_NAMED_SESSION_DEFAULTS, ...init };
+  const harness = body.harness ?? resolveHarnessForModel(null, String(body.model));
   const res = await stub.fetch("http://internal/internal/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionName, ...TEST_NAMED_SESSION_DEFAULTS, ...init }),
+    body: JSON.stringify({ ...body, harness }),
   });
   if (res.status !== 200) throw new Error(`Init failed: ${res.status}`);
   return { stub, id, sessionName };
