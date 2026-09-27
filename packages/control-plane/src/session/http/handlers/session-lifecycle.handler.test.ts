@@ -71,6 +71,7 @@ function createSandbox(overrides: Partial<SandboxRow> = {}): SandboxRow {
     boot_phase: null,
     boot_seq: null,
     fenced: 0,
+    startup_rejected: 0,
     created_at: 1,
     ...overrides,
   };
@@ -100,6 +101,7 @@ function createHandler() {
   const applySessionTitleUpdate = vi.fn((title: string) => ({ ok: true as const, title }));
   const cancelSession = vi.fn();
   const cancelSandbox = vi.fn();
+  const preserveForArchive = vi.fn(async () => undefined);
 
   const lifecycleHandler = new SessionLifecycleHandler(
     repository as unknown as SessionCoreRepository,
@@ -107,7 +109,7 @@ function createHandler() {
     repository as unknown as MessageRepository,
     statusService,
     { applySessionTitleUpdate } as unknown as SessionTitleService,
-    { cancelSandbox },
+    { cancelSandbox, preserveForArchive },
     "session-do-id",
     cancelSession
   );
@@ -134,6 +136,7 @@ function createHandler() {
     applySessionTitleUpdate,
     cancelSession,
     cancelSandbox,
+    preserveForArchive,
   };
 }
 
@@ -279,7 +282,7 @@ describe("SessionLifecycleHandler", () => {
   });
 
   it("archives successfully without participant authorization", async () => {
-    const { handler, getSession, transition } = createHandler();
+    const { handler, getSession, transition, preserveForArchive } = createHandler();
     getSession.mockReturnValue(createSession());
     transition.mockResolvedValue(true);
 
@@ -294,6 +297,11 @@ describe("SessionLifecycleHandler", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "archived", outcome: "archived" });
     expect(transition).toHaveBeenCalledWith("archived");
+    // An archived session's reconnects are refused, so its sandbox is saved now.
+    expect(preserveForArchive).toHaveBeenCalledOnce();
+    expect(transition.mock.invocationCallOrder[0]).toBeLessThan(
+      preserveForArchive.mock.invocationCallOrder[0]
+    );
   });
 
   it("archives a draft that was never prompted", async () => {
@@ -399,7 +407,7 @@ describe("SessionLifecycleHandler", () => {
   });
 
   it("returns 409 when archiving a session with queued work", async () => {
-    const { handler, getSession, repository, transition } = createHandler();
+    const { handler, getSession, repository, transition, preserveForArchive } = createHandler();
     getSession.mockReturnValue(createSession());
     repository.getPendingOrProcessingCount.mockReturnValue(1);
 
@@ -412,6 +420,7 @@ describe("SessionLifecycleHandler", () => {
 
     expect(response.status).toBe(409);
     expect(transition).not.toHaveBeenCalled();
+    expect(preserveForArchive).not.toHaveBeenCalled();
   });
 
   it("returns 409 when archiving a cancelled session", async () => {

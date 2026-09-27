@@ -63,30 +63,17 @@ test("preserves caller authorization after switching away from OAuth", async () 
 });
 
 test("keeps GPT-6 models available for Codex subscriptions", async () => {
-  const astra = {
-    name: "GPT-6 Astra",
-    cost: { input: 1, output: 1 },
-  };
-  const sol = { name: "GPT-6 Sol", cost: { input: 1, output: 1 } };
-  const luna = { name: "GPT-6 Luna", cost: { input: 1, output: 1 } };
-  const provider = {
-    models: {
-      "gpt-6-astra": astra,
-      "gpt-6-sol": sol,
-      "gpt-6-luna": luna,
-      "unsupported-model": {},
-    },
-  };
+  const gpt6Ids = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
+  const gpt6Models = gpt6Ids.map((id) => [id, { name: id, cost: { input: 1, output: 1 } }]);
+  const provider = { models: { ...Object.fromEntries(gpt6Models), "unsupported-model": {} } };
   const plugin = await CodexAuthProxy({ client: { auth: { set: async () => undefined } } });
 
   await plugin.auth.loader(async () => ({ type: "oauth", refresh: "managed" }), provider);
 
-  assert.equal(provider.models["gpt-6-astra"], astra);
-  assert.equal(provider.models["gpt-6-sol"], sol);
-  assert.equal(provider.models["gpt-6-luna"], luna);
-  assert.equal(provider.models["unsupported-model"], undefined);
-  for (const model of [astra, sol, luna]) {
-    assert.equal(model.cost.input, 0);
-    assert.equal(model.cost.output, 0);
+  for (const [id, model] of gpt6Models) {
+    assert.equal(provider.models[id], model, id);
+    assert.equal(model.cost.input, 0, id);
+    assert.equal(model.cost.output, 0, id);
   }
+  assert.equal(provider.models["unsupported-model"], undefined);
 });

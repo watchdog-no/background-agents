@@ -20,6 +20,7 @@ on:
       - "packages/shared/**"
       - "packages/web/**" # Web app deployed via Terraform when web_platform = "cloudflare"
       - ".github/workflows/terraform.yml"
+      - ".nvmrc"
   pull_request:
     branches: [main]
     paths:
@@ -39,6 +40,7 @@ on:
       - "packages/shared/**"
       - "packages/web/**"
       - ".github/workflows/terraform.yml"
+      - ".nvmrc"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -120,6 +122,13 @@ jobs:
         run: terraform test
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      - name: Modal module contract tests
+        id: modal_test
+        run: |
+          terraform init -backend=false
+          terraform test
+        working-directory: terraform/modules/modal-app
+
       - name: Post Validation Results
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v8
@@ -138,6 +147,7 @@ jobs:
             | Init | ${{ steps.init.outcome == 'success' && '✅' || '❌' }} |
             | Validate | ${{ steps.validate.outcome == 'success' && '✅' || '❌' }} |
             | Tests | ${{ steps.test.outcome == 'success' && '✅' || '❌' }} |
+            | Modal module tests | ${{ steps.modal_test.outcome == 'success' && '✅' || '❌' }} |
             ${planNote}
 
             *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
@@ -170,7 +180,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: "npm"
 
       - name: Install dependencies
@@ -364,7 +374,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: "npm"
 
       - name: Install dependencies

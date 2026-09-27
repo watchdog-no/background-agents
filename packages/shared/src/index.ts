@@ -23,3 +23,4 @@ export * from "./slack";
 export * from "./oauth-identity";
 export * from "./pull-request-tool";
 export * from "./rbac";
+export * from "./trace/compaction";

@@ -117,7 +117,7 @@ export const MODEL_CATALOG = [
       {
         id: "anthropic/claude-opus-5-5",
         name: "Claude Opus 5.5",
-        description: "Latest Opus, adaptive thinking",
+        description: "Latest Opus, long-running agentic coding",
         reasoning: {
           efforts: ["low", "medium", "high", "xhigh", "max"],
           default: "high",

@@ -835,6 +835,7 @@ class TestApplySseEventDispositions:
                 "type": "token",
                 "content": "Continuing after compaction",
                 "messageId": "cp-msg-1",
+                "partId": "part-continuation",
             }
         ]
 
@@ -1087,6 +1088,7 @@ class TestForkRuntimeEvents:
         assert first == [
             {
                 "type": "step_finish",
+                "stepId": "step-1",
                 "cost": 0.1,
                 "messageCostUsd": 0.1,
                 "tokens": {"input": 12},
@@ -1125,7 +1127,9 @@ class TestForkRuntimeEvents:
             },
         )
 
-        assert events == [{"type": "token", "content": "Hello", "messageId": "cp-msg-1"}]
+        assert events == [
+            {"type": "token", "content": "Hello", "messageId": "cp-msg-1", "partId": "part-1"}
+        ]
 
     @pytest.mark.asyncio
     async def test_final_state_replays_reasoning_and_step_finish_once(self):
@@ -1170,9 +1174,9 @@ class TestForkRuntimeEvents:
             },
             {
                 "type": "step_finish",
+                "stepId": "step-1",
                 "messageCostUsd": 0,
                 "tokens": {"input": 12},
-                "reason": None,
                 "messageId": "cp-msg-1",
             },
         ]

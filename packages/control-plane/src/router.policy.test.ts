@@ -16,11 +16,26 @@ function routeFor(method: string, path: string) {
 
 describe("route policy table", () => {
   it("publishes the complete canonical route catalog", () => {
-    expect(routes).toHaveLength(183);
+    expect(routes).toHaveLength(185);
 
     const paths = routes.map((route) => route.path);
-    expect(new Set(paths).size).toBe(140);
-    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(183);
+    expect(new Set(paths).size).toBe(142);
+    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(185);
+  });
+
+  it("gates run analytics with analytics.read", () => {
+    const route = routeFor("GET", "/analytics/runs");
+    expect(route?.authorization).toMatchObject({
+      kind: "active-user",
+      allOf: [{ permission: "analytics.read" }],
+    });
+  });
+
+  it("gates a single-session export with sessions.export", () => {
+    expect(routeFor("GET", "/sessions/session-1/export")?.authorization).toMatchObject({
+      kind: "active-user",
+      allOf: [{ permission: "sessions.export" }],
+    });
   });
 
   it("declares every path in the literal-or-parameter grammar", () => {
