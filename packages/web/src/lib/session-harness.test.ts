@@ -15,7 +15,7 @@ const options: ModelCategory[] = [
 describe("filterModelOptionsForHarness", () => {
   it("drops groups the harness empties", () => {
     expect(filterModelOptionsForHarness("claude", options)).toEqual([options[0]]);
-    expect(filterModelOptionsForHarness("opencode", options)).toEqual(options);
+    expect(filterModelOptionsForHarness("opencode", options)).toEqual([options[1]]);
   });
 });
 

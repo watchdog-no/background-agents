@@ -3,7 +3,6 @@ name: code-review
 description:
   Review local diffs and GitHub pull requests for correctness bugs. Use for /code-review, PR
   reviews, review comments, or prioritized P1-P3 findings.
-compatibility: opencode
 metadata:
   workflow: github-pr-review
 ---
@@ -17,7 +16,11 @@ Use this skill as a local, Codex-style counterpart to native `/review`.
 Resolve the target first:
 
 ```bash
-SKILL_DIR=.opencode/skills/code-review
+# OpenCode installs skills in the workspace; the Claude harness in its config dir.
+for SKILL_DIR in .opencode/skills/code-review \
+  "${CLAUDE_CONFIG_DIR:-$HOME/.openinspect/claude}/skills/code-review"; do
+  [ -f "$SKILL_DIR/scripts/resolve_review_target.py" ] && break
+done
 python3 "$SKILL_DIR/scripts/resolve_review_target.py" <args>
 ```
 

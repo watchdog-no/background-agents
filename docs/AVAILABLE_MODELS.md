@@ -10,18 +10,18 @@ OpenCode Go require `OPENCODE_API_KEY`; Z.AI Coding Plan requires `ZHIPU_API_KEY
 OpenAI, xAI and Anthropic session selectors offer provider policy, any active connected account, and
 API-key mode. Automation editors can resolve defaults on each run or pin an account/API-key choice.
 Unattended Slack, GitHub, Linear, and unpinned automation launches follow the provider's configured
-unattended mode. For Anthropic that policy reaches only Claude Agent automations: Slack, GitHub and
-Linear launches run on OpenCode, which uses the API key.
+unattended mode. Every Anthropic launch runs on the Claude Agent harness, so that policy covers
+Slack, GitHub, Linear and automation sessions alike.
 
 ## Harnesses
 
 A session runs on one agent harness, fixed at create. Which models and which Anthropic
 authentication a session can use depends on it:
 
-| Harness      | Models            | Anthropic authentication                   |
-| ------------ | ----------------- | ------------------------------------------ |
-| OpenCode     | every model below | `ANTHROPIC_API_KEY`                        |
-| Claude Agent | Anthropic models  | `ANTHROPIC_API_KEY` or a connected account |
+| Harness      | Models           | Anthropic authentication                   |
+| ------------ | ---------------- | ------------------------------------------ |
+| OpenCode     | non-Anthropic    | —                                          |
+| Claude Agent | Anthropic models | `ANTHROPIC_API_KEY` or a connected account |
 
 See [Using the Claude Agent Harness](CLAUDE_AGENT.md).
 
@@ -29,8 +29,9 @@ The system default is GPT-6 Astra with extra-high (`xhigh`) reasoning.
 
 ## Anthropic
 
-Anthropic models run on both harnesses. A connected Claude subscription (Settings > Provider
-Accounts) applies only on the Claude Agent harness; OpenCode sessions use `ANTHROPIC_API_KEY`.
+Anthropic models run only on the Claude Agent harness, whichever entry point starts the session. It
+authenticates with a connected Claude subscription (Settings > Provider Accounts) or
+`ANTHROPIC_API_KEY`.
 
 | Model ID                      | Display name      | Description                                       | Reasoning efforts             | Default effort |
 | ----------------------------- | ----------------- | ------------------------------------------------- | ----------------------------- | -------------- |

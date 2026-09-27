@@ -1295,7 +1295,7 @@ describe("agent harness", () => {
     });
   });
 
-  it("drops a connected Anthropic account pin when the harness switches to OpenCode", () => {
+  it("moves off the Claude model and drops its account pin when the harness switches to OpenCode", () => {
     enabledModelsValue = ["openai/gpt-5.4", CLAUDE_HARNESS_MODEL];
     const accountId = "b".repeat(32);
     const { onSubmit, submit } = renderForm(
@@ -1314,7 +1314,7 @@ describe("agent harness", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0][0]).toMatchObject({
       harness: "opencode",
-      model: CLAUDE_HARNESS_MODEL,
+      model: "openai/gpt-5.4",
       providerSelections: {},
     });
   });

@@ -1,11 +1,11 @@
 {
-  "runtimeVersion": "v78-node-24",
-  "generation": 78,
+  "runtimeVersion": "v79-claude-harness-bots",
+  "generation": 79,
   "minimumCompatibleGeneration": 76,
   "minimumPreservationGeneration": 77,
-  "minimumRebuildGeneration": 78,
+  "minimumRebuildGeneration": 79,
   "harnessMinimumGeneration": {
-    "claude": 78,
+    "claude": 79,
     "opencode": 78
   }
 }

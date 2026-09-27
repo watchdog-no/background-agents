@@ -1104,8 +1104,9 @@ describe("POST /events", () => {
         sessionId: "session-1",
         repoId: "acme/app",
         repoFullName: "acme/app",
-        model: "openai/gpt-5.6-sol",
-        reasoningEffort: "xhigh",
+        // Disabled, and on the same Claude Agent harness as the enabled fallback.
+        model: "anthropic/claude-sonnet-4-5",
+        reasoningEffort: "high",
         createdAt: Date.now(),
       })
     );

@@ -270,7 +270,7 @@ describe("automation create route", () => {
       expect(mockBatch).not.toHaveBeenCalled();
     });
 
-    it("rejects a pin the automation's harness cannot use", async () => {
+    it("runs an Anthropic automation on the Claude harness so its account pin is accepted", async () => {
       mockProviderAccountStore.getById.mockResolvedValue({
         id: "0123456789abcdef0123456789abcdef",
         provider: "anthropic",
@@ -291,11 +291,8 @@ describe("automation create route", () => {
         },
       });
 
-      expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({
-        error: expect.stringContaining("select an API key"),
-      });
-      expect(mockBatch).not.toHaveBeenCalled();
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({ automation: { harness: "claude" } });
     });
 
     it("rejects a provider-account pin when its adapter is unavailable", async () => {

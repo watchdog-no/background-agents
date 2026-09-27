@@ -202,7 +202,7 @@ describe("automation read, update, and delete routes", () => {
       );
     });
 
-    it("rejects a replacement pin the automation's harness cannot use", async () => {
+    it("accepts a connected Anthropic account pin on a Claude automation", async () => {
       mockProviderAccountStore.getById.mockResolvedValue({
         id: "0123456789abcdef0123456789abcdef",
         provider: "anthropic",
@@ -221,31 +221,32 @@ describe("automation read, update, and delete routes", () => {
         },
       });
 
-      expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toEqual({
-        error: expect.stringContaining("select an API key"),
-      });
-      expect(mockBatch).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(mockProviderAuthStore.bindReplace).toHaveBeenCalled();
     });
 
-    it("checks the stored pins when the harness changes", async () => {
-      mockStore.getById.mockResolvedValue({ ...sampleRow, harness: "claude" });
-      mockProviderAuthStore.list.mockResolvedValue([
-        {
-          automation_id: "auto-1",
-          provider: "anthropic",
-          auth_mode: "provider_account",
-          provider_account_id: "0123456789abcdef0123456789abcdef",
-        },
-      ]);
-
+    it("keeps an Anthropic automation on the Claude harness when OpenCode is requested", async () => {
       const res = await callRoute("PUT", "/automations/auto-1", {
         body: { harness: "opencode" },
       });
 
-      expect(res.status).toBe(400);
-      expect(mockProviderAuthStore.list).toHaveBeenCalledWith("auto-1");
-      expect(mockBatch).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
+        "auto-1",
+        expect.objectContaining({ harness: "claude" })
+      );
+    });
+
+    it("moves a Claude automation to OpenCode when its model changes to OpenAI", async () => {
+      const res = await callRoute("PUT", "/automations/auto-1", {
+        body: { model: "openai/gpt-5.4" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
+        "auto-1",
+        expect.objectContaining({ harness: "opencode", model: "openai/gpt-5.4" })
+      );
     });
 
     it("leaves provider pins unchanged when providerSelections is omitted", async () => {

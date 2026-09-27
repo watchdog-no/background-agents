@@ -433,10 +433,12 @@ describe("POST /sessions/:parentId/children — spawn child", () => {
   it("uses an enabled fallback when the inherited parent model was disabled", async () => {
     const { parentName, sandboxToken, store } = await setupParent({
       model: "openai/gpt-5.5",
-      reasoningEffort: "xhigh",
+      reasoningEffort: "none",
     });
 
-    await seedEnabledModels(["anthropic/claude-haiku-4-5"]);
+    // The child inherits the OpenCode harness, so the fallback is a model it can run.
+    // GPT-6 Astra has no "none" effort, so the inherited effort is dropped.
+    await seedEnabledModels(["openai/gpt-6-astra"]);
 
     const response = await SELF.fetch(`https://test.local/sessions/${parentName}/children`, {
       method: "POST",
@@ -450,7 +452,7 @@ describe("POST /sessions/:parentId/children — spawn child", () => {
     expect(response.status).toBe(201);
     const child = await response.json<{ sessionId: string }>();
     const storedChild = await store.get(child.sessionId);
-    expect(storedChild?.model).toBe("anthropic/claude-haiku-4-5");
+    expect(storedChild?.model).toBe("openai/gpt-6-astra");
     expect(storedChild?.reasoningEffort).toBeNull();
   });
 

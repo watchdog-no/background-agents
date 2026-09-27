@@ -1,9 +1,9 @@
 # Using the Claude Agent Harness with a Claude Subscription
 
 Open-Inspect can run a session on one of two agent harnesses. **OpenCode** is the built-in harness
-and runs every model in the catalog. **Claude Agent** runs Anthropic models through the Claude Agent
-SDK inside the sandbox, and it is the harness that can use a connected Claude subscription instead
-of an API key.
+and runs every non-Anthropic model in the catalog. **Claude Agent** runs Anthropic models through
+the Claude Agent SDK inside the sandbox, and it is the harness that can use a connected Claude
+subscription instead of an API key. Anthropic models run only on Claude Agent.
 
 This deployment uses a connected Claude account as first-party use of the deployment owner's own
 subscription by the owner's own authorised users. The platform holds the credential; users never
@@ -17,21 +17,24 @@ sign in inside a sandbox.
 ## Choosing a harness
 
 Every session runs on exactly one harness, chosen when the session is created and fixed for its
-lifetime (like the base branch). Child sessions inherit their parent's harness. Automations carry a
-harness for the sessions they create. Bots and integrations create OpenCode sessions.
+lifetime (like the base branch). The model decides it: a session on an Anthropic model is created on
+Claude Agent from every entry point (web, Slack, Linear, GitHub, automations), and any other model
+runs on OpenCode. Child sessions inherit their parent's harness.
 
 | Harness          | Models                | Anthropic authentication                   | Notes                                 |
 | ---------------- | --------------------- | ------------------------------------------ | ------------------------------------- |
-| **OpenCode**     | Every catalog model   | `ANTHROPIC_API_KEY` only                   | Built-in; the default                 |
+| **OpenCode**     | Non-Anthropic models  | —                                          | Built-in; the default                 |
 | **Claude Agent** | Anthropic models only | `ANTHROPIC_API_KEY` or a connected account | Reads repository `CLAUDE.md` natively |
 
 The composer shows a harness menu beside the model picker; the model list is filtered to what the
 chosen harness can run. A per-message model override that the session's harness cannot run is
 rejected with an error rather than silently replaced.
 
-An **installation default** Anthropic account only takes effect on Claude Agent sessions. OpenCode,
-bot and automation sessions on OpenCode keep using the API key, so setting a default never breaks
-sessions that cannot use it.
+An **installation default** Anthropic account applies to every Anthropic session, since they all run
+on Claude Agent. Bot and automation sessions are unattended: they use the account only when its
+**Automated authentication** allows it, and otherwise fall back to `ANTHROPIC_API_KEY`. A Slack
+follow-up that switches a thread between an Anthropic and a non-Anthropic model is refused with a
+prompt to start a new thread, because a session cannot change harness.
 
 ---
 

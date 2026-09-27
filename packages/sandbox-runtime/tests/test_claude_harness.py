@@ -44,6 +44,7 @@ from sandbox_runtime.harness.claude import (
     ClaudeHarness,
     ClaudeHarnessConfig,
     bare_model_id,
+    mcp_allowed_tools,
     mcp_server_options,
     reasoning_options,
 )
@@ -411,6 +412,17 @@ class TestOptions:
     def test_mcp_options_skip_disabled_and_empty(self) -> None:
         assert mcp_server_options(({"name": "x", "type": "local", "command": []},)) == {}
 
+    def test_mcp_tool_allowlist_limits_the_server_to_listed_tools(self) -> None:
+        servers = (
+            {"name": "posthog", "type": "remote", "url": "https://x", "toolAllowlist": ["query"]},
+            {"name": "linear", "type": "remote", "url": "https://y"},
+            {"name": "locked", "type": "remote", "url": "https://z", "toolAllowlist": []},
+        )
+        assert mcp_allowed_tools(servers, mcp_server_options(servers)) == [
+            "mcp__posthog__query",
+            "mcp__linear__*",
+        ]
+
 
 class TestTranslation:
     @pytest.mark.asyncio
@@ -479,6 +491,7 @@ class TestTranslation:
             "step_finish",
         ]
         assert events[1]["content"] == "Hel" and events[2]["content"] == "Hello"
+        assert events[1]["partId"] == events[2]["partId"] == "msg_1"
         assert events[3] == {
             "type": "tool_call",
             "tool": "Bash",
@@ -490,7 +503,8 @@ class TestTranslation:
         }
         assert events[4]["status"] == "completed" and events[4]["output"] == "a.txt\nb.txt"
         assert events[4]["tool"] == "Bash" and events[4]["args"] == {"command": "ls"}
-        assert events[5]["content"] == "Hello\n\nDone."
+        # Each assistant message is its own part, so the last token is the answer.
+        assert events[5]["content"] == "Done." and events[5]["partId"] == "msg_2"
         assert events[6]["messageCostUsd"] == 0.25
         assert events[6]["tokens"] == {"input": 10, "output": 5, "cache": {"read": 2}}
         assert all(e["messageId"] == "m1" for e in events)

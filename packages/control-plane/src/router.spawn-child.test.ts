@@ -77,7 +77,7 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     repoName: "web-app",
     repoId: 12345,
     harness: "opencode",
-    model: "anthropic/claude-sonnet-4-6",
+    model: "openai/gpt-5.5",
     reasoningEffort: null,
     sandboxTimeoutMs: 14_400_000,
     baseBranch: "main",
@@ -120,7 +120,7 @@ describe("handleSpawnChild prompt enqueue handling", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["anthropic/claude-sonnet-4-6"]);
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["openai/gpt-5.5"]);
     integrationSettingsMocks.resolveCodeServerEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveVncEnabled.mockResolvedValue(false);
     integrationSettingsMocks.resolveSandboxSettings.mockResolvedValue({});
@@ -158,27 +158,20 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     );
   });
 
-  it("rejects a child whose model needs an auth mode the harness cannot select", async () => {
+  it("rejects an Anthropic child under an OpenCode parent", async () => {
     const store = makeStore();
-    store.getCompleteProviderAuth.mockResolvedValue([
-      ...parentProviderAuth,
-      {
-        provider: "anthropic",
-        authMode: "provider_account",
-        providerAccountId: "3".repeat(32),
-        selectionSource: "installation_default",
-      },
-    ]);
     vi.mocked(SessionIndexStore).mockImplementation(function () {
       return store as never;
     });
-    const { env } = makeSuccessfulEnv(spawnContext);
+    const anthropicParent = { ...spawnContext, model: "anthropic/claude-sonnet-4-6" };
+    vi.mocked(getEffectiveEnabledModels).mockResolvedValue(["anthropic/claude-sonnet-4-6"]);
+    const { env } = makeSuccessfulEnv(anthropicParent);
 
     const response = await makeRequest(env);
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: expect.stringContaining("select an API key"),
+      error: expect.stringContaining("cannot run on the OpenCode harness"),
     });
     expect(store.create).not.toHaveBeenCalled();
   });
@@ -329,13 +322,13 @@ describe("handleSpawnChild prompt enqueue handling", () => {
     const response = await makeRequest(env, {
       title: "Child task",
       prompt: "Do the thing",
-      reasoningEffort: "xhigh",
+      reasoningEffort: "max",
     });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        'Invalid reasoning effort "xhigh" for model "anthropic/claude-sonnet-4-6". Valid efforts: low, medium, high, max',
+        'Invalid reasoning effort "max" for model "openai/gpt-5.5". Valid efforts: none, low, medium, high, xhigh',
     });
     expect(childStub.fetch).not.toHaveBeenCalled();
   });
