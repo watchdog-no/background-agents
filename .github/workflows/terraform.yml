@@ -264,7 +264,7 @@ jobs:
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'openai/gpt-6-sol' }}"
           TF_VAR_classification_anthropic_api_key: ${{ secrets.CLASSIFICATION_ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}
-          TF_VAR_classification_model: "${{ vars.CLASSIFICATION_MODEL || 'openai/gpt-5.6-luna' }}"
+          TF_VAR_classification_model: "${{ vars.CLASSIFICATION_MODEL || 'openai/gpt-6-luna' }}"
           TF_VAR_classification_default_repository: "${{ vars.CLASSIFICATION_DEFAULT_REPOSITORY || 'watchdog-no/watchdog-monorepo' }}"
           TF_VAR_token_encryption_key: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           TF_VAR_repo_secrets_encryption_key: ${{ secrets.REPO_SECRETS_ENCRYPTION_KEY }}
@@ -460,7 +460,7 @@ jobs:
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'openai/gpt-6-sol' }}"
           TF_VAR_classification_anthropic_api_key: ${{ secrets.CLASSIFICATION_ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}
-          TF_VAR_classification_model: "${{ vars.CLASSIFICATION_MODEL || 'openai/gpt-5.6-luna' }}"
+          TF_VAR_classification_model: "${{ vars.CLASSIFICATION_MODEL || 'openai/gpt-6-luna' }}"
           TF_VAR_classification_default_repository: "${{ vars.CLASSIFICATION_DEFAULT_REPOSITORY || 'watchdog-no/watchdog-monorepo' }}"
           TF_VAR_token_encryption_key: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           TF_VAR_repo_secrets_encryption_key: ${{ secrets.REPO_SECRETS_ENCRYPTION_KEY }}
