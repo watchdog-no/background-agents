@@ -1,8 +1,7 @@
 /**
  * Shared plumbing for the scoped-secrets D1 stores (global-secrets,
  * repo-secrets, environment-secrets). This module owns only the
- * scope-independent pieces — write validation, the per-scope key cap,
- * value encryption bookkeeping, and row codecs. Each store keeps its own
+ * scope-independent pieces — write validation, value encryption bookkeeping, and row codecs. Each store keeps its own
  * table-specific SQL and public API; none of the stored/encrypted formats
  * change (all scopes encrypt with REPO_SECRETS_ENCRYPTION_KEY, as before).
  */
@@ -10,7 +9,6 @@
 import { encryptToken, decryptToken } from "../auth/crypto";
 import {
   MAX_TOTAL_VALUE_SIZE,
-  MAX_SECRETS_PER_SCOPE,
   SecretsValidationError,
   normalizeKey,
   validateKey,
@@ -50,24 +48,6 @@ export function prepareSecretsForWrite(secrets: Record<string, unknown>): Record
   }
 
   return normalized;
-}
-
-/**
- * Enforce the per-scope key-count cap for a pending write. `scopeSubject`
- * opens the error message ("Global secrets", "Repository", "Environment").
- */
-export function assertScopeKeyCapacity(
-  scopeSubject: string,
-  existingKeySet: ReadonlySet<string>,
-  incomingKeys: readonly string[]
-): void {
-  const netNew = incomingKeys.filter((k) => !existingKeySet.has(k)).length;
-  if (existingKeySet.size + netNew > MAX_SECRETS_PER_SCOPE) {
-    throw new SecretsValidationError(
-      `${scopeSubject} would exceed ${MAX_SECRETS_PER_SCOPE} secrets limit ` +
-        `(current: ${existingKeySet.size}, adding: ${netNew})`
-    );
-  }
 }
 
 /**

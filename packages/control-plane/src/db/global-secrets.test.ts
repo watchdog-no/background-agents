@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { GlobalSecretsStore } from "./global-secrets";
-import { MAX_SECRETS_PER_SCOPE, SecretsValidationError } from "./secrets-validation";
+import { SecretsValidationError } from "./secrets-validation";
 import { generateEncryptionKey } from "../auth/crypto";
 
 type GlobalSecretRow = {
@@ -186,16 +186,6 @@ describe("GlobalSecretsStore", () => {
     await expect(store.setSecrets({ A: largeA, B: largeB })).rejects.toBeInstanceOf(
       SecretsValidationError
     );
-  });
-
-  it("enforces per-scope secret limit", async () => {
-    const many: Record<string, string> = {};
-    for (let i = 0; i < MAX_SECRETS_PER_SCOPE; i++) {
-      many[`KEY_${i}`] = "x";
-    }
-    await store.setSecrets(many);
-
-    await expect(store.setSecrets({ EXTRA: "y" })).rejects.toBeInstanceOf(SecretsValidationError);
   });
 
   it("lists keys with metadata", async () => {

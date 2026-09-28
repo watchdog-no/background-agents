@@ -121,7 +121,6 @@ Click the delete button next to any secret row and confirm.
 
 | Constraint                       | Limit                                                   |
 | -------------------------------- | ------------------------------------------------------- |
-| Max secrets per scope            | 50                                                      |
 | Max key length                   | 256 characters                                          |
 | Max value size                   | 16 KB                                                   |
 | Max total value size (per scope) | 64 KB                                                   |
