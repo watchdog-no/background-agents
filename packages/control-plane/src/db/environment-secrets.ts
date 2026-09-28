@@ -14,7 +14,6 @@
 import { createLogger } from "../logger";
 import {
   SecretDecryptionError,
-  assertScopeKeyCapacity,
   decryptSecretRows,
   encryptSecretEntries,
   prepareSecretsForWrite,
@@ -42,9 +41,6 @@ export class EnvironmentSecretsStore {
 
     const existingKeySet = await this.existingKeys(environmentId);
 
-    const incomingKeys = Object.keys(normalized);
-    assertScopeKeyCapacity("Environment", existingKeySet, incomingKeys);
-
     const { entries, created, updated } = await encryptSecretEntries(
       normalized,
       existingKeySet,
@@ -59,7 +55,7 @@ export class EnvironmentSecretsStore {
       await this.db.batch(statements);
     }
 
-    return { created, updated, keys: incomingKeys };
+    return { created, updated, keys: Object.keys(normalized) };
   }
 
   async listSecretKeys(environmentId: string): Promise<SecretMetadata[]> {
@@ -137,11 +133,6 @@ export class EnvironmentSecretsStore {
     if (rows.length === 0) return { created: 0, updated: 0, keys: [] };
 
     const existingKeySet = await this.existingKeys(environmentId);
-    assertScopeKeyCapacity(
-      "Environment",
-      existingKeySet,
-      rows.map((r) => r.key)
-    );
 
     const now = Date.now();
     let created = 0;

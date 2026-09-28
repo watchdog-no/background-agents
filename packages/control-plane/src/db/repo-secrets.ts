@@ -2,7 +2,6 @@ import { decryptToken } from "../auth/crypto";
 import { createLogger } from "../logger";
 import {
   SecretDecryptionError,
-  assertScopeKeyCapacity,
   decryptSecretRows,
   encryptSecretEntries,
   prepareSecretsForWrite,
@@ -40,9 +39,6 @@ export class RepoSecretsStore {
       .all<{ key: string }>();
     const existingKeySet = new Set((existingKeys.results || []).map((r) => r.key));
 
-    const incomingKeys = Object.keys(normalized);
-    assertScopeKeyCapacity("Repository", existingKeySet, incomingKeys);
-
     const { entries, created, updated } = await encryptSecretEntries(
       normalized,
       existingKeySet,
@@ -68,7 +64,7 @@ export class RepoSecretsStore {
       await this.db.batch(statements);
     }
 
-    return { created, updated, keys: incomingKeys };
+    return { created, updated, keys: Object.keys(normalized) };
   }
 
   async listSecretKeys(repoId: number): Promise<SecretMetadata[]> {

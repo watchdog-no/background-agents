@@ -24,7 +24,6 @@ const VALID_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_KEY_LENGTH = 256;
 const MAX_VALUE_SIZE = 16384;
 const MAX_TOTAL_VALUE_SIZE = 65536;
-const MAX_SECRETS_PER_SCOPE = 50;
 
 const RESERVED_KEYS = new Set([
   "PYTHONUNBUFFERED",
@@ -466,12 +465,6 @@ export function SecretsEditor({
         setError(`Value for '${key}' exceeds ${MAX_VALUE_SIZE} bytes`);
         return;
       }
-    }
-
-    const netNew = enteredRows.filter((row) => !existingKeySet.has(normalizeKey(row.key))).length;
-    if (existingKeySet.size + netNew > MAX_SECRETS_PER_SCOPE) {
-      setError(`Would exceed ${MAX_SECRETS_PER_SCOPE} secrets limit`);
-      return;
     }
 
     const changedEntries = enteredRows
