@@ -17,6 +17,10 @@ The system default, GPT-6 Astra, supports low, medium, high, extra high, and max
 fork defaults to extra high. Astra does not support none. Other models have their own reasoning
 choices; see [Available Models](AVAILABLE_MODELS.md).
 
+Existing sessions and saved bot settings selecting `gpt-5.3-codex` or `gpt-5.3-codex-spark` resolve
+to `openai/gpt-6-sol` when used. The retired models are no longer offered in the picker; update
+saved defaults and automations to a model available to your account.
+
 ---
 
 ## Setup

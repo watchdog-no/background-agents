@@ -22,7 +22,7 @@ export function formatTokens(tokens: number): string {
 /**
  * Format model ID to display name.
  * e.g., "anthropic/claude-sonnet-4-5" → "Claude Sonnet 4.5"
- * e.g., "openai/gpt-5.3-codex" → "GPT 5.3 Codex"
+ * e.g., "openai/gpt-6-sol" → "GPT-6 Sol"
  */
 export function formatModelName(modelId: string): string {
   if (!modelId) return "Unknown Model";

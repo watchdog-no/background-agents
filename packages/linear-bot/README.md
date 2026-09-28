@@ -163,7 +163,7 @@ On any Linear issue:
 - Agent status is visible directly in Linear (thinking, working, done)
 - Add a `model:<name>` label to override the model (e.g., `model:opus`, `model:sonnet`,
   `model:opus-5`, `model:opus-5-5`, `model:sonnet-5`, `model:fable-5-1`, `model:haiku`,
-  `model:gpt-5.6-luna`, `model:gpt-5.4`, `model:gpt-5.3-codex`)
+  `model:gpt-5.6-luna`, `model:gpt-5.4`, `model:gpt-6-sol`)
 
 ## Repo Resolution
 
@@ -218,11 +218,6 @@ npm install
 npm run build
 wrangler dev  # Local development
 ```
-
-GraphQL documents sent to Linear live in `src/utils/linear-documents.ts`; `linearGraphQL` only
-accepts a registered document, and `linear-documents.test.ts` validates each one against Linear's
-schema, vendored as `linear-schema.graphql`. To pick up Linear schema changes, bump the
-`@linear/sdk` tag in the `update:linear-schema` script and run `npm run update:linear-schema`.
 
 ## Architecture
 

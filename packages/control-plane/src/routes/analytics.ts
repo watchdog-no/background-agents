@@ -2,9 +2,12 @@ import {
   ANALYTICS_BREAKDOWN_BY,
   ANALYTICS_DAYS,
   ANALYTICS_RUN_ORDER_BY,
+  ANALYTICS_SCOPES,
+  DEFAULT_ANALYTICS_SCOPE,
   type AnalyticsDays,
+  type AnalyticsScope,
 } from "@open-inspect/shared/types/analytics";
-import { type AnalyticsFilters, AnalyticsStore, HUMAN_SPAWN_SOURCES } from "../db/analytics-store";
+import { type AnalyticsFilters, AnalyticsStore } from "../db/analytics-store";
 import { AnalyticsDashboardStore } from "../db/analytics-dashboard-store";
 import { SessionRunStore } from "../db/session-run-store";
 import {
@@ -39,13 +42,22 @@ const daysQuery = z.object({
     ),
 });
 
-const breakdownQuery = daysQuery.extend({
+const windowQuery = daysQuery.extend({
+  scope: z
+    .enum(ANALYTICS_SCOPES, { error: `scope must be one of: ${ANALYTICS_SCOPES.join(", ")}` })
+    .default(DEFAULT_ANALYTICS_SCOPE),
+});
+
+const breakdownQuery = windowQuery.extend({
   by: z.enum(ANALYTICS_BREAKDOWN_BY, {
     error: `by must be one of: ${ANALYTICS_BREAKDOWN_BY.join(", ")}`,
   }),
 });
 
 const runsQuery = daysQuery.extend({
+  scope: z
+    .enum(ANALYTICS_SCOPES, { error: `scope must be one of: ${ANALYTICS_SCOPES.join(", ")}` })
+    .default("all"),
   limit: z
     .string()
     .optional()
@@ -60,10 +72,10 @@ const runsQuery = daysQuery.extend({
     .default("cost"),
 });
 
-function getFilters(days: AnalyticsDays): AnalyticsFilters {
+function getFilters(days: AnalyticsDays, scope: AnalyticsScope): AnalyticsFilters {
   const endAt = Date.now();
   const startAt = endAt - days * 24 * 60 * 60 * 1000;
-  return { startAt, endAt, spawnSources: HUMAN_SPAWN_SOURCES };
+  return { startAt, endAt, scope };
 }
 
 /**
@@ -82,15 +94,16 @@ async function handleDashboard(
   _params: object,
   ctx: RequestContext
 ): Promise<Response> {
-  const query = parseQuery(request, daysQuery);
+  const query = parseQuery(request, windowQuery);
   if (query instanceof Response) return query;
-  const { days } = query;
+  const { days, scope } = query;
 
   const generatedAt = Date.now();
   const store = new AnalyticsDashboardStore(ctx.db);
   return json(
     await store.get({
       days,
+      scope,
       startAt: generatedAt - days * 24 * 60 * 60 * 1000,
       endAt: generatedAt,
     })
@@ -103,12 +116,12 @@ async function handleSummary(
   _params: object,
   ctx: RequestContext
 ): Promise<Response> {
-  const query = parseQuery(request, daysQuery);
+  const query = parseQuery(request, windowQuery);
   if (query instanceof Response) return query;
-  const { days } = query;
+  const { days, scope } = query;
 
   const store = new AnalyticsStore(ctx.db);
-  return json(await store.getSummary(getFilters(days)));
+  return json(await store.getSummary(getFilters(days, scope)));
 }
 
 async function handleTimeseries(
@@ -117,12 +130,12 @@ async function handleTimeseries(
   _params: object,
   ctx: RequestContext
 ): Promise<Response> {
-  const query = parseQuery(request, daysQuery);
+  const query = parseQuery(request, windowQuery);
   if (query instanceof Response) return query;
-  const { days } = query;
+  const { days, scope } = query;
 
   const store = new AnalyticsStore(ctx.db);
-  return json(await store.getTimeseries(getFilters(days)));
+  return json(await store.getTimeseries(getFilters(days, scope)));
 }
 
 async function handleBreakdown(
@@ -133,10 +146,10 @@ async function handleBreakdown(
 ): Promise<Response> {
   const query = parseQuery(request, breakdownQuery);
   if (query instanceof Response) return query;
-  const { days, by } = query;
+  const { days, scope, by } = query;
 
   const store = new AnalyticsStore(ctx.db);
-  return json(await store.getBreakdown(getFilters(days), by));
+  return json(await store.getBreakdown(getFilters(days, scope), by));
 }
 
 async function handlePullRequests(
@@ -169,6 +182,7 @@ async function handleRuns(
       endAt,
       limit: query.limit,
       orderBy: query.orderBy,
+      scope: query.scope,
     }),
   });
 }
