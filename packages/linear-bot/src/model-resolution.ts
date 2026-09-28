@@ -56,7 +56,6 @@ const MODEL_LABEL_ALIASES = {
   "gpt-6-astra": "openai/gpt-6-astra",
   "gpt-6-sol": "openai/gpt-6-sol",
   "gpt-6-luna": "openai/gpt-6-luna",
-  "gpt-5.3-codex": "openai/gpt-5.3-codex",
 } satisfies Record<string, ValidModel>;
 
 /**

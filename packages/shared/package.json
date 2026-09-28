@@ -74,6 +74,14 @@
       "import": "./dist/types/environments.js",
       "types": "./dist/types/environments.d.ts"
     },
+    "./types/teams": {
+      "import": "./dist/types/teams.js",
+      "types": "./dist/types/teams.d.ts"
+    },
+    "./types/team-access": {
+      "import": "./dist/types/team-access.js",
+      "types": "./dist/types/team-access.d.ts"
+    },
     "./types/github-identity": {
       "import": "./dist/types/github-identity.js",
       "types": "./dist/types/github-identity.d.ts"

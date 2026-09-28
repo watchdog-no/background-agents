@@ -6,6 +6,11 @@
  */
 
 import { ModalApiError } from "../client";
+import { formatPendingVmReference, parsePendingVmReference } from "./pending-vm-reference";
+import {
+  PENDING_VM_REFERENCE_LAUNCH_WINDOW_MS,
+  PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS,
+} from "../lifecycle/decisions";
 import type { ModalClient, ModalBackend, CreateImageBuildSandboxResponse } from "../client";
 import type { SandboxSettings } from "@open-inspect/shared/types/integrations";
 import type { CorrelationContext } from "../../logger";
@@ -19,6 +24,8 @@ import {
   signalUntilDeadline,
   type ImageBuildProviderTriggerConfig,
   type SandboxProvider,
+  type PendingSandboxAllocation,
+  type SandboxLifetime,
   type SandboxProviderCapabilities,
   type CreateSandboxConfig,
   type CreateSandboxResult,
@@ -96,10 +103,42 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
 
   readonly capabilities: SandboxProviderCapabilities;
 
-  pendingSandboxReference(sessionId: string, sandboxId: string): string | undefined {
-    return this.name === "modal-vm"
-      ? `modal-vm-session:${JSON.stringify([sessionId, sandboxId])}`
-      : undefined;
+  pendingSandboxAllocation(
+    config: Pick<
+      CreateSandboxConfig,
+      "sessionId" | "sandboxId" | "generationCreatedAtMs" | "timeoutSeconds"
+    >
+  ): PendingSandboxAllocation | undefined {
+    if (this.name !== "modal-vm") return undefined;
+    return {
+      reference: formatPendingVmReference(config.sessionId, config.sandboxId),
+      lifetime: this.launchLifetime(config),
+    };
+  }
+
+  private launchLifetime(
+    config: Pick<CreateSandboxConfig, "generationCreatedAtMs" | "timeoutSeconds">,
+    observedAtMs?: number
+  ): Extract<SandboxLifetime, { kind: "finite" }> {
+    const startAtMs = this.name === "modal-vm" ? config.generationCreatedAtMs : observedAtMs;
+    if (startAtMs === undefined)
+      throw new SandboxProviderError("Missing Modal sandbox lifetime origin", "permanent");
+    return {
+      kind: "finite",
+      expiresAtMs: startAtMs + (config.timeoutSeconds ?? DEFAULT_SANDBOX_TIMEOUT_SECONDS) * 1000,
+      observedAtMs: startAtMs,
+      source: "conservative_start_bound",
+    };
+  }
+
+  private launchDeadlineAtMs(generationCreatedAtMs: number | undefined): number | undefined {
+    if (this.name !== "modal-vm") return undefined;
+    if (generationCreatedAtMs === undefined)
+      throw new SandboxProviderError("Missing VM generation reservation time", "permanent");
+    const deadline = generationCreatedAtMs + PENDING_VM_REFERENCE_LAUNCH_WINDOW_MS;
+    if (Date.now() >= deadline)
+      throw new SandboxProviderError("VM launch deadline expired before dispatch", "transient");
+    return deadline;
   }
 
   constructor(
@@ -124,9 +163,11 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
     const observedAtMs = Date.now();
     const timeoutSeconds = config.timeoutSeconds ?? DEFAULT_SANDBOX_TIMEOUT_SECONDS;
     try {
+      const launchDeadlineAtMs = this.launchDeadlineAtMs(config.generationCreatedAtMs);
       const result = await this.client.createSandbox(
         {
           sessionId: config.sessionId,
+          launchDeadlineAtMs,
           sandboxId: config.sandboxId,
           repoOwner: config.repoOwner,
           repoName: config.repoName,
@@ -159,12 +200,7 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
         sandboxId: result.sandboxId,
         providerObjectId: result.modalObjectId,
         createdAt: result.createdAt,
-        lifetime: {
-          kind: "finite",
-          expiresAtMs: observedAtMs + timeoutSeconds * 1000,
-          observedAtMs,
-          source: "conservative_start_bound",
-        },
+        lifetime: this.launchLifetime(config, observedAtMs),
         codeServerUrl: result.codeServerUrl,
         codeServerPassword: result.codeServerPassword,
         vncAccess: createVncAccess(result.vncUrl, result.vncPassword),
@@ -186,9 +222,11 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
     const observedAtMs = Date.now();
     const timeoutSeconds = config.timeoutSeconds ?? DEFAULT_SANDBOX_TIMEOUT_SECONDS;
     try {
+      const launchDeadlineAtMs = this.launchDeadlineAtMs(config.generationCreatedAtMs);
       const result = await this.client.restoreSandbox(
         {
           snapshotImageId: config.snapshotImageId,
+          launchDeadlineAtMs,
           sessionId: config.sessionId,
           sandboxId: config.sandboxId,
           sandboxAuthToken: config.sandboxAuthToken,
@@ -219,12 +257,7 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
         success: true,
         sandboxId: result.sandboxId,
         providerObjectId: result.modalObjectId,
-        lifetime: {
-          kind: "finite",
-          expiresAtMs: observedAtMs + timeoutSeconds * 1000,
-          observedAtMs,
-          source: "conservative_start_bound",
-        },
+        lifetime: this.launchLifetime(config, observedAtMs),
         codeServerUrl: result.codeServerUrl,
         codeServerPassword: result.codeServerPassword,
         vncAccess: createVncAccess(result.vncUrl, result.vncPassword),
@@ -320,6 +353,24 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
       return { success: true };
     } catch (error) {
       if (error instanceof ModalApiError && error.status === 404) return { success: true };
+      const pendingNotVisible =
+        this.name === "modal-vm" &&
+        parsePendingVmReference(config.providerObjectId) !== null &&
+        error instanceof ModalApiError &&
+        error.status === 409 &&
+        error.detail === "pending_reference_not_visible";
+      if (
+        pendingNotVisible &&
+        config.generationCreatedAtMs !== undefined &&
+        Date.now() - config.generationCreatedAtMs >= PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS
+      )
+        return { success: true };
+      if (pendingNotVisible)
+        throw new SandboxProviderError(
+          "Pending VM allocation is not yet visible; stop cannot be confirmed",
+          "transient",
+          error
+        );
       throw this.classifyError("Failed to stop Modal sandbox", error);
     }
   }

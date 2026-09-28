@@ -16,11 +16,11 @@ function routeFor(method: string, path: string) {
 
 describe("route policy table", () => {
   it("publishes the complete canonical route catalog", () => {
-    expect(routes).toHaveLength(185);
+    expect(routes).toHaveLength(196);
 
     const paths = routes.map((route) => route.path);
-    expect(new Set(paths).size).toBe(142);
-    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(185);
+    expect(new Set(paths).size).toBe(150);
+    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(196);
   });
 
   it("gates run analytics with analytics.read", () => {
@@ -434,7 +434,6 @@ describe("route policy table", () => {
     ["GET", "/sessions/session-1/commit-signing"],
     ["GET", "/sessions/session-1/participant-profiles"],
     ["POST", "/sessions/session-1/openai-token-refresh"],
-    ["POST", "/sessions/session-1/anthropic-token-refresh"],
     ["GET", "/sessions/session-1/skills"],
     ["GET", "/sessions/session-1/diff"],
     ["POST", "/sessions/parent-1/children/child-1/prompt"],

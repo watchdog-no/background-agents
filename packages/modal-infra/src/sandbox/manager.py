@@ -42,6 +42,7 @@ from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
 from .launch_policy import (
+    PENDING_VM_REFERENCE_PREFIX,
     ModalBackend,
     docker_allocation_name,
     docker_allocation_tags,
@@ -49,6 +50,7 @@ from .launch_policy import (
     docker_runtime_env,
     launch_kwargs,
     parse_launch,
+    parse_pending_vm_reference,
 )
 from .vcs_env import inject_vcs_env_vars
 
@@ -95,6 +97,10 @@ def _filter_sandbox_user_env_vars(user_env_vars: dict[str, str] | None) -> dict[
         for key, value in (user_env_vars or {}).items()
         if key.upper() not in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS
     }
+
+
+class PendingVMReferenceNotVisible(RuntimeError):
+    """The named allocation is absent or belongs to a different generation."""
 
 
 def _has_repository(repo_owner: str | None, repo_name: str | None) -> bool:
@@ -161,6 +167,7 @@ class SandboxConfig:
     # after an ambiguous create (the control plane lost the response). Only
     # Docker launches act on it; the named allocation is retired if owned.
     retire_sandbox_id: str | None = None
+    launch_deadline_at_ms: int | None = None
 
 
 @dataclass
@@ -526,6 +533,7 @@ class SandboxManager:
                 retire_sandbox_id=config.retire_sandbox_id,
                 create_kwargs=create_kwargs,
                 repository_image=repository_image,
+                launch_deadline_at_ms=config.launch_deadline_at_ms,
             )
             if adopted:
                 passwords = await self._read_access_passwords(
@@ -579,6 +587,7 @@ class SandboxManager:
         retire_sandbox_id: str | None,
         create_kwargs: dict[str, Any],
         repository_image: bool,
+        launch_deadline_at_ms: int | None = None,
     ) -> tuple[modal.Sandbox, bool]:
         """Create a Docker VM under a deterministic name, adopting an existing one.
 
@@ -592,6 +601,8 @@ class SandboxManager:
         tags = docker_allocation_tags(session_id, sandbox_id)
         existing = await self._find_owned_docker_allocation(name, tags)
         if existing is None:
+            if launch_deadline_at_ms is not None and time.time() * 1000 >= launch_deadline_at_ms:
+                raise RuntimeError("VM launch deadline expired")
             try:
                 sandbox = await _create_sandbox(
                     {**create_kwargs, "name": name, "tags": tags},
@@ -782,7 +793,7 @@ class SandboxManager:
 
     async def stop_sandbox(self, sandbox_id: str) -> None:
         """Resolve a pending reference if needed, then confirm immutable-ID retirement."""
-        if sandbox_id.startswith("modal-vm-session:"):
+        if sandbox_id.startswith(PENDING_VM_REFERENCE_PREFIX):
             handle = await self.get_sandbox_by_id(sandbox_id)
             assert handle is not None and handle.modal_object_id is not None
             sandbox_id = handle.modal_object_id
@@ -804,29 +815,24 @@ class SandboxManager:
             SandboxHandle if found, None for a confirmed missing immutable ID.
             Missing pending references remain ambiguous and raise an error.
         """
-        if sandbox_id.startswith("modal-vm-session:"):
-            identity = json.loads(sandbox_id.removeprefix("modal-vm-session:"))
-            if (
-                not isinstance(identity, list)
-                or len(identity) != 2
-                or not all(isinstance(part, str) and part for part in identity)
-            ):
+        identity = parse_pending_vm_reference(sandbox_id)
+        if sandbox_id.startswith(PENDING_VM_REFERENCE_PREFIX):
+            if identity is None:
                 raise ValueError("Invalid pending VM reference")
-            session_id, generation_id = identity
-            modal_sandbox = await self._find_owned_docker_allocation(
-                docker_allocation_name(session_id),
-                docker_allocation_tags(session_id, generation_id),
-            )
-            if modal_sandbox is None:
-                # An in-flight create can still materialize. Never report confirmed
-                # absence/retirement for an unresolved launch intent.
-                raise RuntimeError("VM launch identity is not yet visible")
+            try:
+                modal_sandbox = await modal.Sandbox.from_name.aio(
+                    APP_NAME, docker_allocation_name(identity[0])
+                )
+            except modal.exception.NotFoundError:
+                raise PendingVMReferenceNotVisible("VM launch identity is not yet visible")
         else:
             try:
                 modal_sandbox = await modal.Sandbox.from_id.aio(sandbox_id)
             except modal.exception.NotFoundError:
                 return None
         tags = await modal_sandbox.get_tags.aio()
+        if identity is not None and tags != docker_allocation_tags(*identity):
+            raise PendingVMReferenceNotVisible("Docker sandbox allocation ownership mismatch")
         backend = tags.get("openinspect_backend", "modal")
         if backend not in ("modal", "modal-vm"):
             raise ValueError("Unknown sandbox backend tag")
@@ -856,6 +862,7 @@ class SandboxManager:
         settings: dict[str, Any] | None = None,
         retire_sandbox_id: str | None = None,
         sandbox_backend: ModalBackend = "modal",
+        launch_deadline_at_ms: int | None = None,
     ) -> SandboxHandle:
         """
         Create a new sandbox from a filesystem snapshot Image.
@@ -910,6 +917,7 @@ class SandboxManager:
                     retire_sandbox_id=retire_sandbox_id,
                     settings=settings,
                     sandbox_backend=sandbox_backend,
+                    launch_deadline_at_ms=launch_deadline_at_ms,
                 ),
                 source=_SnapshotImageSource(
                     image_id=snapshot_image_id,

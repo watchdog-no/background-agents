@@ -97,6 +97,38 @@ export type {
 } from "./sessions";
 
 export {
+  teamRoleSchema,
+  teamJoinPolicySchema,
+  sessionVisibilitySchema,
+  teamRowSchema,
+  teamMembershipSchema,
+} from "./teams";
+export type { Team, TeamRole, TeamJoinPolicy, SessionVisibility, TeamMembership } from "./teams";
+
+export {
+  SESSION_ACTIONS,
+  AUTOMATION_ACTIONS,
+  ENVIRONMENT_ACTIONS,
+  checkSessionAccess,
+  sessionCapabilities,
+  checkAutomationAccess,
+  automationCapabilities,
+  checkEnvironmentAccess,
+  environmentCapabilities,
+} from "./session-access";
+export type {
+  SessionAction,
+  AutomationAction,
+  EnvironmentAction,
+  SessionViewer,
+  SessionAccessRow,
+  SessionCapabilities,
+  AccessDenialReason,
+  AuditObligation,
+  AccessDecision,
+} from "./session-access";
+
+export {
   SESSION_INBOX_CATEGORIES,
   sessionInboxCategorySchema,
   sessionInboxSessionSchema,
@@ -356,12 +388,23 @@ export type {
 } from "./image-builds";
 export { repositoryShaEntrySchema, repositoryShasSchema } from "./image-builds";
 
-export { ANALYTICS_DAYS, ANALYTICS_BREAKDOWN_BY, ANALYTICS_RUN_ORDER_BY } from "./analytics";
+export {
+  ANALYTICS_DAYS,
+  ANALYTICS_BREAKDOWN_BY,
+  ANALYTICS_SCOPES,
+  DEFAULT_ANALYTICS_SCOPE,
+  ANALYTICS_SPAWN_SOURCE_SCOPE,
+  ANALYTICS_SCOPE_SPAWN_SOURCES,
+  ANALYTICS_RUN_ORDER_BY,
+  getCacheHitRatio,
+} from "./analytics";
 export type {
   AnalyticsDays,
+  AnalyticsScope,
   AnalyticsBreakdownBy,
   AnalyticsRunOrderBy,
   AnalyticsStatusBreakdown,
+  AnalyticsTokenTotals,
   AnalyticsSummaryResponse,
   AnalyticsTimeseriesPoint,
   AnalyticsTimeseriesResponse,
@@ -373,6 +416,7 @@ export type {
   AnalyticsPullRequestTimeseriesPoint,
   AnalyticsPullRequestRepoEntry,
   AnalyticsPullRequestSourceEntry,
+  AnalyticsPullRequestDimensionEntry,
   AnalyticsPullRequestsResponse,
   AnalyticsDashboardResponse,
 } from "./analytics";

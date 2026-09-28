@@ -17,7 +17,7 @@ import {
   type McpServerConfig,
   type SandboxSettings,
 } from "@open-inspect/shared/types/integrations";
-import { extractProviderAndModel } from "@open-inspect/shared/models";
+import { extractProviderAndModel, getValidModelOrDefault } from "@open-inspect/shared/models";
 import type { ServerMessage } from "@open-inspect/shared/types/server-messages";
 import type { SandboxStatus } from "@open-inspect/shared/types/sessions";
 import type { SandboxEvent } from "@open-inspect/shared/types/sandbox-events";
@@ -115,6 +115,12 @@ export interface SandboxShutdownLifecycle {
   ): void;
   /** Durably marks the provider-I/O boundary so restart recovery cannot repeat it blindly. */
   markRecoveryInvoked(generation: SandboxGeneration, providerObjectId?: string): void;
+  /** Records a generation-scoped pending provider handle and its conservative expiry. */
+  recordPendingProviderHandle(
+    generation: SandboxGeneration,
+    reference: string,
+    lifetime: Extract<SandboxLifetime, { kind: "finite" }>
+  ): Promise<"registered" | "expired" | "superseded">;
   /** Records the provider-confirmed handle and scheduling lifetime after startup. */
   recordProviderStartup(generation: SandboxGeneration, lifetime: SandboxLifetime): Promise<void>;
   /** Blocks generic destructive lifecycle work while shutdown or capture ownership is unresolved. */
@@ -494,6 +500,16 @@ class SpawnSupersededError extends Error {
   }
 }
 
+class SandboxLaunchExpiredError extends SandboxProviderError {
+  constructor() {
+    super(
+      "The sandbox timeout leaves no time before the final save begins. Increase the sandbox timeout or reduce the final snapshot buffer in the sandbox settings.",
+      "transient"
+    );
+    this.name = "SandboxLaunchExpiredError";
+  }
+}
+
 export class SandboxLifecycleManager
   implements
     SandboxLifecycle,
@@ -742,9 +758,6 @@ export class SandboxLifecycleManager
         return;
       }
 
-      this.storage.setLastSpawnError(null, null);
-
-      const now = Date.now();
       const sessionId = session.session_name || session.id;
       const previous = this.storage.getSandbox();
       const replaced =
@@ -774,6 +787,8 @@ export class SandboxLifecycleManager
       const priorSandboxId = priorSandbox?.modal_sandbox_id ?? null;
       // A fenced allocation must be retired before its durable identity is replaced.
       if (priorSandbox?.fenced) await this.stopPriorProviderSandbox();
+      this.storage.setLastSpawnError(null, null);
+      const now = Date.now();
       const reserved = this.spawnGeneration(session, now);
       generation = reserved;
       let { sandboxAuthToken, expectedSandboxId } = await this.reserveSpawnIdentity(reserved, {
@@ -832,6 +847,7 @@ export class SandboxLifecycleManager
       const timeoutSeconds = this.resolveSandboxTimeoutSeconds(sandboxSettings);
       const createConfig: CreateSandboxConfig = {
         sessionId,
+        generationCreatedAtMs: generation.createdAt,
         retireSandboxId: priorSandboxId,
         sandboxId: expectedSandboxId,
         repoOwner: session.repo_owner,
@@ -857,7 +873,7 @@ export class SandboxLifecycleManager
 
       let result: CreateSandboxResult;
       try {
-        this.recordPendingProviderReference(generation, sessionId);
+        await this.recordPendingProviderReference(generation, createConfig);
         result = await this.provider.createSandbox(createConfig);
       } catch (error) {
         if (!selectedImage) throw error;
@@ -893,10 +909,15 @@ export class SandboxLifecycleManager
           preserveProviderObjectId: false,
           shutdownPolicy: shutdownPolicyForLaunch("new", null),
         }));
-        this.recordPendingProviderReference(generation, sessionId);
+        await this.recordPendingProviderReference(generation, {
+          ...createConfig,
+          sandboxId: expectedSandboxId,
+          generationCreatedAtMs: retry.createdAt,
+        });
         result = await this.provider.createSandbox({
           ...createConfig,
           sandboxId: expectedSandboxId,
+          generationCreatedAtMs: retry.createdAt,
           sandboxAuthToken,
           prebuiltImageId: null,
           prebuiltImageSha: null,
@@ -953,6 +974,7 @@ export class SandboxLifecycleManager
       // so it is this catch's to count.
       const ownsFailure =
         this.failAttempt(generation, "spawning", errorMessage) || generation === null;
+      if (generation === null) this.reportSandboxError(errorMessage);
       if (ownsFailure) {
         // Only permanent errors count; a transient one is the provider's
         // problem, not evidence that the next attempt will fail too.
@@ -1214,13 +1236,12 @@ export class SandboxLifecycleManager
         return;
       }
 
-      this.storage.setLastSpawnError(null, null);
-
-      const now = Date.now();
       const priorSandbox = this.storage.getSandbox();
       const priorSandboxId = priorSandbox?.modal_sandbox_id ?? null;
       // A fenced allocation must be retired before its durable identity is replaced.
       if (priorSandbox?.fenced) await this.stopPriorProviderSandbox();
+      this.storage.setLastSpawnError(null, null);
+      const now = Date.now();
       const reserved = this.spawnGeneration(session, now);
       generation = reserved;
       const shutdownPolicy = shutdownPolicyForLaunch("existing", snapshotRuntimeVersion);
@@ -1252,10 +1273,9 @@ export class SandboxLifecycleManager
       const mcpServers = await this.loadMcpServers(repositories);
       const sandboxSettings = this.parseSandboxSettings(session);
       const timeoutSeconds = this.resolveSandboxTimeoutSeconds(sandboxSettings);
-      this.shutdown.markRecoveryInvoked(generation);
-      this.recordPendingProviderReference(generation, session.session_name || session.id);
-      const result = await this.provider.restoreFromSnapshot({
+      const restoreConfig = {
         snapshotImageId,
+        generationCreatedAtMs: generation.createdAt,
         retireSandboxId: priorSandboxId,
         sessionId: session.session_name || session.id,
         sandboxId: expectedSandboxId,
@@ -1276,7 +1296,10 @@ export class SandboxLifecycleManager
         mcpServers,
         sandboxSettings,
         ...multiRepoSpawnFields(repositories),
-      });
+      };
+      await this.recordPendingProviderReference(generation, restoreConfig);
+      this.shutdown.markRecoveryInvoked(generation);
+      const result = await this.provider.restoreFromSnapshot(restoreConfig);
 
       if (result.success) {
         if (
@@ -1359,7 +1382,9 @@ export class SandboxLifecycleManager
         repo_name: session?.repo_name,
       });
       this.failAttempt(generation, "spawning", errorMessage);
-      this.shutdown.holdFailedRecovery(errorMessage, generation ?? undefined);
+      if (generation === null) this.reportSandboxError(errorMessage);
+      if (!(error instanceof SandboxLaunchExpiredError))
+        this.shutdown.holdFailedRecovery(errorMessage, generation ?? undefined);
     } finally {
       this.isSpawningSandbox = false;
       this.providerStartupPending = false;
@@ -1586,7 +1611,8 @@ export class SandboxLifecycleManager
    * Stop a sandbox that is about to be replaced before its provider handle is cleared.
    */
   private async stopPriorProviderSandbox(): Promise<void> {
-    const providerObjectId = this.storage.getSandbox()?.modal_object_id;
+    const prior = this.storage.getSandbox();
+    const providerObjectId = prior?.modal_object_id;
     if (!providerObjectId) {
       return;
     }
@@ -1606,7 +1632,13 @@ export class SandboxLifecycleManager
         }, PROVIDER_REPLACEMENT_STOP_TIMEOUT_MS);
       });
       await Promise.race([
-        this.stopProviderSandbox("respawn", "destroy", controller.signal, providerObjectId),
+        this.stopProviderSandbox(
+          "respawn",
+          "destroy",
+          controller.signal,
+          providerObjectId,
+          prior?.created_at
+        ),
         stopTimeoutPromise,
       ]);
       this.storage.updateSandboxModalObjectId(null);
@@ -1651,7 +1683,8 @@ export class SandboxLifecycleManager
     reason: string,
     intent: StopConfig["intent"],
     signal?: AbortSignal,
-    providerObjectId?: string
+    providerObjectId?: string,
+    generationCreatedAtMs?: number
   ): Promise<void> {
     if (!this.provider.stopSandbox) {
       return;
@@ -1670,6 +1703,7 @@ export class SandboxLifecycleManager
       reason,
       intent,
       signal,
+      generationCreatedAtMs: generationCreatedAtMs ?? sandbox?.created_at,
     });
 
     if (!result.success) {
@@ -1687,6 +1721,7 @@ export class SandboxLifecycleManager
     reason: string;
     intent: StopConfig["intent"];
     providerObjectId?: string;
+    generationCreatedAtMs?: number;
     failureMessage: string;
     level?: "warn" | "error";
     data?: Record<string, unknown>;
@@ -1696,7 +1731,8 @@ export class SandboxLifecycleManager
         options.reason,
         options.intent,
         undefined,
-        options.providerObjectId
+        options.providerObjectId,
+        options.generationCreatedAtMs
       );
     } catch (error) {
       this.log[options.level ?? "warn"](options.failureMessage, {
@@ -1814,6 +1850,7 @@ export class SandboxLifecycleManager
         reason: "connecting_timeout",
         intent: "destroy",
         providerObjectId: ctx.providerObjectId,
+        generationCreatedAtMs: ctx.sandbox.created_at,
         failureMessage: "Provider stop failed after connecting timeout",
       });
     }
@@ -1870,6 +1907,7 @@ export class SandboxLifecycleManager
           reason: "heartbeat_timeout",
           intent: preservesProviderState ? "preserve" : "destroy",
           providerObjectId: ctx.providerObjectId,
+          generationCreatedAtMs: ctx.sandbox.created_at,
           failureMessage: "Provider stop failed after heartbeat timeout",
         });
       }
@@ -1912,6 +1950,7 @@ export class SandboxLifecycleManager
       reason: "heartbeat_timeout",
       intent: "destroy",
       providerObjectId: ctx.providerObjectId,
+      generationCreatedAtMs: ctx.sandbox.created_at,
       failureMessage: "Provider stop failed after heartbeat timeout",
     });
     return "stopped";
@@ -1957,6 +1996,7 @@ export class SandboxLifecycleManager
           reason: "boot_budget_exceeded",
           intent: "destroy",
           providerObjectId: ctx.providerObjectId,
+          generationCreatedAtMs: ctx.sandbox.created_at,
           failureMessage: "Provider stop failed after boot budget",
         });
       } finally {
@@ -1991,6 +2031,7 @@ export class SandboxLifecycleManager
         reason: "inactivity_timeout",
         intent: "preserve",
         providerObjectId: ctx.providerObjectId,
+        generationCreatedAtMs: ctx.sandbox.created_at,
         failureMessage: "Provider stop failed after inactivity timeout",
         level: "error",
       });
@@ -2004,6 +2045,7 @@ export class SandboxLifecycleManager
           reason: "inactivity_timeout",
           intent: "destroy",
           providerObjectId: ctx.providerObjectId,
+          generationCreatedAtMs: ctx.sandbox.created_at,
           failureMessage: "Provider stop failed after inactivity timeout",
           level: "error",
         });
@@ -2283,10 +2325,10 @@ export class SandboxLifecycleManager
 
   /**
    * Resolve the provider and model ID from the session or config default.
-   * e.g., "openai/gpt-5.3-codex" -> { provider: "openai", model: "gpt-5.3-codex" }
+   * e.g., "openai/gpt-6-sol" -> { provider: "openai", model: "gpt-6-sol" }
    */
   private resolveProviderAndModel(session: SessionRow): { provider: string; model: string } {
-    return extractProviderAndModel(session.model || this.config.model);
+    return extractProviderAndModel(getValidModelOrDefault(session.model || this.config.model));
   }
 
   /**
@@ -2386,10 +2428,17 @@ export class SandboxLifecycleManager
     await this.storage.updateSandboxAccess("ttyd", url, token);
   }
 
-  private recordPendingProviderReference(generation: SandboxGeneration, sessionId: string): void {
-    if (!generation.sandboxId) throw new SpawnSupersededError();
-    const reference = this.provider.pendingSandboxReference?.(sessionId, generation.sandboxId);
-    if (!reference) return;
+  private async recordPendingProviderReference(
+    generation: SandboxGeneration,
+    config: Pick<
+      CreateSandboxConfig,
+      "sessionId" | "sandboxId" | "generationCreatedAtMs" | "timeoutSeconds"
+    >
+  ): Promise<void> {
+    if (!generation.sandboxId || config.sandboxId !== generation.sandboxId)
+      throw new SpawnSupersededError();
+    const pending = this.provider.pendingSandboxAllocation?.(config);
+    if (!pending) return;
     const row = this.storage.getSandbox();
     if (
       row?.modal_sandbox_id !== generation.sandboxId ||
@@ -2398,7 +2447,26 @@ export class SandboxLifecycleManager
     ) {
       throw new SpawnSupersededError();
     }
-    this.storage.updateSandboxModalObjectId(reference);
+    const previousProviderObjectId = row.modal_object_id;
+    this.storage.updateSandboxModalObjectId(pending.reference);
+    const registered = await this.shutdown.recordPendingProviderHandle(
+      generation,
+      pending.reference,
+      pending.lifetime
+    );
+    if (registered === "superseded") throw new SpawnSupersededError();
+    if (registered === "expired") {
+      const current = this.storage.getSandbox();
+      if (
+        current?.modal_sandbox_id === generation.sandboxId &&
+        current.created_at === generation.createdAt &&
+        current.modal_object_id === pending.reference &&
+        !current.fenced
+      ) {
+        this.storage.updateSandboxModalObjectId(previousProviderObjectId);
+      }
+      throw new SandboxLaunchExpiredError();
+    }
   }
 
   private async handleRejectedStartupAllocation(
