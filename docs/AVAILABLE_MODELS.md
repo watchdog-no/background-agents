@@ -38,14 +38,15 @@ authenticates with a connected Claude subscription (Settings > Provider Accounts
 | `anthropic/claude-haiku-4-5`  | Claude Haiku 4.5  | Fast and efficient                                | high, max                     | max            |
 | `anthropic/claude-sonnet-4-5` | Claude Sonnet 4.5 | Balanced performance                              | high, max                     | max            |
 | `anthropic/claude-sonnet-4-6` | Claude Sonnet 4.6 | Balanced, fast coding                             | low, medium, high, max        | high           |
-| `anthropic/claude-sonnet-5`   | Claude Sonnet 5   | Latest Sonnet, adaptive thinking                  | low, medium, high, xhigh, max | high           |
+| `anthropic/claude-sonnet-5`   | Claude Sonnet 5   | Balanced performance, adaptive thinking           | low, medium, high, xhigh, max | high           |
+| `anthropic/claude-sonnet-5-5` | Claude Sonnet 5.5 | Latest Sonnet, fast and intelligent               | low, medium, high, xhigh, max | high           |
 | `anthropic/claude-opus-4-5`   | Claude Opus 4.5   | Most capable                                      | high, max                     | max            |
 | `anthropic/claude-opus-4-6`   | Claude Opus 4.6   | Most capable, adaptive thinking                   | low, medium, high, max        | high           |
 | `anthropic/claude-opus-4-7`   | Claude Opus 4.7   | Most capable, adaptive thinking                   | low, medium, high, xhigh, max | high           |
 | `anthropic/claude-opus-4-8`   | Claude Opus 4.8   | Most capable, adaptive thinking                   | low, medium, high, xhigh, max | high           |
 | `anthropic/claude-opus-5`     | Claude Opus 5     | Most capable, adaptive thinking                   | low, medium, high, xhigh, max | high           |
 | `anthropic/claude-opus-5-5`   | Claude Opus 5.5   | Latest Opus, long-running agentic coding          | low, medium, high, xhigh, max | high           |
-| `anthropic/claude-fable-5`    | Claude Fable 5    | Most powerful, new tier above Opus                | low, medium, high, xhigh, max | high           |
+| `anthropic/claude-fable-5`    | Claude Fable 5    | Most powerful, new tier above Opus                | low, medium, high, xhigh, max | xhigh          |
 | `anthropic/claude-fable-5-1`  | Claude Fable 5.1  | Demanding reasoning and long-horizon agentic work | low, medium, high, xhigh, max | high           |
 
 ## OpenAI
@@ -57,9 +58,10 @@ OpenAI models support connected ChatGPT provider accounts or `OPENAI_API_KEY` mo
 | ---------------------- | ------------- | ---------------------------------------------- | ----------------------------------- | -------------- |
 | `openai/gpt-5.4`       | GPT 5.4       | Flagship model                                 | none, low, medium, high, xhigh      | Not set        |
 | `openai/gpt-5.5`       | GPT 5.5       | Latest flagship model                          | none, low, medium, high, xhigh      | xhigh          |
+| `openai/gpt-5.5-pro`   | GPT 5.5 Pro   | Highest-capability GPT 5.5                     | none, low, medium, high, xhigh      | xhigh          |
 | `openai/gpt-5.6-sol`   | GPT 5.6 Sol   | Frontier model for complex professional work   | none, low, medium, high, xhigh      | xhigh          |
-| `openai/gpt-5.6-terra` | GPT 5.6 Terra | Balanced, cost-efficient everyday work         | none, low, medium, high, xhigh      | Not set        |
-| `openai/gpt-5.6-luna`  | GPT 5.6 Luna  | Fast, cost-efficient high-volume workloads     | none, low, medium, high, xhigh      | Not set        |
+| `openai/gpt-5.6-terra` | GPT 5.6 Terra | Balanced, cost-efficient everyday work         | none, low, medium, high, xhigh      | medium         |
+| `openai/gpt-5.6-luna`  | GPT 5.6 Luna  | Fast, cost-efficient high-volume workloads     | none, low, medium, high, xhigh, max | medium         |
 | `openai/gpt-6-astra`   | GPT-6 Astra   | Most capable model for complex, demanding work | low, medium, high, xhigh, max       | xhigh          |
 | `openai/gpt-6-sol`     | GPT-6 Sol     | Complex coding and agentic workflows           | none, low, medium, high, xhigh, max | medium         |
 | `openai/gpt-6-luna`    | GPT-6 Luna    | Efficient model for focused, high-volume tasks | none, low, medium, high, xhigh, max | medium         |
@@ -84,14 +86,14 @@ pay-per-token against `https://opencode.ai/zen/v1`.
 
 | Model ID                | Display name | Description   | Reasoning efforts | Default effort |
 | ----------------------- | ------------ | ------------- | ----------------- | -------------- |
-| `opencode/kimi-k2.5`    | Kimi K2.5    | Moonshot AI   | Not supported     | N/A            |
-| `opencode/kimi-k2.6`    | Kimi K2.6    | Moonshot AI   | Not supported     | N/A            |
-| `opencode/kimi-k3`      | Kimi K3      | Moonshot AI   | Not supported     | N/A            |
-| `opencode/minimax-m2.5` | MiniMax M2.5 | MiniMax       | Not supported     | N/A            |
-| `opencode/qwen3.7-max`  | Qwen3.7 Max  | Alibaba Cloud | Not supported     | N/A            |
-| `opencode/glm-5`        | GLM 5        | Z.ai 744B MoE | Not supported     | N/A            |
-| `opencode/glm-5.1`      | GLM 5.1      | Z.ai          | Not supported     | N/A            |
-| `opencode/glm-5.2`      | GLM 5.2      | Z.ai          | Not supported     | N/A            |
+| `opencode/kimi-k2.5`    | Kimi K2.5    | Moonshot AI   | Not configurable  | N/A            |
+| `opencode/kimi-k2.6`    | Kimi K2.6    | Moonshot AI   | Not configurable  | N/A            |
+| `opencode/kimi-k3`      | Kimi K3      | Moonshot AI   | Not configurable  | N/A            |
+| `opencode/minimax-m2.5` | MiniMax M2.5 | MiniMax       | Not configurable  | N/A            |
+| `opencode/qwen3.7-max`  | Qwen3.7 Max  | Alibaba Cloud | Not configurable  | N/A            |
+| `opencode/glm-5`        | GLM 5        | Z.ai 744B MoE | Not configurable  | N/A            |
+| `opencode/glm-5.1`      | GLM 5.1      | Z.ai          | Not configurable  | N/A            |
+| `opencode/glm-5.2`      | GLM 5.2      | Z.ai          | Not configurable  | N/A            |
 
 ## OpenCode Go
 
@@ -115,33 +117,33 @@ that fails. That model is reachable as `opencode/minimax-m2.5` on Zen.
 
 | Model ID                                   | Display name                 | Description                   | Reasoning efforts | Default effort |
 | ------------------------------------------ | ---------------------------- | ----------------------------- | ----------------- | -------------- |
-| `opencode-go/grok-4.6`                     | Grok 4.6                     | xAI                           | Not supported     | N/A            |
-| `opencode-go/gpt-5.6-luna`                 | GPT 5.6 Luna                 | OpenAI                        | Not supported     | N/A            |
-| `opencode-go/glm-5.3-flash`                | GLM 5.3 Flash                | Z.ai                          | Not supported     | N/A            |
-| `opencode-go/glm-5.3`                      | GLM 5.3                      | Z.ai                          | Not supported     | N/A            |
-| `opencode-go/glm-5.2`                      | GLM 5.2                      | Z.ai                          | Not supported     | N/A            |
-| `opencode-go/glm-5.1`                      | GLM 5.1                      | Z.ai                          | Not supported     | N/A            |
-| `opencode-go/kimi-k3`                      | Kimi K3                      | Moonshot AI                   | Not supported     | N/A            |
-| `opencode-go/kimi-k2.7-code`               | Kimi K2.7 Code               | Moonshot AI                   | Not supported     | N/A            |
-| `opencode-go/kimi-k2.6`                    | Kimi K2.6                    | Moonshot AI                   | Not supported     | N/A            |
-| `opencode-go/longcat-2.0`                  | LongCat 2.0                  | Meituan                       | Not supported     | N/A            |
-| `opencode-go/deepseek-v4.1-flash`          | DeepSeek V4.1 Flash          | DeepSeek                      | Not supported     | N/A            |
-| `opencode-go/deepseek-v4-pro`              | DeepSeek V4 Pro              | DeepSeek                      | Not supported     | N/A            |
-| `opencode-go/deepseek-v4-flash`            | DeepSeek V4 Flash            | DeepSeek                      | Not supported     | N/A            |
-| `opencode-go/deepseek-v4-flash-vision-exp` | DeepSeek V4 Flash Vision Exp | DeepSeek, experimental vision | Not supported     | N/A            |
-| `opencode-go/mimo-v2.5`                    | MiMo V2.5                    | Xiaomi                        | Not supported     | N/A            |
-| `opencode-go/mimo-v2.5-pro`                | MiMo V2.5 Pro                | Xiaomi                        | Not supported     | N/A            |
-| `opencode-go/minimax-m3`                   | MiniMax M3                   | MiniMax                       | Not supported     | N/A            |
-| `opencode-go/minimax-m2.7`                 | MiniMax M2.7                 | MiniMax                       | Not supported     | N/A            |
-| `opencode-go/muse-spark-1.3-contributor`   | Muse Spark 1.3 Contributor   | Multimodal contributor tier   | Not supported     | N/A            |
-| `opencode-go/muse-spark-1.2-contributor`   | Muse Spark 1.2 Contributor   | Multimodal contributor tier   | Not supported     | N/A            |
-| `opencode-go/qwen3.8-max`                  | Qwen3.8 Max                  | Alibaba Cloud                 | Not supported     | N/A            |
-| `opencode-go/qwen3.8-flash`                | Qwen3.8 Flash                | Alibaba Cloud                 | Not supported     | N/A            |
-| `opencode-go/qwen3.7-max`                  | Qwen3.7 Max                  | Alibaba Cloud                 | Not supported     | N/A            |
-| `opencode-go/qwen3.7-plus`                 | Qwen3.7 Plus                 | Alibaba Cloud                 | Not supported     | N/A            |
-| `opencode-go/qwen3.6-plus`                 | Qwen3.6 Plus                 | Alibaba Cloud                 | Not supported     | N/A            |
-| `opencode-go/hy4-preview`                  | Hy4 Preview                  | Tencent Hunyuan               | Not supported     | N/A            |
-| `opencode-go/hy3`                          | Hy3                          | Tencent Hunyuan               | Not supported     | N/A            |
+| `opencode-go/grok-4.6`                     | Grok 4.6                     | xAI                           | Not configurable  | N/A            |
+| `opencode-go/gpt-5.6-luna`                 | GPT 5.6 Luna                 | OpenAI                        | Not configurable  | N/A            |
+| `opencode-go/glm-5.3-flash`                | GLM 5.3 Flash                | Z.ai                          | Not configurable  | N/A            |
+| `opencode-go/glm-5.3`                      | GLM 5.3                      | Z.ai                          | Not configurable  | N/A            |
+| `opencode-go/glm-5.2`                      | GLM 5.2                      | Z.ai                          | Not configurable  | N/A            |
+| `opencode-go/glm-5.1`                      | GLM 5.1                      | Z.ai                          | Not configurable  | N/A            |
+| `opencode-go/kimi-k3`                      | Kimi K3                      | Moonshot AI                   | Not configurable  | N/A            |
+| `opencode-go/kimi-k2.7-code`               | Kimi K2.7 Code               | Moonshot AI                   | Not configurable  | N/A            |
+| `opencode-go/kimi-k2.6`                    | Kimi K2.6                    | Moonshot AI                   | Not configurable  | N/A            |
+| `opencode-go/longcat-2.0`                  | LongCat 2.0                  | Meituan                       | Not configurable  | N/A            |
+| `opencode-go/deepseek-v4.1-flash`          | DeepSeek V4.1 Flash          | DeepSeek                      | Not configurable  | N/A            |
+| `opencode-go/deepseek-v4-pro`              | DeepSeek V4 Pro              | DeepSeek                      | Not configurable  | N/A            |
+| `opencode-go/deepseek-v4-flash`            | DeepSeek V4 Flash            | DeepSeek                      | Not configurable  | N/A            |
+| `opencode-go/deepseek-v4-flash-vision-exp` | DeepSeek V4 Flash Vision Exp | DeepSeek, experimental vision | Not configurable  | N/A            |
+| `opencode-go/mimo-v2.5`                    | MiMo V2.5                    | Xiaomi                        | Not configurable  | N/A            |
+| `opencode-go/mimo-v2.5-pro`                | MiMo V2.5 Pro                | Xiaomi                        | Not configurable  | N/A            |
+| `opencode-go/minimax-m3`                   | MiniMax M3                   | MiniMax                       | Not configurable  | N/A            |
+| `opencode-go/minimax-m2.7`                 | MiniMax M2.7                 | MiniMax                       | Not configurable  | N/A            |
+| `opencode-go/muse-spark-1.3-contributor`   | Muse Spark 1.3 Contributor   | Multimodal contributor tier   | Not configurable  | N/A            |
+| `opencode-go/muse-spark-1.2-contributor`   | Muse Spark 1.2 Contributor   | Multimodal contributor tier   | Not configurable  | N/A            |
+| `opencode-go/qwen3.8-max`                  | Qwen3.8 Max                  | Alibaba Cloud                 | Not configurable  | N/A            |
+| `opencode-go/qwen3.8-flash`                | Qwen3.8 Flash                | Alibaba Cloud                 | Not configurable  | N/A            |
+| `opencode-go/qwen3.7-max`                  | Qwen3.7 Max                  | Alibaba Cloud                 | Not configurable  | N/A            |
+| `opencode-go/qwen3.7-plus`                 | Qwen3.7 Plus                 | Alibaba Cloud                 | Not configurable  | N/A            |
+| `opencode-go/qwen3.6-plus`                 | Qwen3.6 Plus                 | Alibaba Cloud                 | Not configurable  | N/A            |
+| `opencode-go/hy4-preview`                  | Hy4 Preview                  | Tencent Hunyuan               | Not configurable  | N/A            |
+| `opencode-go/hy3`                          | Hy3                          | Tencent Hunyuan               | Not configurable  | N/A            |
 
 Some of these models are reachable through more than one provider, billed against different
 credentials. `opencode-go/grok-4.6` and `xai/grok-4.6` are the same Grok model behind different
@@ -157,8 +159,8 @@ Z.AI Coding Plan models require `ZHIPU_API_KEY` as a global or repository secret
 
 | Model ID                  | Display name | Description      | Reasoning efforts | Default effort |
 | ------------------------- | ------------ | ---------------- | ----------------- | -------------- |
-| `zai-coding-plan/glm-5.2` | GLM 5.2      | Z.AI Coding Plan | Not supported     | N/A            |
-| `zai-coding-plan/glm-5.3` | GLM 5.3      | Z.AI Coding Plan | Not supported     | N/A            |
+| `zai-coding-plan/glm-5.2` | GLM 5.2      | Z.AI Coding Plan | Not configurable  | N/A            |
+| `zai-coding-plan/glm-5.3` | GLM 5.3      | Z.AI Coding Plan | Not configurable  | N/A            |
 
 ## DeepSeek
 
@@ -166,5 +168,5 @@ DeepSeek models require `DEEPSEEK_API_KEY` as a global or repository secret.
 
 | Model ID                     | Display name      | Description  | Reasoning efforts | Default effort |
 | ---------------------------- | ----------------- | ------------ | ----------------- | -------------- |
-| `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | Fast model   | Not supported     | N/A            |
-| `deepseek/deepseek-v4-pro`   | DeepSeek V4 Pro   | Most capable | Not supported     | N/A            |
+| `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | Fast model   | Not configurable  | N/A            |
+| `deepseek/deepseek-v4-pro`   | DeepSeek V4 Pro   | Most capable | Not configurable  | N/A            |

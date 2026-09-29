@@ -21,6 +21,8 @@ import { HARNESS_CATALOG, isValidHarness } from "@open-inspect/shared/harnesses"
 import { SUBSCRIPTION_PROVIDER_DISPLAY_METADATA } from "@open-inspect/shared/types/provider-accounts";
 import type { SqlDatabase, SqlResult, SqlStatement } from "./sql-database";
 import { MS_PER_DAY, utcDateFromDayIndex } from "./utc-day";
+import { visibleSessionsPredicate, type SessionReadScope } from "./session-visibility";
+import type { TeamsEnforcementMode } from "../authorization/teams-enforcement";
 import { z } from "zod";
 
 export interface AnalyticsFilters {
@@ -60,6 +62,7 @@ const summaryRowSchema = tokenRowSchema.extend({
   total_sessions: z.number(),
   active_users: z.number(),
   total_cost: z.number(),
+  private_sessions_cost: z.number().nullable(),
   total_prs: z.number(),
   created_count: z.number(),
   active_count: z.number(),
@@ -151,7 +154,17 @@ export function mergeBreakdownEntries(
 }
 
 export class AnalyticsStore {
-  constructor(private readonly db: SqlDatabase) {}
+  constructor(
+    private readonly db: SqlDatabase,
+    private readonly readScope: SessionReadScope,
+    private readonly mode: TeamsEnforcementMode
+  ) {}
+
+  private visible(alias: string) {
+    return this.readScope.kind === "internal"
+      ? { sql: "", params: [] }
+      : visibleSessionsPredicate(alias, this.readScope, { mode: this.mode, excludePrivate: true });
+  }
 
   async getSummary(filters: AnalyticsFilters): Promise<AnalyticsSummaryResponse> {
     const result = await this.prepareSummary(filters).all<SummaryRow>();
@@ -159,7 +172,12 @@ export class AnalyticsStore {
   }
 
   prepareSummary(filters: AnalyticsFilters): SqlStatement {
-    const { sql, binds } = scopePredicate(filters.scope, "spawn_source");
+    const { sql, binds } = scopePredicate(filters.scope, "s.spawn_source");
+    const visible = this.visible("s");
+    const privileged =
+      this.readScope.kind === "user" &&
+      (this.readScope.roleKey === "owner" || this.readScope.roleKey === "administrator");
+    const privateScope = scopePredicate(filters.scope, "private.spawn_source");
 
     return this.db
       .prepare(
@@ -169,8 +187,15 @@ export class AnalyticsStore {
            -- During the Phase 4→6 rollout window, the same person may appear under both
            -- keys (scm_login on old sessions, user_id on new), temporarily inflating this
            -- count. Resolves once the Phase 6 backfill populates user_id on historical rows.
-           COUNT(DISTINCT COALESCE(user_id, NULLIF(scm_login, ''))) AS active_users,
-           COALESCE(SUM(total_cost), 0) AS total_cost,
+           COUNT(DISTINCT COALESCE(s.user_id, NULLIF(s.scm_login, ''))) AS active_users,
+           COALESCE(SUM(s.total_cost), 0) AS total_cost,
+            ${
+              privileged
+                ? `(SELECT COALESCE(SUM(private.total_cost), 0) FROM sessions private
+             WHERE private.visibility = 'private' AND private.created_at >= ? AND private.created_at < ?
+             ${privateScope.sql})`
+                : "NULL"
+            } AS private_sessions_cost,
            COALESCE(SUM(pr_count), 0) AS total_prs,
            COALESCE(SUM(input_tokens), 0) AS input_tokens,
            COALESCE(SUM(output_tokens), 0) AS output_tokens,
@@ -183,11 +208,17 @@ export class AnalyticsStore {
            COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
            COALESCE(SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END), 0) AS archived_count,
            COALESCE(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_count
-         FROM sessions
-         WHERE created_at >= ? AND created_at < ?
-            ${sql}`
+          FROM sessions s
+          WHERE s.created_at >= ? AND s.created_at < ?
+              ${sql} ${visible.sql ? `AND ${visible.sql}` : ""}`
       )
-      .bind(filters.startAt, filters.endAt, ...binds);
+      .bind(
+        ...(privileged ? [filters.startAt, filters.endAt, ...privateScope.binds] : []),
+        filters.startAt,
+        filters.endAt,
+        ...binds,
+        ...visible.params
+      );
   }
 
   decodeSummary(result: SqlResult): AnalyticsSummaryResponse {
@@ -201,6 +232,11 @@ export class AnalyticsStore {
       totalSessions,
       activeUsers: row?.active_users ?? 0,
       totalCost,
+      privateSessionsCostUsd:
+        this.readScope.kind === "user" &&
+        (this.readScope.roleKey === "owner" || this.readScope.roleKey === "administrator")
+          ? (row?.private_sessions_cost ?? 0)
+          : null,
       avgCost: totalSessions > 0 ? totalCost / totalSessions : 0,
       totalPrs: row?.total_prs ?? 0,
       ...tokens,
@@ -223,6 +259,7 @@ export class AnalyticsStore {
 
   prepareTimeseries(filters: AnalyticsFilters): SqlStatement {
     const { sql, binds } = scopePredicate(filters.scope, "s.spawn_source");
+    const visible = this.visible("s");
 
     return this.db
       .prepare(
@@ -233,11 +270,11 @@ export class AnalyticsStore {
          FROM sessions s
          LEFT JOIN users u ON s.user_id = u.id
          WHERE s.created_at >= ? AND s.created_at < ?
-            ${sql}
+              ${sql} ${visible.sql ? `AND ${visible.sql}` : ""}
          GROUP BY day_index, COALESCE(s.user_id, '__unlinked__' || COALESCE(s.scm_login, '__none__'))
          ORDER BY day_index ASC, group_key ASC`
       )
-      .bind(filters.startAt, filters.endAt, ...binds);
+      .bind(filters.startAt, filters.endAt, ...binds, ...visible.params);
   }
 
   decodeTimeseries(result: SqlResult): AnalyticsTimeseriesResponse {
@@ -277,16 +314,17 @@ export class AnalyticsStore {
 
   prepareBilling(filters: AnalyticsFilters): SqlStatement {
     const { sql, binds } = scopePredicate(filters.scope, "s.spawn_source");
+    const visible = this.visible("s");
     return this.db
       .prepare(
         `SELECT s.model AS model, a.provider AS provider, COUNT(*) AS sessions
        FROM sessions s
        JOIN session_model_provider_auth a ON a.session_id = s.id AND a.auth_mode = 'provider_account'
        WHERE s.created_at >= ? AND s.created_at < ?
-         ${sql}
+           ${sql} ${visible.sql ? `AND ${visible.sql}` : ""}
        GROUP BY s.model, a.provider`
       )
-      .bind(filters.startAt, filters.endAt, ...binds);
+      .bind(filters.startAt, filters.endAt, ...binds, ...visible.params);
   }
 
   prepareBreakdown(filters: AnalyticsFilters, by: SqlBreakdownBy): SqlStatement {
@@ -318,6 +356,7 @@ export class AnalyticsStore {
     const orderTail = isUserBreakdown || by === "automation" ? "display_name ASC" : "key ASC";
 
     const { sql, binds } = scopePredicate(filters.scope, "s.spawn_source");
+    const visible = this.visible("s");
 
     return this.db
       .prepare(
@@ -344,12 +383,12 @@ export class AnalyticsStore {
          FROM sessions s
          ${joinClause}
          WHERE s.created_at >= ? AND s.created_at < ?
-            ${sql}
+              ${sql} ${visible.sql ? `AND ${visible.sql}` : ""}
             ${by === "automation" ? "AND s.automation_id IS NOT NULL" : ""}
          GROUP BY key
          ORDER BY sessions DESC, ${orderTail}`
       )
-      .bind(filters.startAt, filters.endAt, ...binds);
+      .bind(filters.startAt, filters.endAt, ...binds, ...visible.params);
   }
 
   decodeBreakdown(result: SqlResult, by: SqlBreakdownBy): AnalyticsBreakdownResponse {

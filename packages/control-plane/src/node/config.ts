@@ -17,6 +17,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EnvConfig } from "../types";
+import { parseTeamsEnforcementMode } from "../authorization/teams-enforcement";
 
 /** A source of configuration values, `process.env` in production. */
 export type ConfigSource = Record<string, string | undefined>;
@@ -93,6 +94,7 @@ const ENV_CONFIG_KEYS = {
   SECRETS_CAP_ENFORCEMENT: true,
   ANTHROPIC_OAUTH_CLIENT_ID: true,
   ANTHROPIC_OAUTH_TOKEN_URL: true,
+  TEAMS_ENFORCEMENT: true,
   LOG_LEVEL: true,
 } as const satisfies Record<keyof EnvConfig, true>;
 
@@ -157,6 +159,7 @@ export function readEnvConfig(source: ConfigSource): EnvConfig {
   if (missing.length > 0) {
     throw new Error(`Missing required configuration: ${missing.join(", ")}`);
   }
+  parseTeamsEnforcementMode(config.TEAMS_ENFORCEMENT);
   return config as EnvConfig;
 }
 

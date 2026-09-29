@@ -209,13 +209,9 @@ await configureGitIdentity({
 
 Choose the AI model that fits your task, with per-session reasoning effort controls:
 
-| Provider         | Models                                                                      |
-| ---------------- | --------------------------------------------------------------------------- |
-| Anthropic        | Claude Haiku 4.5, Sonnet 4.5/4.6/5, Opus 4.5/4.6/4.7/4.8/5/5.5, Fable 5/5.1 |
-| OpenAI           | GPT 5.4, GPT 5.5, 5.3 Codex, 5.3 Codex Spark                                |
-| xAI / SuperGrok  | Grok models (opt-in)                                                        |
-| OpenCode Zen     | Kimi K2.5/K2.6/K3, MiniMax M2.5, Qwen3.7 Max, GLM 5/5.1/5.2 (opt-in)        |
-| Z.AI Coding Plan | GLM 5.2/5.3 (opt-in)                                                        |
+Anthropic and OpenAI models are enabled by default. xAI / SuperGrok, OpenCode Zen and Go, Z.AI
+Coding Plan, and DeepSeek models are opt-in. See [Available Models](docs/AVAILABLE_MODELS.md) for
+current model IDs, descriptions, and reasoning efforts.
 
 Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
 work with your existing ChatGPT subscription via OAuth. Anthropic models can also run on the

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_SESSION_LIST_FILTER_IDS,
   MAX_SESSION_LIST_SEARCH_LENGTH,
   normalizeSessionListSearch,
   parseSessionListQuery,
@@ -8,6 +9,53 @@ import {
 } from "./session-list-query";
 
 describe("session list query codec", () => {
+  it("round-trips team, participation, visibility, and workspace scope filters", () => {
+    const query = {
+      teamIds: ["team_a", "team_b"],
+      ownerFilter: "participating" as const,
+      visibility: "private" as const,
+      scope: "workspace" as const,
+    };
+    expect(parseSessionListQuery(serializeSessionListQuery(query))).toMatchObject({
+      success: true,
+      data: query,
+    });
+  });
+
+  it("deduplicates team IDs and rejects a filter larger than the query budget", () => {
+    expect(
+      parseSessionListQuery(new URLSearchParams("teamIds[]=team_a&teamIds[]=team_a"))
+    ).toMatchObject({
+      success: true,
+      data: { teamIds: ["team_a"] },
+    });
+    const params = new URLSearchParams();
+    for (let i = 0; i <= MAX_SESSION_LIST_FILTER_IDS; i++) {
+      params.append("teamIds[]", `team_${i}`);
+    }
+    expect(parseSessionListQuery(params)).toEqual({ success: false, invalidParam: "teamIds[]" });
+  });
+
+  it("rejects more than the shared ID cap in createdBy", () => {
+    const params = new URLSearchParams();
+    for (let i = 0; i <= MAX_SESSION_LIST_FILTER_IDS; i++) {
+      params.append("createdBy", "a".repeat(32));
+    }
+    expect(parseSessionListQuery(params)).toEqual({ success: false, invalidParam: "createdBy" });
+  });
+
+  it.each([
+    ["teamIds[]=", "teamIds[]"],
+    ["ownerFilter=mine", "ownerFilter"],
+    ["visibility=unknown", "visibility"],
+    ["scope=team", "scope"],
+  ] as const)("rejects an invalid list filter %s", (query, invalidParam) => {
+    expect(parseSessionListQuery(new URLSearchParams(query))).toEqual({
+      success: false,
+      invalidParam,
+    });
+  });
+
   it("serializes the typed query in stable cache-key order", () => {
     expect(
       serializeSessionListQuery({

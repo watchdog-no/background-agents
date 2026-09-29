@@ -1,5 +1,12 @@
 import { isSessionPromptable } from "@open-inspect/shared/types/session-activity";
-import type { EffectiveAuthorization, PermissionId } from "@open-inspect/shared/rbac";
+import type { EffectiveAuthorization } from "@open-inspect/shared/rbac";
+import {
+  checkSessionAccess,
+  type AccessDecision,
+  type SessionAction,
+  type SessionAccessRow,
+  type SessionViewer,
+} from "@open-inspect/shared";
 import {
   redactSessionSnapshotSandboxAccess,
   type ServerMessage,
@@ -30,6 +37,11 @@ import type { SandboxRow } from "./types";
 import type { SessionWebSocketManager } from "./websocket-manager";
 import { WS_AUTHORIZATION_LEASE_MS } from "./authorization-lease";
 import { canManageSessionBudget } from "./budget-authorization";
+import {
+  legacyPermissionForAction,
+  type TeamsEnforcementMode,
+} from "../authorization/teams-enforcement";
+import type { ClientCommandAuthorization } from "./message-router";
 
 /**
  * Maximum age of a WebSocket authentication token (in milliseconds).
@@ -52,18 +64,22 @@ export interface SessionConnectionAuthenticatorDeps {
   snapshotReader: SessionSnapshotReader;
   schedulePullRequestRefresh: (trigger: "open" | "manual") => void;
   scmProviderName: SourceControlProviderName;
-  /** Resolve a user's current authorization at the start of a subscription or command. */
-  resolveAuthorization: (userId: string) => Promise<AuthorizationResolution>;
-  getSessionOwnerId: () => Promise<string | null>;
+  /** Resolve the current D1 session scope and user's authorization on every gated action. */
+  resolveSessionViewer: (userId: string) => Promise<SessionViewerResolution>;
+  auditPrivateBreakGlass: (userId: string, row: SessionAccessRow) => Promise<void>;
   /** The session-scoped logger; upgrade/subscribe paths also receive request-scoped children. */
   log: Logger;
 }
 
-type AuthorizationResolution =
-  | { kind: "valid"; authorization: EffectiveAuthorization }
+type SessionViewerResolution =
+  | {
+      kind: "valid";
+      mode: TeamsEnforcementMode;
+      authorization: EffectiveAuthorization;
+      viewer: SessionViewer;
+      row: SessionAccessRow;
+    }
   | { kind: "rejected" | "unavailable" };
-
-export type ClientCommandAuthorization = "allowed" | "denied" | "unavailable";
 
 interface SandboxAdmission {
   sandboxId: string | null;
@@ -364,23 +380,21 @@ export class SessionConnectionAuthenticator implements SessionUpgradeAdmission {
       // Authorization is intentionally sampled once at the start of this
       // subscription request. A concurrent role change takes effect when this
       // bounded lease expires, not midway through an in-flight request.
-      const authorization = await this.deps.resolveAuthorization(participant.canonical_user_id);
-      if (
-        authorization.kind !== "valid" ||
-        !authorization.authorization.permissions.includes("sessions.read")
-      ) {
+      const resolution = await this.deps.resolveSessionViewer(participant.canonical_user_id);
+      const read = resolution.kind === "valid" ? this.decide(resolution, "read") : null;
+      if (resolution.kind !== "valid" || !read?.allowed) {
         log.warn("ws.connect", {
           event: "ws.connect",
           ws_type: "client",
           outcome: "auth_failed",
           reject_reason:
-            authorization.kind === "unavailable"
+            resolution.kind === "unavailable"
               ? "authorization_unavailable"
               : "authorization_denied",
           participant_id: participant.id,
           user_id: participant.canonical_user_id,
         });
-        if (authorization.kind === "unavailable") {
+        if (resolution.kind === "unavailable") {
           wsManager.close(ws, WS_CLOSE_INTERNAL_ERROR, "Authorization temporarily unavailable");
         } else {
           wsManager.close(ws, WS_CLOSE_AUTHORIZATION_REVOKED, WS_AUTHORIZATION_REVOKED_REASON);
@@ -406,10 +420,20 @@ export class SessionConnectionAuthenticator implements SessionUpgradeAdmission {
         return;
       }
 
-      const [enrichment, ownerUserId] = await Promise.all([
-        this.deps.snapshotReader.resolveSessionSnapshotEnrichment(),
-        this.deps.getSessionOwnerId(),
-      ]);
+      if (read.audit === "session.private_break_glass") {
+        try {
+          await this.deps.auditPrivateBreakGlass(participant.canonical_user_id, resolution.row);
+        } catch (error) {
+          log.error("WebSocket break-glass audit failed", {
+            user_id: participant.canonical_user_id,
+            error: error instanceof Error ? error : String(error),
+          });
+          wsManager.close(ws, WS_CLOSE_INTERNAL_ERROR, "Authorization temporarily unavailable");
+          return;
+        }
+      }
+
+      const enrichment = await this.deps.snapshotReader.resolveSessionSnapshotEnrichment();
       const clientInfo: ClientInfo = {
         participantId: participant.id,
         userId: participant.canonical_user_id ?? participant.user_id,
@@ -427,8 +451,8 @@ export class SessionConnectionAuthenticator implements SessionUpgradeAdmission {
             ws,
             clientInfo,
             enrichment,
-            authorization.authorization.permissions.includes("sessions.sandbox_access"),
-            canManageSessionBudget(ownerUserId, authorization.authorization)
+            this.decide(resolution, "sandbox").allowed,
+            canManageSessionBudget(resolution.row.ownerUserId, resolution.authorization)
           )
         );
         if (!activated) {
@@ -499,16 +523,37 @@ export class SessionConnectionAuthenticator implements SessionUpgradeAdmission {
     return true;
   }
 
-  /** Samples one permission before dispatching a WebSocket command. */
+  /** Samples the current D1 scope and access before dispatching a WebSocket command. */
   async authorizeClientCommand(
+    ws: SessionWebSocket,
     userId: string,
-    permission: PermissionId
+    action: SessionAction
   ): Promise<ClientCommandAuthorization> {
-    const resolution = await this.deps.resolveAuthorization(userId);
-    if (resolution.kind === "unavailable") return "unavailable";
-    if (resolution.kind === "rejected") return "denied";
-    if (resolution.kind !== "valid") return "denied";
-    return resolution.authorization.permissions.includes(permission) ? "allowed" : "denied";
+    const resolution = await this.deps.resolveSessionViewer(userId);
+    if (resolution.kind === "unavailable") return { kind: "unavailable" };
+    if (resolution.kind !== "valid" || !this.decide(resolution, "read").allowed) {
+      this.deps.wsManager.removeClient(ws);
+      this.deps.wsManager.close(
+        ws,
+        WS_CLOSE_AUTHORIZATION_REVOKED,
+        WS_AUTHORIZATION_REVOKED_REASON
+      );
+      return { kind: "revoked" };
+    }
+    const decision = this.decide(resolution, action);
+    return decision.allowed ? { kind: "allowed" } : { kind: "denied", reason: decision.reason };
+  }
+
+  private decide(
+    resolution: Extract<SessionViewerResolution, { kind: "valid" }>,
+    action: SessionAction
+  ): AccessDecision {
+    if (resolution.mode === "on" || resolution.row.visibility === "private") {
+      return checkSessionAccess(resolution.viewer, resolution.row, action);
+    }
+    return resolution.authorization.permissions.includes(legacyPermissionForAction(action))
+      ? { allowed: true }
+      : { allowed: false, reason: "missing_permission" };
   }
 
   /** Return authorized client state, recovering an unexpired lease after hibernation. */

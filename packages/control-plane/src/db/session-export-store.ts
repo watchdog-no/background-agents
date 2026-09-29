@@ -8,11 +8,13 @@ import {
 } from "@open-inspect/shared/types/sessions";
 import { z } from "zod";
 import { DEFAULT_BASE_BRANCH } from "../repos/default-branch";
+import type { TeamsEnforcementMode } from "../authorization/teams-enforcement";
 import { sessionRepositoryRowSchema, toSessionRepository } from "./session-list-metadata";
 import { decodeSessionPullRequest } from "./session-pull-request-store";
 import { sessionRowSchema, toSessionFields, type SessionRow } from "./session-row";
 import type { RunsExportCursor, SessionExportCursor } from "./session-export-cursor";
 import type { SqlDatabase } from "./sql-database";
+import { visibleSessionsPredicate, type SessionReadScope } from "./session-visibility";
 
 export const DEFAULT_EXPORT_LIMIT = 100;
 
@@ -85,6 +87,8 @@ function toExportRow(
 
 /** Shared filters for either export ordering. */
 interface ExportFilters {
+  readScope: SessionReadScope;
+  mode: TeamsEnforcementMode;
   /** Page size; the store reads one extra row to answer hasMore. */
   limit: number;
   /** Inclusive lower bound on session creation, or root creation in runs scope (epoch ms). */
@@ -144,7 +148,14 @@ export class SessionExportStore {
     options: ExportFilters & { scope?: "sessions"; cursor: SessionExportCursor | null }
   ): Promise<SessionsPage> {
     const conditions: string[] = [];
-    const bindings: (string | number)[] = [];
+    const bindings: unknown[] = [];
+    if (options.readScope.kind !== "internal") {
+      const visibility = visibleSessionsPredicate("sessions", options.readScope, {
+        mode: options.mode,
+      });
+      conditions.push(`(${visibility.sql})`);
+      bindings.push(...visibility.params);
+    }
     const firstPage = options.cursor === null;
     if (options.cursor) {
       const cursor = options.cursor;
@@ -195,7 +206,17 @@ export class SessionExportStore {
     }
   ): Promise<RunsPage> {
     const conditions: string[] = [];
-    const bindings: (string | number)[] = [];
+    const bindings: unknown[] = [];
+    if (options.readScope.kind !== "internal") {
+      const rootVisibility = visibleSessionsPredicate("root", options.readScope, {
+        mode: options.mode,
+      });
+      const memberVisibility = visibleSessionsPredicate("s", options.readScope, {
+        mode: options.mode,
+      });
+      conditions.push(`(${rootVisibility.sql})`, `(${memberVisibility.sql})`);
+      bindings.push(...rootVisibility.params, ...memberVisibility.params);
+    }
     const firstPage = options.cursor === null;
     if (options.cursor) {
       const cursor = options.cursor;
@@ -278,7 +299,7 @@ export class SessionExportStore {
     select: string;
     pageFrom: string;
     pageId: string;
-    bindings: (string | number)[];
+    bindings: unknown[];
     limit: number;
     snapshotMax: number | undefined;
     schema: z.ZodType<Row>;

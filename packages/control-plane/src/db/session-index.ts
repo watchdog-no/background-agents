@@ -13,6 +13,9 @@ import {
 } from "@open-inspect/shared/session-list-query";
 import type { SessionListRepository } from "@open-inspect/shared/types/repositories";
 import type { SessionVisibility } from "@open-inspect/shared/types/teams";
+import { visibleSessionsPredicate, type SessionReadScope } from "./session-visibility";
+import { assertD1QueryParameterLimit } from "./query-limits";
+import type { TeamsEnforcementMode } from "../authorization/teams-enforcement";
 import {
   sessionModelProviderAuthSchema,
   SUBSCRIPTION_PROVIDER_IDS,
@@ -468,7 +471,7 @@ export class SessionIndexStore {
   }
 
   /** List sessions with optional viewer-specific read state. */
-  async list(options: ListSessionsOptions = {}): Promise<ListSessionsResult> {
+  async list(options: ListSessionsOptions): Promise<ListSessionsResult> {
     const {
       limit = DEFAULT_SESSION_LIST_LIMIT,
       offset = DEFAULT_SESSION_LIST_OFFSET,
@@ -479,6 +482,7 @@ export class SessionIndexStore {
     // `id DESC` breaks updated_at ties so offset pages never overlap or skip.
     const pageSql = `SELECT * FROM sessions ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`;
     const pageParams = [...params, limit + 1, offset];
+    assertD1QueryParameterLimit(pageParams.length + (viewerUserId ? 1 : 0));
     const result = viewerUserId
       ? await this.db
           .prepare(
@@ -767,10 +771,20 @@ export class SessionIndexStore {
   }
 
   /** List children of a parent session, newest first. */
-  async listByParent(parentSessionId: string): Promise<SessionEntry[]> {
+  async listByParent(
+    parentSessionId: string,
+    readScope: SessionReadScope,
+    mode: TeamsEnforcementMode
+  ): Promise<SessionEntry[]> {
+    const visibility =
+      readScope.kind === "internal"
+        ? { sql: "", params: [] }
+        : visibleSessionsPredicate("sessions", readScope, { mode });
     const result = await this.db
-      .prepare(`SELECT * FROM sessions WHERE parent_session_id = ? ORDER BY created_at DESC`)
-      .bind(parentSessionId)
+      .prepare(
+        `SELECT * FROM sessions WHERE parent_session_id = ? ${visibility.sql ? `AND ${visibility.sql}` : ""} ORDER BY created_at DESC`
+      )
+      .bind(parentSessionId, ...visibility.params)
       .all<SessionRow>();
     return this.attachListMetadata((result.results || []).map(toEntry));
   }

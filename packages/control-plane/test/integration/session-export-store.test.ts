@@ -1,10 +1,19 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { SessionViewer } from "@open-inspect/shared";
 import { SessionExportStore, type RunsPage } from "../../src/db/session-export-store";
 import type { RunsExportCursor } from "../../src/db/session-export-cursor";
 import type { SqlDatabase, SqlStatement } from "../../src/db/sql-database";
 import { cleanD1Tables } from "./cleanup";
 import { sqlDatabase } from "./helpers";
+
+const serviceViewer: SessionViewer = { kind: "service", teamId: null };
+
+async function setVisibility(id: string, visibility: "workspace" | "private") {
+  await env.DB.prepare("UPDATE sessions SET visibility = ? WHERE id = ?")
+    .bind(visibility, id)
+    .run();
+}
 
 function insertSession(id: string, createdAt: number) {
   return env.DB.prepare("INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)")
@@ -31,6 +40,142 @@ describe("SessionExportStore integration", () => {
   beforeEach(cleanD1Tables);
   afterEach(cleanD1Tables);
 
+  it("filters sessions before paging and never fetches a hidden trace or metadata", async () => {
+    await insertSession("visible-old", 100);
+    await insertSession("hidden", 200);
+    await insertSession("visible-new", 300);
+    await setVisibility("hidden", "private");
+    const store = new SessionExportStore(sqlDatabase(env.DB));
+
+    const first = await store.list({
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    expect(first.sessions.map(({ id }) => id)).toEqual(["visible-new"]);
+    expect(first.hasMore).toBe(true);
+    const second = await store.list({
+      cursor: first.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    expect(second.sessions.map(({ id }) => id)).toEqual(["visible-old"]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("filters run roots and descendants independently, including for an unbound service", async () => {
+    await insertSession("private-root", 500);
+    await insertDescendant("public-child-of-private", "private-root", "private-root", 501, 1);
+    await setVisibility("private-root", "private");
+    await insertSession("public-root", 400);
+    await insertDescendant("private-child", "public-root", "public-root", 401, 1);
+    await setVisibility("private-child", "private");
+    await insertDescendant("public-child", "public-root", "public-root", 402, 1);
+    const store = new SessionExportStore(sqlDatabase(env.DB));
+
+    const first = await store.list({
+      scope: "runs",
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    expect(first.sessions.map(({ id }) => id)).toEqual(["public-root"]);
+    const second = await store.list({
+      scope: "runs",
+      cursor: first.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    expect(second.sessions.map(({ id }) => id)).toEqual(["public-child"]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("omits visibility predicates for explicitly internal session and run exports", async () => {
+    await insertSession("private-root", 200);
+    await setVisibility("private-root", "private");
+    await insertDescendant("private-child", "private-root", "private-root", 210, 1);
+    await setVisibility("private-child", "private");
+    await insertSession("workspace", 100);
+
+    const raw = sqlDatabase(env.DB);
+    const pageQueries: string[] = [];
+    const db: SqlDatabase = {
+      prepare(sql) {
+        if (sql.startsWith("SELECT sessions.*") || sql.startsWith("SELECT s.*")) {
+          pageQueries.push(sql);
+        }
+        return raw.prepare(sql);
+      },
+      batch(statements) {
+        return raw.batch(statements);
+      },
+    };
+    const store = new SessionExportStore(db);
+    const options = {
+      readScope: { kind: "internal" as const, reason: "data export" },
+      mode: "on" as const,
+      cursor: null,
+      limit: 10,
+    };
+    expect((await store.list(options)).sessions.map(({ id }) => id)).toEqual([
+      "private-child",
+      "private-root",
+      "workspace",
+    ]);
+    expect((await store.list({ ...options, scope: "runs" })).sessions.map(({ id }) => id)).toEqual([
+      "private-root",
+      "private-child",
+      "workspace",
+    ]);
+    expect(pageQueries).toHaveLength(2);
+    for (const sql of pageQueries) {
+      expect(sql).not.toMatch(/\b(?:sessions|root|s)\.visibility\b/);
+      expect(sql).not.toContain("team_memberships");
+    }
+  });
+
+  it("honors enforcement mode for users but never exposes private rows to services", async () => {
+    await insertSession("workspace", 100);
+    await insertSession("private", 200);
+    await setVisibility("private", "private");
+    await env.DB.prepare(
+      "INSERT INTO teams (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+    )
+      .bind("team-1", "team-1", "Team 1", 100, 100)
+      .run();
+    await insertSession("team", 300);
+    await env.DB.prepare("UPDATE sessions SET owner_team_id = ?, visibility = 'team' WHERE id = ?")
+      .bind("team-1", "team")
+      .run();
+    const viewer: SessionViewer = {
+      kind: "user",
+      userId: "viewer",
+      roleKey: null,
+      permissions: ["sessions.read"],
+      suspended: false,
+      memberships: new Map(),
+    };
+    const store = new SessionExportStore(sqlDatabase(env.DB));
+
+    const on = await store.list({ cursor: null, limit: 10, readScope: viewer, mode: "on" });
+    expect(on.sessions.map(({ id }) => id)).toEqual(["workspace"]);
+    const shadow = await store.list({ cursor: null, limit: 10, readScope: viewer, mode: "shadow" });
+    expect(shadow.sessions.map(({ id }) => id)).toEqual(["team", "workspace"]);
+    const off = await store.list({ cursor: null, limit: 10, readScope: viewer, mode: "off" });
+    expect(off.sessions.map(({ id }) => id)).toEqual(["team", "workspace"]);
+    const service = await store.list({
+      cursor: null,
+      limit: 10,
+      readScope: serviceViewer,
+      mode: "off",
+    });
+    expect(service.sessions.map(({ id }) => id)).toEqual(["team", "workspace"]);
+  });
+
   it("looks up exactly one export row", async () => {
     await insertSession("other", 100);
     await insertSession("root", 200);
@@ -51,7 +196,12 @@ describe("SessionExportStore integration", () => {
     await insertSession("session-newest", 300);
     const store = new SessionExportStore(sqlDatabase(env.DB));
 
-    const first = await store.list({ cursor: null, limit: 2 });
+    const first = await store.list({
+      cursor: null,
+      limit: 2,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     expect(first.sessions.map(({ id }) => id)).toEqual(["session-newest", "session-c"]);
     expect(first.nextCursor).toEqual({
       createdAt: 200,
@@ -61,7 +211,12 @@ describe("SessionExportStore integration", () => {
 
     await insertSession("session-created-during-export", 400);
     await insertSession("session-bb-created-during-export", 200);
-    const second = await store.list({ cursor: first.nextCursor, limit: 2 });
+    const second = await store.list({
+      cursor: first.nextCursor,
+      limit: 2,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     expect(second.sessions.map(({ id }) => id)).toEqual(["session-b", "session-a"]);
     expect(second).toMatchObject({ hasMore: false, nextCursor: null });
   });
@@ -75,6 +230,8 @@ describe("SessionExportStore integration", () => {
     const result = await new SessionExportStore(sqlDatabase(env.DB)).list({
       cursor: null,
       limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
       createdAfter: 200,
       createdBefore: 300,
     });
@@ -94,6 +251,8 @@ describe("SessionExportStore integration", () => {
       scope: "runs",
       cursor: null,
       limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
       createdAfter: 200,
       createdBefore: 300,
     });
@@ -119,7 +278,13 @@ describe("SessionExportStore integration", () => {
     const pages: string[][] = [];
     let cursor: RunsExportCursor | null = null;
     do {
-      const page: RunsPage = await store.list({ scope: "runs", cursor, limit: 3 });
+      const page: RunsPage = await store.list({
+        scope: "runs",
+        cursor,
+        limit: 3,
+        readScope: serviceViewer,
+        mode: "on",
+      });
       const pageIds = page.sessions.map(({ id }) => id);
       pages.push(pageIds);
       ids.push(...pageIds);
@@ -140,10 +305,34 @@ describe("SessionExportStore integration", () => {
     await insertSession("root-a", 200);
     await insertDescendant("child-a", "root-a", "root-a", 240, 1);
     const store = new SessionExportStore(sqlDatabase(env.DB));
-    const first = await store.list({ scope: "runs", cursor: null, limit: 1 });
-    const second = await store.list({ scope: "runs", cursor: first.nextCursor, limit: 1 });
-    const third = await store.list({ scope: "runs", cursor: second.nextCursor, limit: 1 });
-    const fourth = await store.list({ scope: "runs", cursor: third.nextCursor, limit: 1 });
+    const first = await store.list({
+      scope: "runs",
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    const second = await store.list({
+      scope: "runs",
+      cursor: first.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    const third = await store.list({
+      scope: "runs",
+      cursor: second.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    const fourth = await store.list({
+      scope: "runs",
+      cursor: third.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
 
     expect(
       [first, second, third, fourth].flatMap((page) => page.sessions.map(({ id }) => id))
@@ -172,7 +361,13 @@ describe("SessionExportStore integration", () => {
       },
     };
     const store = new SessionExportStore(db);
-    const first = await store.list({ scope: "runs", cursor: null, limit: 1 });
+    const first = await store.list({
+      scope: "runs",
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     if (!pageSql) throw new Error("Run page query was not prepared");
 
     const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${pageSql}`)
@@ -189,7 +384,7 @@ describe("SessionExportStore integration", () => {
 
     const cursor = first.nextCursor;
     if (!cursor) throw new Error("Expected a second run export page");
-    await store.list({ scope: "runs", cursor, limit: 1 });
+    await store.list({ scope: "runs", cursor, limit: 1, readScope: serviceViewer, mode: "on" });
     if (!pageSql) throw new Error("Continuation query was not prepared");
     const continuation = await env.DB.prepare(`EXPLAIN QUERY PLAN ${pageSql}`)
       .bind(
@@ -224,7 +419,13 @@ describe("SessionExportStore integration", () => {
     const ids: string[] = [];
     let cursor: RunsExportCursor | null = null;
     do {
-      const page: RunsPage = await store.list({ scope: "runs", cursor, limit: 1 });
+      const page: RunsPage = await store.list({
+        scope: "runs",
+        cursor,
+        limit: 1,
+        readScope: serviceViewer,
+        mode: "on",
+      });
       ids.push(...page.sessions.map(({ id }) => id));
       cursor = page.nextCursor;
     } while (cursor);
@@ -237,10 +438,28 @@ describe("SessionExportStore integration", () => {
     await insertDescendant("child-1", "root", "root", 210, 1);
     await insertDescendant("child-2", "root", "root", 230, 1);
     const store = new SessionExportStore(sqlDatabase(env.DB));
-    const first = await store.list({ scope: "runs", cursor: null, limit: 1 });
+    const first = await store.list({
+      scope: "runs",
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     await insertDescendant("late-child", "root", "root", 220, 1);
-    const second = await store.list({ scope: "runs", cursor: first.nextCursor, limit: 1 });
-    const third = await store.list({ scope: "runs", cursor: second.nextCursor, limit: 1 });
+    const second = await store.list({
+      scope: "runs",
+      cursor: first.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    const third = await store.list({
+      scope: "runs",
+      cursor: second.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
 
     expect([first, second, third].flatMap((page) => page.sessions.map(({ id }) => id))).toEqual([
       "root",
@@ -255,7 +474,13 @@ describe("SessionExportStore integration", () => {
     await insertDescendant("child-1", "root", "root", 210, 1);
     await insertDescendant("child-2", "root", "root", 230, 1);
     const store = new SessionExportStore(sqlDatabase(env.DB));
-    const first = await store.list({ scope: "runs", cursor: null, limit: 1 });
+    const first = await store.list({
+      scope: "runs",
+      cursor: null,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     const deleted = await env.DB.prepare("SELECT rowid FROM sessions WHERE id = ?")
       .bind("child-2")
       .first();
@@ -265,8 +490,20 @@ describe("SessionExportStore integration", () => {
       .bind("late-child")
       .first();
     expect(inserted).toEqual(deleted);
-    const second = await store.list({ scope: "runs", cursor: first.nextCursor, limit: 1 });
-    const third = await store.list({ scope: "runs", cursor: second.nextCursor, limit: 1 });
+    const second = await store.list({
+      scope: "runs",
+      cursor: first.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
+    const third = await store.list({
+      scope: "runs",
+      cursor: second.nextCursor,
+      limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
+    });
 
     expect([first, second, third].flatMap((page) => page.sessions.map(({ id }) => id))).toEqual([
       "root",
@@ -282,15 +519,31 @@ describe("SessionExportStore integration", () => {
     await insertDescendant("child", "root", "root", 210, 1);
     const store = new SessionExportStore(sqlDatabase(env.DB));
     const window = { scope: "runs" as const, limit: 1, createdAfter: 100, createdBefore: 220 };
-    const first = await store.list({ ...window, cursor: null });
+    const first = await store.list({
+      ...window,
+      cursor: null,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     expect(first.sessions.map(({ id }) => id)).toEqual(["root"]);
 
     await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind("root").run();
-    const second = await store.list({ ...window, cursor: first.nextCursor });
+    const second = await store.list({
+      ...window,
+      cursor: first.nextCursor,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     expect(second.sessions.map(({ id }) => id)).toEqual(["old-root"]);
     expect(second.nextCursor).toBeNull();
 
-    const fresh = await store.list({ ...window, cursor: null, limit: 10 });
+    const fresh = await store.list({
+      ...window,
+      cursor: null,
+      limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
+    });
     expect(fresh.sessions.map(({ id, rootSessionId }) => [id, rootSessionId])).toEqual([
       ["child", "child"],
       ["old-root", "old-root"],
@@ -310,6 +563,8 @@ describe("SessionExportStore integration", () => {
       scope: "runs",
       cursor: null,
       limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
     });
     expect(result.sessions).toEqual([]);
   });
@@ -385,6 +640,8 @@ describe("SessionExportStore integration", () => {
     const result = await new SessionExportStore(sqlDatabase(env.DB)).list({
       cursor: null,
       limit: 1,
+      readScope: serviceViewer,
+      mode: "on",
     });
 
     expect(result.sessions).toMatchObject([
@@ -445,6 +702,8 @@ describe("SessionExportStore integration", () => {
     const result = await new SessionExportStore(sqlDatabase(env.DB)).list({
       cursor: null,
       limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
     });
 
     expect(result.sessions).toMatchObject([
@@ -466,6 +725,8 @@ describe("SessionExportStore integration", () => {
     const result = await new SessionExportStore(sqlDatabase(env.DB)).list({
       cursor: null,
       limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
     });
 
     expect(result.sessions[0].repositories).toEqual([]);
@@ -498,6 +759,8 @@ describe("SessionExportStore integration", () => {
     const result = await new SessionExportStore(sqlDatabase(env.DB)).list({
       cursor: null,
       limit: 101,
+      readScope: serviceViewer,
+      mode: "on",
     });
 
     expect(result.sessions).toHaveLength(101);
@@ -575,7 +838,12 @@ describe("SessionExportStore integration", () => {
       },
     };
 
-    const result = await new SessionExportStore(db).list({ cursor: null, limit: 10 });
+    const result = await new SessionExportStore(db).list({
+      cursor: null,
+      limit: 10,
+      readScope: serviceViewer,
+      mode: "on",
+    });
 
     expect(wrote).toBe(true);
     expect(result.sessions[0].prCount).toBe(result.sessions[0].pullRequests.length);
