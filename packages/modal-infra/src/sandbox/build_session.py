@@ -25,6 +25,7 @@ from sandbox_runtime.repo_image_callback import (
 from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
+from .launch import _filter_sandbox_user_env_vars
 from .launch_policy import (
     ModalBackend,
     _identity_digest,
@@ -33,7 +34,7 @@ from .launch_policy import (
     launch_kwargs,
     parse_launch,
 )
-from .manager import SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS, _filter_sandbox_user_env_vars
+from .manager import SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS
 from .vcs_env import inject_vcs_env_vars
 
 log = get_logger("build_session")

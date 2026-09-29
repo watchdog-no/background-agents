@@ -7,6 +7,8 @@ import { spawnSourceSchema } from "@open-inspect/shared/types/sessions";
 import { z } from "zod";
 import type { SqlDatabase, SqlResult, SqlStatement } from "./sql-database";
 import { scopePredicate } from "./analytics-store";
+import type { TeamsEnforcementMode } from "../authorization/teams-enforcement";
+import { visibleSessionsPredicate, type SessionReadScope } from "./session-visibility";
 
 export interface ListSessionRunsOptions {
   startAt: number;
@@ -87,21 +89,33 @@ function toRun(value: unknown): SessionRun {
 }
 
 export class SessionRunStore {
-  constructor(private readonly db: SqlDatabase) {}
+  constructor(
+    private readonly db: SqlDatabase,
+    private readonly readScope: SessionReadScope,
+    private readonly mode: TeamsEnforcementMode
+  ) {}
+
+  private visible(alias: string) {
+    return this.readScope.kind === "internal"
+      ? { sql: "", params: [] }
+      : visibleSessionsPredicate(alias, this.readScope, { mode: this.mode, excludePrivate: true });
+  }
 
   prepareList({ startAt, endAt, limit, orderBy, scope }: ListSessionRunsOptions): SqlStatement {
     const order = orderBy === "cost" ? "total_cost" : "created_at";
     const { sql, binds } = scopePredicate(scope, "root.spawn_source");
+    const rootVisible = this.visible("root");
+    const childVisible = this.visible("s");
     return this.db
       .prepare(
         `${RUN_SELECT}
          WHERE root.created_at >= ? AND root.created_at < ?
-         ${sql}
+           ${sql} ${rootVisible.sql ? `AND ${rootVisible.sql}` : ""} ${childVisible.sql ? `AND ${childVisible.sql}` : ""}
          ${RUN_GROUP}
          ORDER BY ${order} DESC, root_session_id ASC
          LIMIT ?`
       )
-      .bind(startAt, endAt, ...binds, limit);
+      .bind(startAt, endAt, ...binds, ...rootVisible.params, ...childVisible.params, limit);
   }
 
   decodeList(result: SqlResult): SessionRun[] {
@@ -113,9 +127,13 @@ export class SessionRunStore {
   }
 
   async get(rootSessionId: string): Promise<SessionRun | null> {
+    const rootVisible = this.visible("root");
+    const childVisible = this.visible("s");
     const row = await this.db
-      .prepare(`${RUN_SELECT} WHERE root.id = ? ${RUN_GROUP}`)
-      .bind(rootSessionId)
+      .prepare(
+        `${RUN_SELECT} WHERE root.id = ? ${rootVisible.sql ? `AND ${rootVisible.sql}` : ""} ${childVisible.sql ? `AND ${childVisible.sql}` : ""} ${RUN_GROUP}`
+      )
+      .bind(rootSessionId, ...rootVisible.params, ...childVisible.params)
       .first<unknown>();
     return row === null ? null : toRun(row);
   }

@@ -5,9 +5,12 @@ import {
   type SessionInboxSession,
 } from "@open-inspect/shared/types/session-inbox";
 import type { SessionStatus, SpawnSource } from "@open-inspect/shared/types/sessions";
+import { visibleSessionsPredicate, type SessionReadScope } from "./session-visibility";
+import type { TeamsEnforcementMode } from "../authorization/teams-enforcement";
 import { attachSessionListMetadata } from "./session-list-metadata";
 import type { SessionInboxCursor } from "./session-inbox-cursor";
 import { readStateFromRow, unreadSql, type ViewerReadStateRow } from "./session-read-state";
+import { assertD1QueryParameterLimit } from "./query-limits";
 import type { SqlDatabase, SqlStatement } from "./sql-database";
 
 /** Viewer, filtering, and pagination inputs for an inbox query. */
@@ -15,6 +18,9 @@ export interface ListSessionInboxOptions {
   category: SessionInboxCategory;
   createdByUserIds?: readonly string[];
   excludeAutomatedSessions?: boolean;
+  teamIds?: readonly string[];
+  readScope: SessionReadScope;
+  mode: TeamsEnforcementMode;
   viewerUserId: string;
   limit: number;
   cursor: SessionInboxCursor | null;
@@ -115,6 +121,19 @@ export class SessionInboxStore {
   /** Select one ordered category page plus one extra root for cursor metadata. */
   private bindInboxQuery(options: ListSessionInboxOptions): SqlStatement {
     const { sql, params } = this.inboxCtes(options);
+    const binds = [
+      ...params,
+      options.category,
+      ...(options.cursor
+        ? [
+            options.cursor.latestUpdatedAt,
+            options.cursor.latestUpdatedAt,
+            options.cursor.rootSessionId,
+          ]
+        : []),
+      options.limit + 1,
+    ];
+    assertD1QueryParameterLimit(binds.length);
     const cursorCondition = options.cursor
       ? `AND (latest_updated_at < ? OR (latest_updated_at = ? AND effective_root_session_id < ?))`
       : "";
@@ -139,18 +158,7 @@ export class SessionInboxStore {
                   effective_sessions.updated_at DESC,
                   effective_sessions.id DESC`
       )
-      .bind(
-        ...params,
-        options.category,
-        ...(options.cursor
-          ? [
-              options.cursor.latestUpdatedAt,
-              options.cursor.latestUpdatedAt,
-              options.cursor.rootSessionId,
-            ]
-          : []),
-        options.limit + 1
-      );
+      .bind(...binds);
   }
 
   /** Select the first page of every category through one shared recursive traversal. */
@@ -158,6 +166,7 @@ export class SessionInboxStore {
     options: Omit<ListSessionInboxOptions, "category" | "cursor">
   ): SqlStatement {
     const { sql, params } = this.inboxCtes(options);
+    assertD1QueryParameterLimit(params.length + 1);
     return this.db
       .prepare(
         `${sql},
@@ -193,7 +202,12 @@ export class SessionInboxStore {
   private inboxCtes(
     options: Pick<
       ListSessionInboxOptions,
-      "createdByUserIds" | "excludeAutomatedSessions" | "viewerUserId"
+      | "createdByUserIds"
+      | "excludeAutomatedSessions"
+      | "teamIds"
+      | "readScope"
+      | "mode"
+      | "viewerUserId"
     >
   ): { sql: string; params: unknown[] } {
     const { conditions, params } = this.eligibility(options);
@@ -250,7 +264,10 @@ export class SessionInboxStore {
   }
 
   private eligibility(
-    options: Pick<ListSessionInboxOptions, "createdByUserIds" | "excludeAutomatedSessions">
+    options: Pick<
+      ListSessionInboxOptions,
+      "createdByUserIds" | "excludeAutomatedSessions" | "teamIds" | "readScope" | "mode"
+    >
   ): { conditions: string[]; params: unknown[] } {
     const conditions = ["sessions.status != 'archived'", "sessions.root_session_id IS NOT NULL"];
     const params: unknown[] = [];
@@ -262,6 +279,17 @@ export class SessionInboxStore {
         `sessions.user_id IN (${options.createdByUserIds.map(() => "?").join(", ")})`
       );
       params.push(...options.createdByUserIds);
+    }
+    if (options.teamIds?.length) {
+      conditions.push(`sessions.owner_team_id IN (${options.teamIds.map(() => "?").join(", ")})`);
+      params.push(...options.teamIds);
+    }
+    if (options.readScope.kind !== "internal") {
+      const visibility = visibleSessionsPredicate("sessions", options.readScope, {
+        mode: options.mode,
+      });
+      conditions.push(visibility.sql);
+      params.push(...visibility.params);
     }
     return { conditions, params };
   }

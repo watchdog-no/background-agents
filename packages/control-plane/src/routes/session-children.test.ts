@@ -52,6 +52,85 @@ function routeContext(
 describe("handleListChildren", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("uses the internal read scope for a parent-bound sandbox", async () => {
+    const listByParent = vi
+      .spyOn(SessionIndexStore.prototype, "listByParent")
+      .mockResolvedValue([]);
+    const ctx = routeContext(vi.fn());
+    ctx.principal = { kind: "sandbox", sessionId: "parent" };
+    ctx.teamsEnforcementMode = "on";
+    const response = await handleListChildren(
+      new Request("https://test.local/sessions/parent/children"),
+      {} as Env,
+      { id: "parent" },
+      ctx
+    );
+    expect(response.status).toBe(200);
+    expect(listByParent).toHaveBeenCalledWith(
+      "parent",
+      { kind: "internal", reason: "parent-bound sandbox" },
+      "on"
+    );
+  });
+
+  it("passes the admitted parent viewer and enforcement mode to child selection", async () => {
+    const listByParent = vi
+      .spyOn(SessionIndexStore.prototype, "listByParent")
+      .mockResolvedValue([]);
+    const ctx = routeContext(vi.fn());
+    const viewer = {
+      kind: "user" as const,
+      userId: "viewer",
+      roleKey: "member" as const,
+      permissions: ["sessions.read"] as const,
+      suspended: false,
+      memberships: new Map([["team-a", "member" as const]]),
+    };
+    ctx.sessionAdmission = { row: {} as never, viewer };
+    ctx.teamsEnforcementMode = "on";
+
+    await handleListChildren(
+      new Request("https://test.local/sessions/parent/children"),
+      {} as Env,
+      { id: "parent" },
+      ctx
+    );
+    expect(listByParent).toHaveBeenCalledWith("parent", viewer, "on");
+  });
+
+  it("derives the viewer on the off-mode admission fast path", async () => {
+    const listByParent = vi
+      .spyOn(SessionIndexStore.prototype, "listByParent")
+      .mockResolvedValue([]);
+    const ctx = routeContext(vi.fn());
+    ctx.teamsEnforcementMode = "off";
+    ctx.authorization = {
+      userId: "viewer",
+      role: { id: "member", key: "member", name: "Member" },
+      permissions: ["sessions.read"],
+      suspendedAt: null,
+    };
+
+    await handleListChildren(
+      new Request("https://test.local/sessions/parent/children"),
+      {} as Env,
+      { id: "parent" },
+      ctx
+    );
+    expect(listByParent).toHaveBeenCalledWith(
+      "parent",
+      {
+        kind: "user",
+        userId: "viewer",
+        roleKey: "member",
+        permissions: ["sessions.read"],
+        suspended: false,
+        memberships: new Map(),
+      },
+      "off"
+    );
+  });
+
   it("projects viewer-neutral child summaries through the shared schema", async () => {
     vi.spyOn(SessionIndexStore.prototype, "listByParent").mockResolvedValue([
       {
@@ -65,7 +144,7 @@ describe("handleListChildren", () => {
         baseBranch: "main",
         status: "active",
         ownerTeamId: null,
-        visibility: "workspace",
+        visibility: "private",
         parentSessionId: "parent",
         spawnSource: "agent",
         spawnDepth: 1,
@@ -88,7 +167,10 @@ describe("handleListChildren", () => {
       new Request("https://test.local/sessions/parent/children"),
       {} as Env,
       { id: "parent" },
-      routeContext(vi.fn())
+      Object.assign(routeContext(vi.fn()), {
+        principal: { kind: "sandbox", sessionId: "parent" },
+        teamsEnforcementMode: "on",
+      })
     );
     await expect(response.json()).resolves.toEqual({
       children: [

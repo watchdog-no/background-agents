@@ -20,10 +20,13 @@ import {
   createTestRequestHandler,
   TEST_BACKGROUND_TASK_CONTEXT,
   TEST_SERVICE_SECRETS,
+  sessionAdmissionStatement,
+  emptyStatement,
 } from "../router.test-support";
 import type { PermissionId } from "@open-inspect/shared/rbac";
 import type { ListSessionsForExportOptions, SessionExportRow } from "../db/session-export-store";
 import type * as ExportStoreModule from "../db/session-export-store";
+import type { SqlStatement } from "../db/sql-database";
 import { encodeRunsExportCursor } from "../db/session-export-cursor";
 import { MAX_INCLUDED_BYTES_PER_SESSION } from "../session/contracts";
 import type { Env } from "../types";
@@ -76,7 +79,10 @@ vi.mock("../logger", () => ({
 const USER_PRINCIPAL: Principal = { kind: "user", userId: "user-1" };
 
 function createEnv(permissions?: readonly PermissionId[]): Env {
-  const db = permissions ? authorizationDatabase({ permissions }) : authorizationDatabase();
+  const db = authorizationDatabase({
+    permissions,
+    statement: (sql) => sessionAdmissionStatement(sql) ?? emptyStatement(),
+  });
   return createTestEnv({
     ...TEST_SERVICE_SECRETS,
     DB: db,
@@ -114,7 +120,7 @@ describe("GET /sessions/:id/export", () => {
     mocks.runtimeFetch.mockReset();
   });
 
-  it("refuses viewers before looking up the session", async () => {
+  it("refuses viewers without sessions.export after session admission", async () => {
     const response = await callExport(
       {},
       { sessionId: "session-1", permissions: ["sessions.read"] }
@@ -407,6 +413,48 @@ describe("GET /sessions/export", () => {
     expect(await readLines(response)).toMatchObject([{ type: "session", id: "session-1" }]);
   });
 
+  it("passes enabled enforcement and the current user's memberships to the store", async () => {
+    mocks.list.mockResolvedValue({ sessions: [], hasMore: false, nextCursor: null });
+    mocks.authenticate.mockImplementation(async (request: Request) => ({
+      principal: USER_PRINCIPAL,
+      request,
+    }));
+    const db = authorizationDatabase({
+      statement: (sql) => {
+        if (sql.includes("FROM team_memberships WHERE user_id")) {
+          const statement: SqlStatement = {
+            ...emptyStatement(),
+            bind: () => statement,
+            all: async <T>() => ({
+              results: [{ team_id: "team-1", role: "member" }] as T[],
+              meta: { changes: 0 },
+            }),
+          };
+          return statement;
+        }
+        return emptyStatement();
+      },
+    });
+    const response = await createHandler()(
+      new Request("https://test.local/sessions/export"),
+      createTestEnv({ ...TEST_SERVICE_SECRETS, DB: db, TEAMS_ENFORCEMENT: "on" }),
+      TEST_BACKGROUND_TASK_CONTEXT
+    );
+    expect(response.status).toBe(200);
+    await readLines(response);
+    expect(mocks.list).toHaveBeenCalledWith({
+      scope: "sessions",
+      cursor: null,
+      limit: 100,
+      mode: "on",
+      readScope: expect.objectContaining({
+        kind: "user",
+        userId: "user-1",
+        memberships: new Map([["team-1", "member"]]),
+      }),
+    });
+  });
+
   it("streams one valid NDJSON session line per row with the export content type", async () => {
     mocks.list.mockResolvedValue({ sessions: [sampleRow], hasMore: false, nextCursor: null });
 
@@ -449,7 +497,17 @@ describe("GET /sessions/export", () => {
       updatedAt: 2_000,
     });
     expect(lines[0]).not.toHaveProperty("messages");
-    expect(mocks.list).toHaveBeenCalledWith({ scope: "sessions", cursor: null, limit: 100 });
+    expect(mocks.list).toHaveBeenCalledWith({
+      scope: "sessions",
+      cursor: null,
+      limit: 100,
+      mode: "shadow",
+      readScope: expect.objectContaining({
+        kind: "user",
+        userId: "user-1",
+        memberships: new Map(),
+      }),
+    });
   });
 
   it("emits a trailing cursor line when more pages remain, and parses it back", async () => {
@@ -475,6 +533,8 @@ describe("GET /sessions/export", () => {
       scope: "sessions",
       cursor: { createdAt: 1_000, id: "session-1", snapshotMaxRowId: 42 },
       limit: 100,
+      mode: "shadow",
+      readScope: expect.objectContaining({ kind: "user", userId: "user-1" }),
     });
   });
 
@@ -498,7 +558,33 @@ describe("GET /sessions/export", () => {
       scope: "sessions",
       cursor: null,
       limit: MAX_INCLUDED_EXPORT_LIMIT,
+      mode: "shadow",
+      readScope: expect.objectContaining({ kind: "user", userId: "user-1" }),
     });
+  });
+
+  it("does not fetch a hidden bulk row's trace with include=events", async () => {
+    const hidden = { ...sampleRow, id: "hidden", createdAt: 2_000 };
+    mocks.list.mockImplementation(async (options: ListSessionsForExportOptions) => {
+      expect(options.readScope).toMatchObject({ kind: "user", userId: "user-1" });
+      const rows = [hidden, sampleRow].filter((row) => row.id !== hidden.id);
+      return { sessions: rows, hasMore: false, nextCursor: null };
+    });
+    mocks.runtimeFetch.mockResolvedValue(traceResponse({ events: [] }));
+
+    const lines = await readLines(await callExport({ include: "events" }));
+
+    expect(lines).toMatchObject([{ type: "session", id: "session-1", events: [] }]);
+    expect(mocks.runtimeFetch).toHaveBeenCalledTimes(1);
+    expect(mocks.runtimeFetch).toHaveBeenCalledWith(
+      "session-1",
+      "/internal/trace-export",
+      expect.anything(),
+      "?include=events"
+    );
+    expect(mocks.runtimeFetch.mock.calls.some(([sessionId]) => sessionId === hidden.id)).toBe(
+      false
+    );
   });
 
   it("inlines the prompt, tool activity, step tokens and outcome on one session line", async () => {
@@ -569,6 +655,8 @@ describe("GET /sessions/export", () => {
       createdAfter: 800,
       createdBefore: 950,
       limit: MAX_INCLUDED_EXPORT_LIMIT,
+      mode: "shadow",
+      readScope: expect.objectContaining({ kind: "user", userId: "user-1" }),
     });
     expect(mocks.runtimeFetch.mock.calls[0][3]).toBe("?include=events&format=compact");
   });

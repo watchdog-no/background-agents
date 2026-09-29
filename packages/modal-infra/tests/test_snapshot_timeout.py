@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from modal.exception import NotFoundError as ModalNotFoundError
 
-from sandbox_runtime.docker_control import CONTROL_TIMEOUT_SECONDS
+from sandbox_runtime.docker_control import CONTROL_TIMEOUT_SECONDS, PREPARATION_TIMEOUT_SECONDS
 from sandbox_runtime.types import SandboxStatus
 from src.sandbox.launch_policy import docker_allocation_tags
 from src.sandbox.manager import (
@@ -21,7 +21,13 @@ from src.sandbox.manager import (
 async def test_pending_vm_reference_recovers_owned_allocation(monkeypatch):
     sandbox = SimpleNamespace(
         object_id="sb-owned",
-        get_tags=_async_method(docker_allocation_tags("session", "generation")),
+        get_tags=_async_method(
+            {
+                **docker_allocation_tags("session", "generation"),
+                "openinspect_vm_launch": "1-000-8080-6080-7680",
+                "openinspect_vm_ports": "none",
+            }
+        ),
     )
     lookup = _async_method(sandbox)
     monkeypatch.setattr("src.sandbox.manager.modal.Sandbox.from_name", lookup)
@@ -34,7 +40,13 @@ async def test_pending_vm_reference_recovers_owned_allocation(monkeypatch):
 async def test_pending_vm_reference_stops_only_its_owned_allocation(monkeypatch):
     sandbox = SimpleNamespace(
         object_id="sb-owned",
-        get_tags=_async_method(docker_allocation_tags("session", "generation")),
+        get_tags=_async_method(
+            {
+                **docker_allocation_tags("session", "generation"),
+                "openinspect_vm_launch": "1-000-8080-6080-7680",
+                "openinspect_vm_ports": "none",
+            }
+        ),
         terminate=_async_method(),
     )
     from_name = _async_method(sandbox)
@@ -253,6 +265,19 @@ async def test_vm_capture_requires_docker_preparation(exit_code):
         "prepare",
     )
     assert execute.aio.call_args.kwargs["timeout"] == CONTROL_TIMEOUT_SECONDS
+
+
+def test_vm_preparation_deadline_fits_capture_budget():
+    from sandbox_runtime.docker_service import (
+        DOCKER_START_TIMEOUT_SECONDS,
+        DOCKER_STOP_TIMEOUT_SECONDS,
+    )
+
+    assert PREPARATION_TIMEOUT_SECONDS > 2 * DOCKER_STOP_TIMEOUT_SECONDS
+    assert CONTROL_TIMEOUT_SECONDS > (
+        PREPARATION_TIMEOUT_SECONDS + DOCKER_STOP_TIMEOUT_SECONDS + DOCKER_START_TIMEOUT_SECONDS
+    )
+    assert SNAPSHOT_FILESYSTEM_TIMEOUT_SECONDS > CONTROL_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
