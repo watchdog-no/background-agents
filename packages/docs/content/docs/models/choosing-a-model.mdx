@@ -183,7 +183,7 @@ Some models appear more than once because they are reachable through more than o
 
 ## Defaults for integrations and automations
 
-Sessions started by Slack, GitHub, and Linear always run on the OpenCode harness. Automations run on the harness chosen in the automation editor (OpenCode by default). Each surface picks its model from these settings:
+Sessions started by Slack, GitHub, and Linear use Claude Agent for Anthropic models and OpenCode for other providers. Automations use the selected harness, with Anthropic models always routed to Claude Agent. Each surface picks its model from these settings:
 
 | Surface     | Where the default lives                                                                                                                                                                                                                                                                 |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
