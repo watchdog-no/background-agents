@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS_DIR = (
     Path(__file__).resolve().parents[1]
@@ -19,7 +25,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import post_github_review  # noqa: E402
 import resolve_review_target  # noqa: E402
-from review_utils import parse_review_output, render_markdown  # noqa: E402
+from resolve_review_target import run_text  # noqa: E402
+from review_utils import ReviewValidationError, parse_review_output, render_markdown  # noqa: E402
 
 
 def sample_output(path: str = "/repo/src/app.ts", *, priority: int = 1) -> dict:
@@ -53,26 +60,14 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertNotIn("allowed-tools:", frontmatter)
         self.assertNotIn("user-invocable:", frontmatter)
 
-    def test_skill_resolves_its_directory_under_both_harnesses(self) -> None:
-        text = SKILL_FILE.read_text()
-
-        self.assertIn(".opencode/skills/code-review", text)
-        self.assertIn("${CLAUDE_CONFIG_DIR:-$HOME/.openinspect/claude}/skills/code-review", text)
-
-    def test_skill_starts_with_resolver_workflow(self) -> None:
-        text = SKILL_FILE.read_text()
-
-        self.assertLess(text.index("## Start Here"), text.index("## Workflow"))
-        self.assertLess(text.index("resolve_review_target.py"), text.index("## Review Rules"))
-
 
 class ResolveReviewTargetTests(unittest.TestCase):
     def test_bare_text_is_instructions_not_range(self) -> None:
         def fake_runner(command: list[str], cwd: Path) -> str:
             if command[:3] == ["gh", "pr", "view"]:
-                raise RuntimeError("no pr")
+                raise subprocess.CalledProcessError(1, command)
             if command[:2] == ["git", "symbolic-ref"]:
-                raise RuntimeError("no origin head")
+                raise subprocess.CalledProcessError(1, command)
             if command == ["git", "merge-base", "HEAD", "main"]:
                 return "abc123\n"
             raise AssertionError(command)
@@ -85,7 +80,7 @@ class ResolveReviewTargetTests(unittest.TestCase):
 
         self.assertEqual(resolved["target_type"], "base")
         self.assertEqual(resolved["instructions"], "HEAD~3")
-        self.assertEqual(resolved["diff_command"], ["git", "diff", "abc123"])
+        self.assertEqual(resolved["diff_command"], ["git", "diff", "abc123", "--"])
 
     def test_range_flag_selects_git_diff_range(self) -> None:
         resolved = resolve_review_target.resolve_review_target(
@@ -102,9 +97,9 @@ class ResolveReviewTargetTests(unittest.TestCase):
     def test_post_requires_a_pr(self) -> None:
         def fake_runner(command: list[str], cwd: Path) -> str:
             if command[:3] == ["gh", "pr", "view"]:
-                raise RuntimeError("no pr")
+                raise subprocess.CalledProcessError(1, command)
             if command[:2] == ["git", "symbolic-ref"]:
-                raise RuntimeError("no origin head")
+                raise subprocess.CalledProcessError(1, command)
             if command == ["git", "merge-base", "HEAD", "main"]:
                 return "abc123\n"
             raise AssertionError(command)
@@ -178,9 +173,9 @@ class ReviewRenderingTests(unittest.TestCase):
         self.assertIsNone(error)
         rendered = render_markdown(output)
 
-        self.assertIn("Review comment:", rendered)
+        self.assertIn("The patch introduces a token refresh regression.", rendered)
         self.assertIn("### [P1] Preserve the saved token", rendered)
-        self.assertIn("**Overall correctness:** `patch is incorrect`", rendered)
+        self.assertIn("[app.ts:2](</repo/src/app.ts:2>)", rendered)
 
     def test_invalid_json_falls_back_to_plain_text(self) -> None:
         output, error = parse_review_output("plain text review")
@@ -230,9 +225,7 @@ class GitHubPostingTests(unittest.TestCase):
         self.assertEqual(payload["comments"][0]["path"], "src/app.ts")
         self.assertEqual(payload["comments"][0]["line"], 2)
         body = payload["comments"][0]["body"]
-        self.assertIn("https://img.shields.io/badge/P1-orange", body)
-        self.assertIn("Preserve the saved token", body)
-        self.assertNotIn("[P1]", body)
+        self.assertEqual(body, "[P1] Preserve the saved token\n\n" + output["findings"][0]["body"])
 
     def test_unpostable_finding_moves_to_review_body(self) -> None:
         diff = """diff --git a/src/other.ts b/src/other.ts
@@ -283,3 +276,231 @@ def pr_runner(command: list[str], cwd: Path) -> str:
             }
         )
     raise AssertionError(command)
+
+
+def review_output(root: Path, *, findings: bool = True) -> dict:
+    return {
+        "findings": (
+            [
+                {
+                    "title": '[P1] Preserve the "organization" boundary',
+                    "body": "En annen organisasjons rådata kan endres. See [AGENTS.md](AGENTS.md:12).",
+                    "confidence_score": 0.95,
+                    "priority": 1,
+                    "code_location": {
+                        "absolute_file_path": str(root / 'a "file".py'),
+                        "line_range": {"start": 1, "end": 1},
+                    },
+                }
+            ]
+            if findings
+            else []
+        ),
+        "overall_correctness": "patch is incorrect" if findings else "patch is correct",
+        "overall_explanation": (
+            "The update loses organization scoping." if findings else "No actionable issues found."
+        ),
+        "overall_confidence_score": 0.95,
+    }
+
+
+class ReviewBehaviorTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.environment = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        self.git("init", "-q", "-b", "main")
+
+    def git(self, *args: str) -> str:
+        return subprocess.check_output(
+            ["git", *args],
+            cwd=self.root,
+            env=self.environment,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).rstrip("\n")
+
+    def runner(self, command: list[str], cwd: Path) -> str:
+        self.assertEqual(command[0], "git", "local scopes must not reach GitHub")
+        self.assertEqual(cwd, self.root)
+        return self.git(*command[1:])
+
+    def commit(self):
+        self.git("add", ".")
+        self.git(
+            "-c",
+            "user.name=Review Test",
+            "-c",
+            "user.email=review@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "fixture",
+        )
+
+    def test_uncommitted_includes_staged_unstaged_and_untracked(self):
+        tracked = self.root / "tracked.py"
+        tracked.write_text("original\n")
+        self.commit()
+        tracked.write_text("staged\n")
+        self.git("add", "tracked.py")
+        tracked.write_text("unstaged\n")
+        new_name = " fresh file\n.py"
+        (self.root / new_name).write_text("new\n")
+        target = resolve_review_target.resolve_review_target(
+            ["--uncommitted"], cwd=self.root, runner=self.runner
+        )
+        diffs = [self.runner(command, self.root) for command in target["diff_commands"]]
+        self.assertIn("+staged", diffs[0])
+        self.assertIn("+unstaged", diffs[1])
+        self.assertEqual(run_text(target["untracked_command"], self.root), new_name + "\0")
+        self.assertFalse(target["post"])
+
+    def test_unborn_repository_still_reviews_new_files(self):
+        (self.root / "new.py").write_text("new\n")
+        target = resolve_review_target.resolve_review_target(
+            ["--uncommitted"], cwd=self.root, runner=self.runner
+        )
+        self.assertEqual([self.runner(c, self.root) for c in target["diff_commands"]], ["", ""])
+        self.assertEqual(self.runner(target["untracked_command"], self.root), "new.py\0")
+
+    def test_commit_scope_excludes_working_changes(self):
+        tracked = self.root / "tracked.py"
+        tracked.write_text("original\n")
+        self.commit()
+        tracked.write_text("committed\n")
+        self.commit()
+        tracked.write_text("working\n")
+        target = resolve_review_target.resolve_review_target(
+            ["--commit", "HEAD"], cwd=self.root, runner=self.runner
+        )
+        diff = self.runner(target["diff_command"], self.root)
+        self.assertIn("+committed", diff)
+        self.assertNotIn("+working", diff)
+        self.assertNotIn("untracked_command", target)
+
+    def test_base_scope_includes_branch_working_and_untracked_changes(self):
+        tracked = self.root / "tracked.py"
+        tracked.write_text("original\n")
+        self.commit()
+        self.git("checkout", "-qb", "feature")
+        tracked.write_text("branch\n")
+        self.commit()
+        tracked.write_text("working\n")
+        (self.root / "new.py").write_text("new\n")
+        target = resolve_review_target.resolve_review_target(
+            ["--base", "main"], cwd=self.root, runner=self.runner
+        )
+        self.assertIn("+working", self.runner(target["diff_command"], self.root))
+        self.assertEqual(self.runner(target["untracked_command"], self.root), "new.py\0")
+        with self.assertRaises(SystemExit):
+            resolve_review_target.resolve_review_target(
+                ["--base", "missing"], cwd=self.root, runner=self.runner
+            )
+
+    def test_negation_and_dry_run_override_posting(self):
+        def github_runner(command: list[str], cwd: Path) -> str:
+            return json.dumps({"number": 123, "headRefOid": "reviewed"})
+
+        for args in [
+            ["--pr", "123", "--post", "do not post"],
+            ["--pr", "123", "--post", "--dry-run"],
+        ]:
+            with self.subTest(args=args):
+                target = resolve_review_target.resolve_review_target(
+                    args, cwd=self.root, runner=github_runner
+                )
+                self.assertFalse(target["post"])
+                self.assertEqual(target["post_source"], "dry_run")
+
+    def test_inline_comments_preserve_quoted_values_and_rule_citations(self):
+        output = review_output(self.root)
+        markdown = render_markdown(output, inline_comments=True)
+        directive = next(
+            line for line in markdown.splitlines() if line.startswith("::code-comment")
+        )
+        attributes = dict(re.findall(r'(\w+)=("(?:\\.|[^"\\])*"|\d+)', directive))
+        values = {key: json.loads(value) for key, value in attributes.items()}
+        self.assertEqual(values["body"], output["findings"][0]["body"])
+        self.assertEqual(
+            values["file"], output["findings"][0]["code_location"]["absolute_file_path"]
+        )
+        self.assertEqual(values["priority"], 1)
+        self.assertNotIn("::code-comment", render_markdown(output))
+        self.assertIn("rådata", directive)
+        self.assertEqual(
+            render_markdown(review_output(self.root, findings=False)),
+            "No actionable issues found.\n",
+        )
+        result = subprocess.run(
+            ["python3", str(SCRIPTS_DIR / "render_review.py"), "--inline-comments"],
+            input=json.dumps(output),
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(directive, result.stdout)
+
+    def test_invalid_output_never_renders_as_an_empty_review(self):
+        result = subprocess.run(
+            ["python3", str(SCRIPTS_DIR / "render_review.py")],
+            input="not review JSON",
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        output = review_output(self.root)
+        output["findings"][0]["priority"] = 3
+        with self.assertRaises(ReviewValidationError):
+            parse_review_output(json.dumps(output), allow_fallback=False)
+
+    def test_posting_preserves_rule_citations_and_does_not_approve_incomplete_review(self):
+        output = review_output(self.root)
+        diff = (
+            'diff --git a/a "file".py b/a "file".py\n'
+            '--- a/a "file".py\n+++ b/a "file".py\n@@ -1 +1 @@\n-old\n+new\n'
+        )
+        payload = post_github_review.build_review_payload(
+            output, root=self.root, diff_text=diff, head_sha="reviewed"
+        )
+        self.assertEqual(payload["commit_id"], "reviewed")
+        self.assertEqual(payload["event"], "REQUEST_CHANGES")
+        self.assertIn("[AGENTS.md](AGENTS.md:12)", payload["comments"][0]["body"])
+        output = review_output(self.root, findings=False)
+        self.assertEqual(post_github_review.review_event(output, post_approve=True), "APPROVE")
+        output["overall_correctness"] = "patch is incorrect"
+        self.assertEqual(post_github_review.review_event(output, post_approve=True), "COMMENT")
+
+    def test_changed_pr_head_is_rejected_before_posting(self):
+        review_file = self.root / "review.json"
+        review_file.write_text(json.dumps(review_output(self.root)))
+        args = ["--pr", "123", "--head-sha", "reviewed", "--review-json", str(review_file)]
+        for heads in [["changed"], ["reviewed", "changed"]]:
+            with self.subTest(heads=heads), contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    patch.object(
+                        post_github_review,
+                        "gh_json",
+                        side_effect=[{"headRefOid": h} for h in heads],
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        post_github_review,
+                        "repo_root",
+                        return_value=self.root,
+                    )
+                )
+                stack.enter_context(patch.object(post_github_review, "run", return_value=""))
+                submit = stack.enter_context(patch.object(post_github_review, "submit_review"))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                with self.assertRaises(SystemExit):
+                    post_github_review.main(args)
+                submit.assert_not_called()

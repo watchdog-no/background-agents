@@ -1,143 +1,96 @@
 ---
 name: code-review
 description:
-  Review local diffs and GitHub pull requests for correctness bugs. Use for /code-review, PR
-  reviews, review comments, or prioritized P1-P3 findings.
+  Review local Git changes or a GitHub PR for actionable bugs introduced by the diff. Use for
+  /code-review or explicit code review requests.
 metadata:
   workflow: github-pr-review
 ---
 
 # Code Review
 
-Use this skill as a local, Codex-style counterpart to native `/review`.
+Review a selected Git diff without editing files. Apply the newer Codex app's review rubric,
+including repository-rule attribution, while preserving JSON transport for local rendering and
+GitHub posting.
 
-## Start Here
+## Resolve the Target
 
-Resolve the target first:
+Run from the reviewed repository root. Set `SKILL_DIR` to the directory containing the loaded
+`SKILL.md`, wherever the agent has installed or discovered this skill.
 
 ```bash
-# OpenCode installs skills in the workspace; the Claude harness in its config dir.
-for SKILL_DIR in .opencode/skills/code-review \
-  "${CLAUDE_CONFIG_DIR:-$HOME/.openinspect/claude}/skills/code-review"; do
-  [ -f "$SKILL_DIR/scripts/resolve_review_target.py" ] && break
-done
+SKILL_DIR=/absolute/path/to/code-review
 python3 "$SKILL_DIR/scripts/resolve_review_target.py" <args>
 ```
 
-Replace `<args>` with the user's `/code-review` arguments. If the request is natural language,
-translate it once into this CLI-like form:
+Translate natural-language scope and posting intent into arguments once:
 
 ```text
-/code-review [--staged | --unstaged | --range <range> | --base <branch> | --pr <number>] [--post | --dry-run] [--post-approve] [instructions...]
+/code-review [--uncommitted | --staged | --unstaged | --commit <sha> | --range <range> | --base <branch> | --pr <number>] [--post | --dry-run] [--post-approve] [instructions...]
 ```
+
+Bare text is review focus or posting intent, not a diff range. Explicit scope overrides defaults.
+The default reviews the current branch's open PR when available, otherwise the branch against the
+repository's default branch using its merge base. Use `--uncommitted` for staged, unstaged, and
+untracked files, including a repository with no commits yet.
 
 Examples:
 
-- `/code-review focus on auth edge cases`
-- `/code-review --staged`
+- `/code-review --uncommitted focus on auth edge cases`
+- `/code-review --commit HEAD`
 - `/code-review --base release/2026-05`
-- `/code-review --range HEAD~3..HEAD focus on migrations`
 - `/code-review --pr 123 --post focus on data loss`
-- `/code-review --pr 123 post a review on the PR`
 
-Bare non-flag text is review focus and posting intent, not a diff range.
+## Review
 
-## Workflow
-
-1. Run the resolver command from **Start Here**.
-
-   The resolver prints JSON with:
-   - `diff_command`
-   - `log_command`
-   - PR metadata
-   - posting flags
-   - a Codex-style target prompt
-
-2. Run the returned `diff_command` with Bash and review the patch.
-
-   If the diff is empty, stop and say there are no changes to review.
-
-3. Load the review rubric:
-   - Read `references/codex_review_prompt.md`.
-   - Read `references/review_contract.md` only when you need the exact schema or posting rules.
-
-4. Review only bugs introduced by the selected diff. Output exactly one JSON object matching
-   `ReviewOutputEvent`:
-
-   ```json
-   {
-     "findings": [],
-     "overall_correctness": "patch is correct",
-     "overall_explanation": "No blocking correctness issues were found.",
-     "overall_confidence_score": 0.84
-   }
-   ```
-
-   Do not wrap the JSON in markdown. Each finding must include an absolute file path and a line
-   range that overlaps the diff.
-
-5. Render the local response:
+1. Run the resolver. It returns command argument arrays, a target prompt, and posting flags. For PR
+   targets, retain `pr.headRefOid` as the reviewed revision.
+2. Execute every command in `diff_commands`. If `untracked_command` is present, run it too: its
+   output is NUL-delimited paths to new files, whose contents must be read separately. Branch
+   reviews include staged, unstaged, and untracked changes alongside changes since the merge base.
+   Declare the scope empty only when all selected diffs and untracked files are empty.
+3. Read [the review rubric](references/codex_review_prompt.md) and
+   [the output contract](references/review_contract.md). Load applicable project instructions and
+   their required documents for the changed files; use those current rules as review criteria.
+4. When delegation is available and useful, give one reviewer the complete target prompt, rubric,
+   output contract, and relevant repository instructions. Include the selected diff commands and
+   untracked-file scope. Reuse an active review of the same changes. Keep the review read-only and
+   have the reviewer return its findings; perform the same review locally when delegation is
+   unavailable. Follow the rubric's bounds for any further focused investigators.
+5. Review only bugs introduced by the selected changes. Verify each finding's scenario, affected
+   behavior, location, and rule references, and merge duplicate findings. Produce one JSON object
+   matching the output contract in `review.json`, preferably in a temporary directory outside the
+   working tree.
+6. Render the user-facing Markdown:
 
    ```bash
    python3 "$SKILL_DIR/scripts/render_review.py" < review.json
    ```
 
-   Return the rendered Markdown to the user, not the raw JSON.
+   In a client supporting Codex inline comments, add `--inline-comments` to emit `::code-comment`
+   directives alongside Markdown. Invalid review output is an error; correct it before rendering or
+   posting.
 
-6. Post only when requested:
+Keep findings concise and grounded in evidence. Follow project instructions for tool choice and
+verification. Review alone does not authorize edits, fixes, Git changes, or external comments.
 
-   If and only if the resolved target has `"post": true`, run:
+## Post Only When Requested
 
-   ```bash
-   python3 "$SKILL_DIR/scripts/post_github_review.py" \
-     --pr <number> \
-     --review-json review.json
-   ```
+The resolver enables posting for `--post` or clear intent such as "post a review on the PR".
+Negations and dry-run language override posting intent. Ambiguous intent keeps output local. Posting
+requires a resolved PR target; other local scopes do not post.
 
-   Use the posting script's `--dry-run` first when checking the payload. Never post for `--staged`,
-   `--unstaged`, `--range`, or `--base` unless a PR number was also resolved.
+For a target with `post: true`, build and inspect the payload first:
 
-## Review Rules
+```bash
+python3 "$SKILL_DIR/scripts/post_github_review.py" \
+  --pr <number> --head-sha <pr.headRefOid> --review-json review.json --dry-run
+```
 
-- Use Bash, Read, Grep, and Glob as needed.
-- Do not edit files.
-- Do not browse the web.
-- Do not post GitHub comments unless the invocation clearly asks to post/submit/leave a PR review or
-  includes `--post`.
-- Produce a structured Codex review result first, then render or post it.
-- Review only bugs introduced by the selected diff.
+Then run the same command without `--dry-run`. Forward `--post-approve` only when the resolver's
+`post_approve` flag is true. The script rejects a changed PR head; resolve and review the new
+revision before retrying.
 
-## Review Target Defaults
-
-The resolver follows these defaults:
-
-- If the current branch has one open GitHub PR, review that PR.
-- Otherwise review the current branch against `main` using the merge base.
-- `--staged`, `--unstaged`, `--range`, `--base`, and `--pr` override the default.
-- Posting is enabled by `--post` or clear natural-language intent such as "post a review on the PR",
-  "submit a PR review", "leave review comments", or "comment on the PR".
-- Negations and dry-run language win: "do not post", "without posting", `--dry-run`, and `--no-post`
-  all keep local output only.
-- If posting intent is ambiguous, keep dry-run behavior.
-- Posting intent without a resolvable PR is an error.
-
-## Priority Rules
-
-- `[P0]`: blocks release, operations, or major usage. Use only for universal issues.
-- `[P1]`: urgent, should be addressed next.
-- `[P2]`: normal, should be fixed eventually.
-- `[P3]`: low priority, nice to have.
-
-For GitHub posting, P0/P1 findings request changes; P2/P3-only reviews use a comment event. Approval
-is only allowed for zero findings plus `--post-approve`.
-
-## Codebase-Specific Checks
-
-When relevant, treat these Open-Inspect invariants as review criteria:
-
-- Build `@open-inspect/shared` before consumers when shared types change.
-- Use seconds in Python and milliseconds in TypeScript; encode units in names.
-- Define each default exactly once and import it.
-- Do not check in `wrangler.toml`; control-plane config comes from Terraform.
-- Cloudflare GitHub App private keys must be PKCS#8.
-- Deploy Modal through `deploy.py` or `modal deploy -m src`, not `src/app.py` directly.
+P0/P1 findings request changes; P2/P3-only reviews leave a comment. Approval requires explicit
+`--post-approve`, zero findings, and a `patch is correct` verdict. Rule citations remain visible in
+finding bodies; do not add hidden attribution metadata.
