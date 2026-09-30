@@ -53,18 +53,27 @@ def validate_review_output(value: Any) -> dict[str, Any]:
     for index, raw_finding in enumerate(findings):
         context = f"findings[{index}]"
         finding = _require_mapping(raw_finding, context)
-        _require_string(finding.get("title"), f"{context}.title")
+        title = _require_string(finding.get("title"), f"{context}.title")
         _require_string(finding.get("body"), f"{context}.body")
         _require_score(finding.get("confidence_score"), f"{context}.confidence_score")
 
         priority = finding.get("priority")
-        if priority is not None:
+        if priority is None:
+            if not PRIORITY_RE.match(title.strip()):
+                raise ReviewValidationError(
+                    f"{context}.title must start with [P0], [P1], [P2], or [P3] "
+                    "when priority is omitted"
+                )
+        else:
             if (
                 not isinstance(priority, int)
                 or isinstance(priority, bool)
                 or priority not in range(4)
             ):
                 raise ReviewValidationError(f"{context}.priority must be 0, 1, 2, 3, or null")
+            label = PRIORITY_RE.match(title.strip())
+            if label and int(label.group(1)[1]) != priority:
+                raise ReviewValidationError(f"{context}.priority must match the title's priority")
 
         location = _require_mapping(finding.get("code_location"), f"{context}.code_location")
         path = _require_string(
@@ -145,13 +154,6 @@ def format_finding_title(finding: dict[str, Any]) -> str:
     return f"[{priority_label(finding)}] {title}"
 
 
-def bare_title(finding: dict[str, Any]) -> str:
-    """Return the finding title without its leading [P0]-[P3] tag."""
-    title = str(finding.get("title", "")).strip()
-    match = PRIORITY_RE.match(title)
-    return match.group(2).strip() if match else title
-
-
 def compact_location(finding: dict[str, Any]) -> str:
     location = finding["code_location"]
     line_range = location["line_range"]
@@ -161,7 +163,25 @@ def compact_location(finding: dict[str, Any]) -> str:
     return f"{location['absolute_file_path']}:{suffix}"
 
 
-def render_markdown(output: dict[str, Any]) -> str:
+def inline_comment(finding: dict[str, Any]) -> str:
+    location = finding["code_location"]
+    attributes = {
+        "title": format_finding_title(finding),
+        "body": finding["body"],
+        "file": location["absolute_file_path"],
+        "start": location["line_range"]["start"],
+        "end": location["line_range"]["end"],
+    }
+    priority = priority_number(finding)
+    if priority is not None:
+        attributes["priority"] = priority
+    values = " ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in attributes.items()
+    )
+    return f"::code-comment{{{values}}}"
+
+
+def render_markdown(output: dict[str, Any], *, inline_comments: bool = False) -> str:
     lines: list[str] = []
     findings = output.get("findings", [])
 
@@ -171,24 +191,19 @@ def render_markdown(output: dict[str, Any]) -> str:
         lines.append("")
 
     if findings:
-        lines.append("Review comment:" if len(findings) == 1 else "Full review comments:")
-        lines.append("")
         for finding in findings:
             lines.append(f"### {format_finding_title(finding)}")
             lines.append("")
-            lines.append(f"**File:** `{compact_location(finding)}`")
-            lines.append(f"**Confidence:** {float(finding['confidence_score']):.2f}")
+            location = finding["code_location"]
+            path = location["absolute_file_path"]
+            start = location["line_range"]["start"]
+            lines.append(f"[{Path(path).name}:{start}](<{path}:{start}>)")
             lines.append("")
             lines.append(str(finding["body"]).strip())
             lines.append("")
-    else:
-        lines.append("No findings.")
-        lines.append("")
-
-    lines.append("---")
-    lines.append("")
-    lines.append(f"**Overall correctness:** `{output['overall_correctness']}`")
-    lines.append(f"**Confidence:** {float(output['overall_confidence_score']):.2f}")
-    if explanation:
-        lines.append(f"**Explanation:** {explanation}")
+            if inline_comments:
+                lines.append(inline_comment(finding))
+                lines.append("")
+    elif not explanation:
+        lines.append("No actionable issues found.")
     return "\n".join(lines).rstrip() + "\n"

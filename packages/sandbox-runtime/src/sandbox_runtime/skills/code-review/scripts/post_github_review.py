@@ -13,18 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from review_utils import (
-    bare_title,
     compact_location,
     format_finding_title,
     parse_review_output,
-    priority_label,
     priority_number,
 )
 
 HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-# Shields.io badge colors per priority, mirroring Codex's inline review style.
-PRIORITY_BADGE_COLORS = {0: "red", 1: "orange", 2: "yellow", 3: "blue"}
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> str:
@@ -105,7 +100,11 @@ def first_commentable_line(
 def review_event(output: dict[str, Any], *, post_approve: bool) -> str:
     findings = output.get("findings", [])
     if not findings:
-        return "APPROVE" if post_approve else "COMMENT"
+        return (
+            "APPROVE"
+            if post_approve and output["overall_correctness"] == "patch is correct"
+            else "COMMENT"
+        )
     for finding in findings:
         priority = priority_number(finding)
         if priority is not None and priority <= 1:
@@ -114,11 +113,7 @@ def review_event(output: dict[str, Any], *, post_approve: bool) -> str:
 
 
 def comment_body(finding: dict[str, Any]) -> str:
-    label = priority_label(finding)
-    color = PRIORITY_BADGE_COLORS.get(priority_number(finding), "blue")
-    badge = f"![{label} Badge](https://img.shields.io/badge/{label}-{color}?style=flat)"
-    heading = f"**<sub><sub>{badge}</sub></sub>  {bare_title(finding)}**"
-    return f"{heading}\n\n{str(finding['body']).strip()}"
+    return f"{format_finding_title(finding)}\n\n{str(finding['body']).strip()}"
 
 
 def review_body(output: dict[str, Any], unposted: list[dict[str, Any]]) -> str:
@@ -191,6 +186,7 @@ def submit_review(name_with_owner: str, pr_number: int, payload: dict[str, Any])
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr", type=int, required=True, help="Pull request number")
+    parser.add_argument("--head-sha", required=True, help="PR head commit that was reviewed")
     parser.add_argument("--review-json", required=True, help="Review JSON file, or - for stdin")
     parser.add_argument(
         "--post-approve", action="store_true", help="Allow APPROVE on zero findings"
@@ -209,12 +205,14 @@ def main(argv: list[str] | None = None) -> int:
             "headRefOid,number,title,url",
         ]
     )
-    diff_text = run(["gh", "pr", "diff", str(args.pr), "--patch"])
+    if pr["headRefOid"] != args.head_sha:
+        parser.error("PR head changed since review; review the new revision before posting")
+    diff_text = run(["gh", "pr", "diff", str(args.pr), "--color=never"])
     payload = build_review_payload(
         output,
         root=repo_root(),
         diff_text=diff_text,
-        head_sha=str(pr["headRefOid"]),
+        head_sha=args.head_sha,
         post_approve=args.post_approve,
     )
 
@@ -223,6 +221,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     run(["gh", "auth", "status"])
+    current_head = gh_json(["gh", "pr", "view", str(args.pr), "--json", "headRefOid"])
+    if current_head["headRefOid"] != args.head_sha:
+        parser.error("PR head changed since review; review the new revision before posting")
     print(submit_review(repo_name_with_owner(), args.pr, payload))
     return 0
 
