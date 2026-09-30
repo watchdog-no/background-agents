@@ -374,6 +374,10 @@ class ReviewBehaviorTests(unittest.TestCase):
         tracked = self.root / "tracked.py"
         tracked.write_text("original\n")
         self.commit()
+        root_target = resolve_review_target.resolve_review_target(
+            ["--commit", "HEAD"], cwd=self.root, runner=self.runner
+        )
+        self.assertIn("+original", self.runner(root_target["diff_command"], self.root))
         tracked.write_text("committed\n")
         self.commit()
         tracked.write_text("working\n")
@@ -384,6 +388,36 @@ class ReviewBehaviorTests(unittest.TestCase):
         self.assertIn("+committed", diff)
         self.assertNotIn("+working", diff)
         self.assertNotIn("untracked_command", target)
+
+    def test_merge_commit_scope_uses_first_parent(self):
+        (self.root / "base.py").write_text("base\n")
+        self.commit()
+        self.git("checkout", "-qb", "feature")
+        (self.root / "feature.py").write_text("merged\n")
+        self.commit()
+        self.git("checkout", "-q", "main")
+        (self.root / "main.py").write_text("first parent\n")
+        self.commit()
+        self.git(
+            "-c",
+            "user.name=Review Test",
+            "-c",
+            "user.email=review@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "--no-ff",
+            "-qm",
+            "fixture merge",
+            "feature",
+        )
+        (self.root / "feature.py").write_text("working\n")
+        target = resolve_review_target.resolve_review_target(
+            ["--commit", "HEAD"], cwd=self.root, runner=self.runner
+        )
+        diff = self.runner(target["diff_command"], self.root)
+        self.assertIn("+merged", diff)
+        self.assertEqual(diff, self.git("diff", "HEAD^", "HEAD", "--"))
 
     def test_base_scope_includes_branch_working_and_untracked_changes(self):
         tracked = self.root / "tracked.py"

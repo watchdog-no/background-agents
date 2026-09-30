@@ -256,7 +256,7 @@ def resolve_review_target(
         target = {
             "target_type": "commit",
             "commit_sha": sha,
-            "diff_command": ["git", "show", "--format=", sha, "--"],
+            "diff_command": ["git", "show", "--format=", "--diff-merges=first-parent", sha, "--"],
             "log_command": ["git", "log", "-1", "--oneline", sha, "--"],
             "review_prompt": with_instructions(
                 f"Review the changes introduced by commit {sha}. "
