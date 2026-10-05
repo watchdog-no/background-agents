@@ -11,6 +11,7 @@ import {
   extractProviderAndModel,
   getSubscriptionProviderForModel,
   getDefaultReasoningEffort,
+  getModelDisplayName,
   getReasoningConfig,
   getValidModelOrDefault,
   isValidModel,
@@ -128,6 +129,13 @@ it.each([
 });
 
 describe("model utilities", () => {
+  it("displays named fork models and preserves unknown provider IDs", () => {
+    expect(getModelDisplayName("openai/gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(getModelDisplayName("openai/gpt-6.1-sol")).toBe("GPT-6.1 Sol");
+    expect(getModelDisplayName("anthropic/claude-fable-5")).toBe("Claude Fable 5");
+    expect(getModelDisplayName("custom/private-model")).toBe("custom/private-model");
+  });
+
   it("derives every public model view from the authoritative catalog", () => {
     const catalogModels = MODEL_CATALOG.flatMap((group) => group.models);
 
