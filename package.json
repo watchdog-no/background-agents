@@ -22,9 +22,10 @@
     "test:rbac-bootstrap-owner": "node --experimental-transform-types --test scripts/bootstrap-workspace-owner.test.ts",
     "test:user-merge-cli": "node --experimental-transform-types --test scripts/merge-split-users.test.ts",
     "test:cf-logs-cli": "node --test scripts/cf-logs.test.ts",
-    "test:terraform-workflow-contract": "node --test scripts/terraform-workflow-contract.test.mjs",
+    "test:terraform-workflow-contract": "node --test scripts/terraform-workflow-contract.test.mjs scripts/terraform-plan-comment.test.mjs",
     "test:node-version-workflow-contract": "node --test scripts/node-version-workflow-contract.test.mjs",
     "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "test:coverage-gate": "node --test scripts/check-coverage.test.mjs",
     "test:integration": "npm run test:integration --workspaces --if-present",
     "typecheck": "npm run build -w @open-inspect/shared && npm run typecheck --workspaces --if-present",
     "knip": "knip",
@@ -43,8 +44,8 @@
     "globals": "^15.14.0",
     "husky": "^9.1.7",
     "knip": "^6.32.1",
-    "lint-staged": "^16.2.7",
-    "prettier": "^3.4.2",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.9",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.21.0",
     "wrangler": "^4.103.0"
@@ -54,7 +55,8 @@
   },
   "overrides": {
     "minimatch": "^10.2.5",
-    "undici": "^7.29.0"
+    "undici": "^7.29.0",
+    "sharp": "^0.35.4"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

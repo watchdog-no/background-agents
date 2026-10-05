@@ -49,6 +49,16 @@ function routeContext(
   };
 }
 
+function sandboxRouteContext(
+  fetch: SessionRuntimeClient["fetch"],
+  promptAuthor?: ActivePromptAuthor
+): SessionRouteContext {
+  return {
+    ...routeContext(fetch, promptAuthor),
+    principal: { kind: "sandbox", sessionId: "parent" },
+  };
+}
+
 describe("handleListChildren", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -132,6 +142,11 @@ describe("handleListChildren", () => {
   });
 
   it("projects viewer-neutral child summaries through the shared schema", async () => {
+    vi.spyOn(SessionIndexStore.prototype, "get").mockResolvedValue({
+      id: "parent",
+      ownerTeamId: null,
+      visibility: "workspace",
+    } as never);
     vi.spyOn(SessionIndexStore.prototype, "listByParent").mockResolvedValue([
       {
         id: "child",
@@ -144,7 +159,7 @@ describe("handleListChildren", () => {
         baseBranch: "main",
         status: "active",
         ownerTeamId: null,
-        visibility: "private",
+        visibility: "workspace",
         parentSessionId: "parent",
         spawnSource: "agent",
         spawnDepth: 1,
@@ -176,6 +191,8 @@ describe("handleListChildren", () => {
       children: [
         {
           id: "child",
+          ownerTeamId: null,
+          visibility: "workspace",
           title: "Child",
           repoOwner: "acme",
           repoName: "web",
@@ -216,12 +233,15 @@ describe("handlePromptChild", () => {
         id: "child",
         parentSessionId: "parent",
         status: "completed",
+        ownerTeamId: null,
+        visibility: "workspace",
       } as never)
       .mockResolvedValueOnce({
         id: "parent",
         repoOwner: "acme",
         repoName: "repo",
         environmentId: "env-1",
+        ownerTeamId: null,
       } as never);
     vi.mocked(resolveSandboxSettings).mockResolvedValue({ maxConcurrentChildSessions: 2 });
     const lease = { token: "lease-1", childSessionId: "child", expiresAt: Date.now() + 60_000 };
@@ -245,7 +265,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch)
+      sandboxRouteContext(fetch)
     );
 
     expect(response.status).toBe(200);
@@ -256,11 +276,15 @@ describe("handlePromptChild", () => {
   });
 
   it("does not resolve policy or reserve capacity for an active child", async () => {
-    vi.spyOn(SessionIndexStore.prototype, "get").mockResolvedValue({
-      id: "child",
-      parentSessionId: "parent",
-      status: "active",
-    } as never);
+    vi.spyOn(SessionIndexStore.prototype, "get")
+      .mockResolvedValueOnce({
+        id: "child",
+        parentSessionId: "parent",
+        status: "active",
+        ownerTeamId: null,
+        visibility: "workspace",
+      } as never)
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     const reserve = vi.spyOn(SessionIndexStore.prototype, "acquireChildAdmissionLease");
     const childResponse = Response.json({ messageId: "message-1", status: "queued" });
     const fetch = vi.fn<SessionRuntimeClient["fetch"]>(async () => childResponse);
@@ -275,7 +299,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch)
+      sandboxRouteContext(fetch)
     );
 
     expect(response).toBe(childResponse);
@@ -284,11 +308,15 @@ describe("handlePromptChild", () => {
   });
 
   it("accepts the child response when the best-effort message id payload is malformed", async () => {
-    vi.spyOn(SessionIndexStore.prototype, "get").mockResolvedValue({
-      id: "child",
-      parentSessionId: "parent",
-      status: "active",
-    } as never);
+    vi.spyOn(SessionIndexStore.prototype, "get")
+      .mockResolvedValueOnce({
+        id: "child",
+        parentSessionId: "parent",
+        status: "active",
+        ownerTeamId: null,
+        visibility: "workspace",
+      } as never)
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     vi.spyOn(SessionIndexStore.prototype, "touchUpdatedAt").mockResolvedValue(true);
     const childResponse = new Response("[]", {
       status: 200,
@@ -306,7 +334,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch)
+      sandboxRouteContext(fetch)
     );
 
     expect(response).toBe(childResponse);
@@ -314,11 +342,15 @@ describe("handlePromptChild", () => {
   });
 
   it("forwards the parent active prompt author to the child", async () => {
-    vi.spyOn(SessionIndexStore.prototype, "get").mockResolvedValue({
-      id: "child",
-      parentSessionId: "parent",
-      status: "active",
-    } as never);
+    vi.spyOn(SessionIndexStore.prototype, "get")
+      .mockResolvedValueOnce({
+        id: "child",
+        parentSessionId: "parent",
+        status: "active",
+        ownerTeamId: null,
+        visibility: "workspace",
+      } as never)
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     const promptAuthor = {
       userId: "slack:U2",
       canonicalUserId: "canonical-2",
@@ -352,7 +384,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch, promptAuthor)
+      sandboxRouteContext(fetch, promptAuthor)
     );
 
     expect(response.status).toBe(200);
@@ -365,8 +397,10 @@ describe("handlePromptChild", () => {
         id: "child",
         parentSessionId: "parent",
         status: "failed",
+        ownerTeamId: null,
+        visibility: "workspace",
       } as never)
-      .mockResolvedValueOnce({ id: "parent" } as never);
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     vi.mocked(resolveSandboxSettings).mockResolvedValue({ maxConcurrentChildSessions: 1 });
     vi.spyOn(SessionIndexStore.prototype, "acquireChildAdmissionLease").mockResolvedValue(null);
     const fetch = vi.fn<SessionRuntimeClient["fetch"]>();
@@ -381,7 +415,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch)
+      sandboxRouteContext(fetch)
     );
 
     expect(response.status).toBe(429);
@@ -394,8 +428,10 @@ describe("handlePromptChild", () => {
         id: "child",
         parentSessionId: "parent",
         status: "completed",
+        ownerTeamId: null,
+        visibility: "workspace",
       } as never)
-      .mockResolvedValueOnce({ id: "parent" } as never);
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     vi.mocked(resolveSandboxSettings).mockResolvedValue({ maxConcurrentChildSessions: 2 });
     const lease = { token: "lease-1", childSessionId: "child", expiresAt: Date.now() + 60_000 };
     vi.spyOn(SessionIndexStore.prototype, "acquireChildAdmissionLease").mockResolvedValue(lease);
@@ -415,7 +451,7 @@ describe("handlePromptChild", () => {
         "/sessions/parent/children/child/prompt",
         "/sessions/:id/children/:childId/prompt"
       ),
-      routeContext(fetch)
+      sandboxRouteContext(fetch)
     );
 
     expect(response).toBe(childResponse);
@@ -428,8 +464,10 @@ describe("handlePromptChild", () => {
         id: "child",
         parentSessionId: "parent",
         status: "completed",
+        ownerTeamId: null,
+        visibility: "workspace",
       } as never)
-      .mockResolvedValueOnce({ id: "parent" } as never);
+      .mockResolvedValueOnce({ id: "parent", ownerTeamId: null } as never);
     vi.mocked(resolveSandboxSettings).mockResolvedValue({ maxConcurrentChildSessions: 2 });
     const lease = { token: "lease-1", childSessionId: "child", expiresAt: Date.now() + 60_000 };
     vi.spyOn(SessionIndexStore.prototype, "acquireChildAdmissionLease").mockResolvedValue(lease);
@@ -452,7 +490,7 @@ describe("handlePromptChild", () => {
           "/sessions/parent/children/child/prompt",
           "/sessions/:id/children/:childId/prompt"
         ),
-        routeContext(fetch)
+        sandboxRouteContext(fetch)
       )
     ).rejects.toBe(fetchError);
 
@@ -464,6 +502,9 @@ describe("handleCancelChild", () => {
 
   it("attempts every descendant and aggregates non-conflict failures", async () => {
     vi.spyOn(SessionIndexStore.prototype, "isChildOf").mockResolvedValue(true);
+    vi.spyOn(SessionIndexStore.prototype, "get").mockImplementation(
+      async (id) => ({ id, ownerTeamId: null, visibility: "workspace" }) as never
+    );
     vi.spyOn(SessionIndexStore.prototype, "listActiveDescendantIds").mockResolvedValue([
       "deep-failure",
       "later-success",
@@ -482,11 +523,13 @@ describe("handleCancelChild", () => {
       "/sessions/:id/children/:childId/cancel"
     );
 
+    const ctx = routeContext(fetch);
+    ctx.principal = { kind: "sandbox", sessionId: "parent" };
     const response = await handleCancelChild(
       new Request("https://test.local/sessions/parent/children/child/cancel", { method: "POST" }),
       {} as Env,
       match,
-      routeContext(fetch)
+      ctx
     );
 
     expect(fetch.mock.calls.map(([sessionId]) => sessionId)).toEqual([

@@ -8,7 +8,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
 } from "react";
-import useSWR, { mutate } from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
 import { encodeRepositoryPathSegments } from "@open-inspect/shared/types/repositories";
 import { Badge } from "@/components/ui/badge";
@@ -162,7 +162,7 @@ function SecretValueField({
   );
 }
 
-type SecretsScope = "repo" | "global" | "environment";
+type SecretsScope = "repo" | "global" | "environment" | "team";
 
 interface SecretsScopePolicy {
   apiBase: BrowserApiPath;
@@ -177,7 +177,8 @@ function resolveScopePolicy(
   scope: SecretsScope,
   owner: string | undefined,
   name: string | undefined,
-  environmentId: string | undefined
+  environmentId: string | undefined,
+  teamId: string | undefined
 ): SecretsScopePolicy {
   switch (scope) {
     case "global":
@@ -188,6 +189,16 @@ function resolveScopePolicy(
         emptyStateText: "No global secrets set.",
         notReadyText: "",
         overriddenByLabel: null,
+      };
+    case "team":
+      return {
+        apiBase: `/api/teams/${encodeURIComponent(teamId ?? "")}/secrets`,
+        ready: Boolean(teamId),
+        description:
+          "Values are never shown after save. Secrets apply to this team's sandbox work. Global secrets are overridden by team secrets; environment or repository secrets take precedence.",
+        emptyStateText: "No secrets set for this team.",
+        notReadyText: "Select a team to manage secrets.",
+        overriddenByLabel: "team",
       };
     case "environment":
       return {
@@ -219,6 +230,7 @@ export function SecretsEditor({
   owner,
   name,
   environmentId,
+  teamId,
   disabled = false,
   scope = "repo",
 }: {
@@ -226,6 +238,8 @@ export function SecretsEditor({
   name?: string;
   /** Required for scope "environment". */
   environmentId?: string;
+  /** Required for scope "team". */
+  teamId?: string;
   disabled?: boolean;
   scope?: SecretsScope;
 }) {
@@ -236,8 +250,9 @@ export function SecretsEditor({
   const [error, setError] = useState("");
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
 
-  const scopePolicy = resolveScopePolicy(scope, owner, name, environmentId);
+  const scopePolicy = resolveScopePolicy(scope, owner, name, environmentId, teamId);
   const { apiBase, ready } = scopePolicy;
+  const { mutate } = useSWRConfig();
 
   const {
     data: secretsData,
@@ -418,7 +433,7 @@ export function SecretsEditor({
         return;
       }
       toast.success(`Deleted ${normalizedKey}`);
-      mutate(apiBase);
+      void mutate(apiBase);
     } catch {
       toast.error("Failed to delete secret");
     } finally {
@@ -506,7 +521,7 @@ export function SecretsEditor({
       }
 
       toast.success("Secrets updated");
-      mutate(apiBase);
+      void mutate(apiBase);
     } catch {
       toast.error("Failed to update secrets");
     } finally {

@@ -43,7 +43,7 @@ describe("harness catalog", () => {
     expect(resolveHarnessForModel(undefined, "anthropic/claude-opus-5-5")).toBe("claude");
     expect(resolveHarnessForModel("opencode", "anthropic/claude-opus-5-5")).toBe("claude");
     expect(resolveHarnessForModel(undefined, "openai/gpt-6-sol")).toBe("opencode");
-    expect(resolveHarnessForModel("claude", "openai/gpt-6-sol")).toBe("claude");
+    expect(resolveHarnessForModel("claude", "openai/gpt-6-sol")).toBe("opencode");
   });
 });
 
@@ -68,6 +68,26 @@ describe("harnessSupportsModel", () => {
     expect(filterModelsForHarness("opencode", VALID_MODELS)).toEqual(
       VALID_MODELS.filter((model) => !model.startsWith("anthropic/"))
     );
+  });
+});
+
+describe("resolveHarnessForModel", () => {
+  it("keeps the configured harness when it can run the model", () => {
+    expect(resolveHarnessForModel("claude", "anthropic/claude-sonnet-4-6")).toBe("claude");
+    expect(resolveHarnessForModel("opencode", "openai/gpt-5.5")).toBe("opencode");
+  });
+
+  it("falls back to the built-in harness for a model the configured harness cannot run", () => {
+    expect(resolveHarnessForModel("claude", "openai/gpt-5.5")).toBe(DEFAULT_HARNESS);
+    expect(resolveHarnessForModel("claude", "xai/grok-4.6")).toBe(DEFAULT_HARNESS);
+  });
+
+  it("resolves an unconfigured harness to the model owner or built-in harness", () => {
+    for (const model of VALID_MODELS) {
+      expect(resolveHarnessForModel(undefined, model)).toBe(
+        harnessForModel(model) ?? DEFAULT_HARNESS
+      );
+    }
   });
 });
 

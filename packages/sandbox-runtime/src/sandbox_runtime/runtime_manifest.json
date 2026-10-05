@@ -1,11 +1,11 @@
 {
-  "runtimeVersion": "v79-claude-harness-bots",
-  "generation": 79,
+  "runtimeVersion": "v80-persistent-memory",
+  "generation": 80,
   "minimumCompatibleGeneration": 76,
   "minimumPreservationGeneration": 77,
-  "minimumRebuildGeneration": 79,
+  "minimumRebuildGeneration": 80,
   "harnessMinimumGeneration": {
-    "claude": 79,
-    "opencode": 78
+    "claude": 80,
+    "opencode": 80
   }
 }

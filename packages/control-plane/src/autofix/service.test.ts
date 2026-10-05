@@ -13,8 +13,20 @@ import {
 } from "./service";
 import type { GitHubPullRequestFeedback } from "../source-control/providers/github-provider";
 import { SourceControlProviderError } from "../source-control/errors";
+import type { CredentialScope } from "../source-control";
 
 type ReviewFeedback = Extract<GitHubPullRequestFeedback, { kind: "review" }>;
+
+const PR_COMMENT_ENVELOPE: GitHubAutofixEnvelope = {
+  version: 1,
+  eventType: "issue_comment",
+  action: "created",
+  deliveryId: "delivery-1",
+  providerObject: { kind: "pr_comment", id: "1234" },
+  repository: { id: "99", owner: "acme", name: "widgets" },
+  pullRequestNumber: 42,
+  receivedAt: "2026-07-30T05:00:00.000Z",
+};
 
 const OPEN_INSPECT_REVIEW_ENVELOPE: GitHubAutofixEnvelope = {
   version: 1,
@@ -84,15 +96,13 @@ function buildService() {
     prNumber: number;
   };
   const pullRequests = {
-    getByIdentity: vi.fn(
-      async (): Promise<PullRequestOwner | null> => ({
-        artifactId: "artifact-1",
-        sessionId: "session-1",
-        repoOwner: "acme",
-        repoName: "widgets",
-        prNumber: 42,
-      })
-    ),
+    getByIdentity: vi.fn(async (): Promise<PullRequestOwner | null> => ({
+      artifactId: "artifact-1",
+      sessionId: "session-1",
+      repoOwner: "acme",
+      repoName: "widgets",
+      prNumber: 42,
+    })),
   };
   const settings = {
     resolve: vi.fn(async () => ({
@@ -108,20 +118,20 @@ function buildService() {
       repoOwner: "acme",
       repoName: "widgets",
     })),
-    getPullRequestFeedback: vi.fn(
-      async (): Promise<GitHubPullRequestFeedback> => ({
-        kind: "pr_comment",
-        id: "1234",
-        body: "Please handle the null case.",
-        url: "https://github.com/acme/widgets/pull/42#issuecomment-1234",
-        author: { id: "7", login: "alice", type: "User" },
-      })
-    ),
+    getPullRequestFeedback: vi.fn(async (): Promise<GitHubPullRequestFeedback> => ({
+      kind: "pr_comment",
+      id: "1234",
+      body: "Please handle the null case.",
+      url: "https://github.com/acme/widgets/pull/42#issuecomment-1234",
+      author: { id: "7", login: "alice", type: "User" },
+    })),
     hasPullRequestWritePermission: vi.fn(async () => true),
   };
   const sessions = {
     fetch: vi.fn(async () => Response.json({ kind: "enqueued", messageId: "message-1" })),
   };
+  const credentialScope: CredentialScope = { kind: "repositories", repositoryIds: [99, 123] };
+  const resolveCredentialScope = vi.fn(async () => credentialScope);
   const service = new AutofixService(
     feedbackStore,
     pullRequests,
@@ -129,10 +139,20 @@ function buildService() {
     github,
     sessions,
     "open-inspect[bot]",
-    () => 2_000
+    () => 2_000,
+    resolveCredentialScope
   );
 
-  return { service, feedbackStore, pullRequests, settings, github, sessions };
+  return {
+    service,
+    feedbackStore,
+    pullRequests,
+    settings,
+    github,
+    sessions,
+    credentialScope,
+    resolveCredentialScope,
+  };
 }
 
 const ENVELOPE = {
@@ -150,16 +170,7 @@ describe("AutofixService", () => {
   it("dispatches eligible human PR feedback into the owning session", async () => {
     const h = buildService();
 
-    const result = await h.service.process({
-      version: 1,
-      eventType: "issue_comment",
-      action: "created",
-      deliveryId: "delivery-1",
-      providerObject: { kind: "pr_comment", id: "1234" },
-      repository: { id: "99", owner: "acme", name: "widgets" },
-      pullRequestNumber: 42,
-      receivedAt: "2026-07-30T05:00:00.000Z",
-    });
+    const result = await h.service.process(PR_COMMENT_ENVELOPE);
 
     expect(result).toEqual({
       kind: "completed",
@@ -167,11 +178,24 @@ describe("AutofixService", () => {
       reason: "enqueued",
       messageId: "message-1",
     });
-    expect(h.github.hasPullRequestWritePermission).toHaveBeenCalledWith({
-      owner: "acme",
-      name: "widgets",
-      authorLogin: "alice",
-    });
+    expect(h.resolveCredentialScope).toHaveBeenCalledWith("session-1");
+    expect(h.github.getPullRequest).toHaveBeenCalledWith(
+      { owner: "acme", name: "widgets", number: 42, repositoryExternalId: "99" },
+      h.credentialScope
+    );
+    expect(h.github.getPullRequestFeedback).toHaveBeenCalledWith(
+      {
+        owner: "acme",
+        name: "widgets",
+        pullRequestNumber: 42,
+        providerObject: { kind: "pr_comment", id: "1234" },
+      },
+      h.credentialScope
+    );
+    expect(h.github.hasPullRequestWritePermission).toHaveBeenCalledWith(
+      { owner: "acme", name: "widgets", authorLogin: "alice" },
+      h.credentialScope
+    );
     expect(h.feedbackStore.markDispatchAttempted).toHaveBeenCalledBefore(h.sessions.fetch);
     expect(h.sessions.fetch).toHaveBeenCalledWith(
       "session-1",
@@ -193,6 +217,28 @@ describe("AutofixService", () => {
       2_000
     );
   });
+
+  it.each(["enqueued", "duplicate"] as const)(
+    "records %s session admission as queued",
+    async (kind) => {
+      const h = buildService();
+      h.sessions.fetch.mockResolvedValueOnce(Response.json({ kind, messageId: "message-1" }));
+
+      await expect(h.service.process(PR_COMMENT_ENVELOPE)).resolves.toEqual({
+        kind: "completed",
+        decision: "queued",
+        reason: kind,
+        messageId: "message-1",
+      });
+      expect(h.feedbackStore.markQueued).toHaveBeenCalledWith(
+        "github:pr_comment:1234",
+        "message-1",
+        kind,
+        2_000
+      );
+      expect(h.feedbackStore.markSkipped).not.toHaveBeenCalled();
+    }
+  );
 
   it("recovers an admitted message when the dispatch response is lost", async () => {
     const h = buildService();
@@ -223,6 +269,20 @@ describe("AutofixService", () => {
       "recovered_after_ambiguous_dispatch",
       2_000
     );
+  });
+
+  it("fails closed before all provider content reads when owner scope cannot be resolved", async () => {
+    const h = buildService();
+    const error = new SourceControlProviderError(
+      "Cannot resolve credential scope: session not found",
+      "permanent"
+    );
+    h.resolveCredentialScope.mockRejectedValue(error);
+
+    await expect(h.service.process(PR_COMMENT_ENVELOPE)).rejects.toBe(error);
+
+    expect(h.github.getPullRequest).not.toHaveBeenCalled();
+    expect(h.sessions.fetch).not.toHaveBeenCalled();
   });
 
   it("returns the winning queued decision when a concurrent skip loses its transition", async () => {
@@ -368,6 +428,15 @@ describe("AutofixService", () => {
     });
 
     expect(result).toMatchObject({ decision: "queued", messageId: "message-1" });
+    expect(h.github.getPullRequestFeedback).toHaveBeenCalledWith(
+      {
+        owner: "acme",
+        name: "widgets",
+        pullRequestNumber: 42,
+        providerObject: { kind: "review", id: "5678" },
+      },
+      h.credentialScope
+    );
     expect(h.github.hasPullRequestWritePermission).not.toHaveBeenCalled();
     expect(h.sessions.fetch).toHaveBeenCalledWith(
       "session-1",
@@ -603,11 +672,10 @@ describe("AutofixService", () => {
       decision: "skipped",
       reason: "author_lacks_write_permission",
     });
-    expect(h.github.hasPullRequestWritePermission).toHaveBeenCalledWith({
-      owner: "acme",
-      name: "widgets",
-      authorLogin: "Open-Inspect[bot]",
-    });
+    expect(h.github.hasPullRequestWritePermission).toHaveBeenCalledWith(
+      { owner: "acme", name: "widgets", authorLogin: "Open-Inspect[bot]" },
+      h.credentialScope
+    );
     expect(h.sessions.fetch).not.toHaveBeenCalled();
   });
 
@@ -755,6 +823,14 @@ describe("AutofixService", () => {
 
     expect(result).toMatchObject({ decision: "queued", messageId: "message-1" });
     expect(h.sessions.fetch).toHaveBeenCalledOnce();
+    // Reply comments are not valid REST reply targets, so the prompt routes by review thread.
+    const dispatch = h.sessions.fetch.mock.calls[0] as unknown as [string, string, RequestInit];
+    const { prompt } = JSON.parse(dispatch[2].body as string) as { prompt: string };
+    expect(prompt).toContain("#discussion_r9002");
+    expect(prompt).toContain("`reviewThreads`");
+    expect(prompt).toContain("`addPullRequestReviewThreadReply`");
+    expect(prompt).toContain("`resolveReviewThread`");
+    expect(prompt).not.toContain("/replies");
   });
 
   it("does not dispatch an approved Open Inspect App review", async () => {

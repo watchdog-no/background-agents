@@ -46,6 +46,7 @@ const OPENAI_MODELS = [
   "openai/gpt-5.6-luna",
   "openai/gpt-6-astra",
   "openai/gpt-6-sol",
+  "openai/gpt-6.1-sol",
   "openai/gpt-6-luna",
 ] as const;
 
@@ -468,6 +469,10 @@ describe("model utilities", () => {
       efforts: ["none", "low", "medium", "high", "xhigh", "max"],
       default: "medium",
     });
+    expect(getReasoningConfig("openai/gpt-6.1-sol")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default: "medium",
+    });
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: "xhigh",
@@ -518,6 +523,8 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("openai/gpt-6-astra", "none")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-6-sol", "none")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-6-sol", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6.1-sol", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6.1-sol", "none")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-6-luna", "none")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-6-luna", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "xhigh")).toBe(true);

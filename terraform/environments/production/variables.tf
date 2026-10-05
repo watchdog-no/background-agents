@@ -376,7 +376,7 @@ variable "classification_default_repository" {
 variable "classification_model" {
   description = "Model backing the Slack and Linear bots' target classifiers. An \"anthropic/\"-prefixed or bare \"claude-\" id is served by classification_anthropic_api_key (falling back to anthropic_api_key); an \"openai/\"-prefixed or bare \"gpt-\" id is served by classification_openai_api_key."
   type        = string
-  default     = "claude-haiku-4-5"
+  default     = "openai/gpt-6-luna"
   nullable    = false
 
   # Each prefix must be followed by an actual model id: a bare "claude-" or
@@ -403,6 +403,32 @@ variable "anthropic_oauth_token_url" {
   description = "Optional Claude subscription OAuth token endpoint override"
   type        = string
   default     = ""
+}
+
+variable "classification_reasoning_effort" {
+  description = "Reasoning effort the Slack and Linear bot classifiers request from an OpenAI classification_model, sent as reasoning_effort (for example \"low\"). Blank sends none, so OpenAI applies the model's default."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  # Only the OpenAI transport sends reasoning_effort; an Anthropic classifier
+  # would silently ignore the setting.
+  validation {
+    condition = (
+      var.classification_reasoning_effort == "" ||
+      startswith(var.classification_model, "openai/") ||
+      startswith(var.classification_model, "gpt-")
+    )
+    error_message = "classification_reasoning_effort applies only to an OpenAI classification_model. Leave it blank for an Anthropic model."
+  }
+
+  # Supported efforts differ by model, so OpenAI validates the value itself. A
+  # padded or mis-cased value would still reach it verbatim and fail every
+  # classification with HTTP 400, so reject anything but a lowercase word.
+  validation {
+    condition     = var.classification_reasoning_effort == "" || can(regex("^[a-z]+$", var.classification_reasoning_effort))
+    error_message = "classification_reasoning_effort must be blank or a lowercase OpenAI reasoning effort such as \"low\", with no surrounding whitespace."
+  }
 }
 
 # =============================================================================

@@ -71,6 +71,10 @@ async function callRoute(method: string, path: string): Promise<Response> {
     : handleListRepoSecrets(request, createEnv(), { owner: "acme", name: "app" }, createCtx());
 }
 
+vi.mock("./workspace-repository-authorization", () => ({
+  authorizeWorkspaceRepositories: vi.fn(async () => null),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
 });

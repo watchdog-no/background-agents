@@ -1,144 +1,46 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ModalApiError, type ModalClient, type ResolveVmSandboxResponse } from "../client";
-import { ModalSandboxProvider } from "../providers/modal-provider";
+import { ModalApiError, type ResolveVmSandboxResponse } from "../client";
 import { formatPendingVmReference } from "../providers/pending-vm-reference";
 import { RequestDeadlineError } from "../request-deadline";
-import { SandboxLifecycleManager } from "./manager";
 import type { ImageBuildLookup } from "./image-selection";
 import { computeRepositoriesFingerprint } from "../../image-builds/fingerprint";
 import { PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS } from "./decisions";
 import { SandboxShutdownCoordinator } from "../../session/sandbox-shutdown";
-import type { ShutdownRecord } from "../../session/sandbox-shutdown-repository";
-import {
-  createMockSandbox,
-  createMockSession,
-  createMockStorage,
-  createMockBroadcaster,
-  createMockWebSocketManager,
-  createMockAlarmScheduler,
-  createMockIdGenerator,
-  createTestConfig,
-} from "./test-helpers";
 import { COMPATIBLE_RUNTIME_VERSION } from "../../image-builds/test-helpers";
-
-function fixture(action: "create" | "restore" = "create", imageBuildLookup?: ImageBuildLookup) {
-  const sandbox = createMockSandbox({
-    status: action === "create" ? "pending" : "stopped",
-    snapshot_image_id: action === "restore" ? "im-saved" : null,
-    snapshot_runtime_version: action === "restore" ? COMPATIBLE_RUNTIME_VERSION : null,
-  });
-  const session = createMockSession({
-    code_server_enabled: 1,
-    vnc_enabled: 1,
-    sandbox_settings: JSON.stringify({ sandboxTimeoutMs: 3_600_000 }),
-  });
-  const storage = createMockStorage(
-    session,
-    sandbox,
-    undefined,
-    imageBuildLookup ? [{ repoOwner: "testowner", repoName: "testrepo", baseBranch: "main" }] : []
-  );
-  const broadcaster = createMockBroadcaster();
-  const wsManager = createMockWebSocketManager();
-  const providerResponse: ResolveVmSandboxResponse = {
-    sandboxId: "unused",
-    modalObjectId: "sb-real",
-    sandboxBackend: "modal-vm",
-    codeServerUrl: "https://editor.example",
-    codeServerPassword: "editor-password",
-    vncUrl: "https://desktop.example",
-    vncPassword: "desktop-password",
-    ttydUrl: "https://terminal.example",
-    tunnelUrls: { "8080": "https://port.example" },
-  };
-  const client = {
-    createSandbox: vi.fn(
-      async (
-        _config: unknown
-      ): Promise<{
-        sandboxId: string;
-        modalObjectId: string;
-        sandboxBackend: string;
-        createdAt: number;
-      }> => {
-        throw new RequestDeadlineError("Modal", "createSandbox", 60_000);
-      }
-    ),
-    restoreSandbox: vi.fn(async () => {
-      throw new ModalApiError("pending race", 409, "race_pending");
-    }),
-    resolveVmSandbox: vi.fn(
-      async (req: { sandboxId: string }): Promise<ResolveVmSandboxResponse> => ({
-        ...providerResponse,
-        sandboxId: req.sandboxId,
-      })
-    ),
-    stopSandbox: vi.fn(async () => {}),
-  };
-  const provider = new ModalSandboxProvider(client as unknown as ModalClient, "modal-vm");
-  const backgroundTasks = { submit: vi.fn((task: () => Promise<unknown>) => void task()) };
-  let state: ShutdownRecord | null = null;
-  const store = {
-    read: () => (state ? structuredClone(state) : null),
-    write: (next: ShutdownRecord) => {
-      state = structuredClone(next);
-    },
-  };
-  if (action === "restore") {
-    store.write({
-      phase: "saved",
-      generation: { sandboxId: sandbox.modal_sandbox_id!, createdAt: sandbox.created_at },
-      provider: "modal-vm",
-      providerObjectId: null,
-      sourceRetired: true,
-      lifetimeKind: "none",
-      expiresAtMs: null,
-      drainAtMs: null,
-      generationReady: true,
-      lifecyclePolicy: "confirmed",
-      receipt: {
-        kind: "snapshot",
-        artifactId: "im-saved",
-        provider: "modal-vm",
-        savedAtMs: Date.now(),
-        runtimeVersion: COMPATIBLE_RUNTIME_VERSION,
-      },
-    });
-  }
-  const deps = {
-    store,
-    provider,
-    sandbox: storage,
-    session: { getSession: () => session, transaction: <T>(fn: () => T) => fn() },
-    messages: { getProcessingMessage: () => null },
-    failures: { record: vi.fn(), deliver: vi.fn() },
-    messenger: broadcaster,
-    sockets: { getSandboxSocket: () => null },
-    alarm: createMockAlarmScheduler(),
-    background: { submit: vi.fn() },
-    onLifecycleChange: vi.fn(async () => {}),
-    reconcileStatusFromMessages: vi.fn(async () => {}),
-    retireAccess: vi.fn(),
-  };
-  const makeManager = () =>
-    new SandboxLifecycleManager(
-      provider,
-      storage,
-      storage,
-      broadcaster,
-      wsManager,
-      createMockAlarmScheduler(),
-      createMockIdGenerator(),
-      new SandboxShutdownCoordinator(deps as never),
-      createTestConfig(),
-      imageBuildLookup,
-      backgroundTasks
-    );
-  return { sandbox, storage, broadcaster, client, store, makeManager, wsManager, backgroundTasks };
-}
+import { fixture } from "./vm-resolve.test-fixture";
 
 describe("modal-vm startup resolution", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("resolves bridge settings only after the pending-reference eligibility checks", async () => {
+    const f = fixture();
+    f.sandbox.status = "ready";
+    const settingsRead = vi.fn(() => '{"sandboxTimeoutMs":3600000}');
+    Object.defineProperty(f.session, "sandbox_settings", { get: settingsRead });
+    const resolveSandbox = vi.spyOn(f.provider, "resolveSandbox");
+    const manager = f.makeManager();
+    const generation = { sandboxId: f.sandbox.modal_sandbox_id!, createdAt: f.sandbox.created_at };
+    expect(settingsRead).not.toHaveBeenCalled();
+    manager.onSandboxSocketAttached(generation);
+    f.sandbox.modal_object_id = formatPendingVmReference("another-session", generation.sandboxId);
+    manager.onSandboxSocketAttached(generation);
+    expect(settingsRead).not.toHaveBeenCalled();
+    expect(f.client.resolveVmSandbox).not.toHaveBeenCalled();
+
+    f.sandbox.modal_object_id = formatPendingVmReference("test-session", generation.sandboxId);
+    manager.onSandboxSocketAttached(generation);
+    expect(settingsRead).toHaveBeenCalledOnce();
+    expect(resolveSandbox).toHaveBeenCalledExactlyOnceWith({
+      sessionId: "test-session",
+      sandboxId: generation.sandboxId,
+      generationCreatedAtMs: generation.createdAt,
+      timeoutSeconds: 3600,
+    });
+    await vi.waitFor(() => expect(f.sandbox.modal_object_id).toBe("sb-real"));
+  });
 
   it.each(["create", "restore"] as const)(
     "recovers an unknown %s without resetting lifetime",
@@ -265,6 +167,100 @@ describe("modal-vm startup resolution", () => {
     );
   });
 
+  it("retains the foreground token for an equal-valued bridge claim after inconclusive lookup", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    const f = fixture();
+    f.client.resolveVmSandbox.mockRejectedValue(new ModalApiError("unavailable", 503));
+    const manager = f.makeManager();
+    const spawning = manager.spawnSandbox();
+    await vi.waitFor(() => expect(f.client.resolveVmSandbox).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS + 20_000);
+    await spawning;
+    expect(f.sandbox.status).toBe("spawning");
+    expect(f.sandbox.ttyd_token).toBeNull();
+    expect(f.client.createSandbox).toHaveBeenCalledOnce();
+
+    f.client.resolveVmSandbox.mockResolvedValue({
+      sandboxId: f.sandbox.modal_sandbox_id!,
+      modalObjectId: "sb-real",
+      sandboxBackend: "modal-vm",
+      ttydUrl: "https://terminal.example",
+    });
+    manager.onSandboxSocketAttached({
+      sandboxId: f.sandbox.modal_sandbox_id!,
+      createdAt: f.sandbox.created_at,
+    });
+    await vi.waitFor(() => expect(f.sandbox.modal_object_id).toBe("sb-real"));
+    expect(f.sandbox.ttyd_token).toBeTruthy();
+    expect(f.store.read()).toMatchObject({ phase: "running", providerObjectId: "sb-real" });
+    expect(f.client.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("does not announce bridge access when shutdown becomes held during access completion", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    const f = fixture();
+    let lookupEntered!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => (lookupEntered = resolve));
+    f.client.resolveVmSandbox.mockImplementation(async () => {
+      lookupEntered();
+      throw new ModalApiError("unavailable", 503);
+    });
+    const manager = f.makeManager();
+    const spawning = manager.spawnSandbox();
+    await lookupStarted;
+    await vi.advanceTimersByTimeAsync(PENDING_VM_REFERENCE_MATERIALIZE_BOUND_MS + 20_000);
+    await spawning;
+
+    const generation = { sandboxId: f.sandbox.modal_sandbox_id!, createdAt: f.sandbox.created_at };
+    const pending = f.sandbox.modal_object_id;
+    f.client.stopSandbox.mockClear();
+    f.client.resolveVmSandbox.mockResolvedValue({
+      sandboxId: generation.sandboxId,
+      modalObjectId: "sb-real",
+      sandboxBackend: "modal-vm",
+      ttydUrl: "https://terminal.example",
+    });
+    let completeEntered!: () => void;
+    const completing = new Promise<void>((resolve) => (completeEntered = resolve));
+    let releaseCompletion!: () => void;
+    const completionGate = new Promise<void>((resolve) => (releaseCompletion = resolve));
+    const complete = vi.mocked(f.storage.completeProviderResume).getMockImplementation()!;
+    vi.mocked(f.storage.completeProviderResume).mockImplementationOnce(async (...args) => {
+      completeEntered();
+      await completionGate;
+      return complete(...args);
+    });
+    let work!: Promise<unknown>;
+    f.backgroundTasks.submit.mockImplementation((task) => {
+      work = task();
+    });
+    vi.mocked(f.wsManager.getSandboxWebSocket).mockReturnValue({} as WebSocket);
+    manager.onSandboxSocketAttached(generation);
+    await completing;
+    const held = {
+      ...f.store.read()!,
+      phase: "unknown" as const,
+      error: "Shutdown held during completion",
+    };
+    f.store.write(held);
+    releaseCompletion();
+    await work;
+
+    expect(f.sandbox.modal_object_id).toBe("sb-real");
+    expect(f.sandbox.ttyd_token).toBeTruthy();
+    expect(f.storage.completeProviderResume).toHaveBeenCalledWith(
+      generation,
+      expect.objectContaining({ providerObjectId: "sb-real" }),
+      pending
+    );
+    expect(f.store.read()).toEqual(held);
+    expect(f.client.stopSandbox).not.toHaveBeenCalled();
+    expect(manager.isProviderStartupPending()).toBe(false);
+    expect(f.broadcaster.messages).not.toContainEqual({ type: "sandbox_access_changed" });
+  });
+
   it("completes a restore after bounded transient errors when its bridge later resolves", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
@@ -389,6 +385,8 @@ describe("modal-vm startup resolution", () => {
     expect(f.sandbox.modal_object_id).toBe(
       formatPendingVmReference("test-session", generation.sandboxId)
     );
+    expect(f.sandbox.auth_token).toBeNull();
+    expect(f.sandbox.auth_token_hash).toBeTruthy();
     let resolve!: (value: Awaited<ReturnType<typeof f.client.resolveVmSandbox>>) => void;
     f.client.resolveVmSandbox.mockImplementationOnce(() => new Promise((done) => (resolve = done)));
     const restarted = f.makeManager();
@@ -406,26 +404,180 @@ describe("modal-vm startup resolution", () => {
       sandboxBackend: "modal-vm",
       codeServerUrl: "https://editor.example",
       codeServerPassword: "password",
+      ttydUrl: "https://terminal.example",
     });
     await vi.waitFor(() => expect(f.sandbox.modal_object_id).toBe("sb-real"));
     expect(f.store.read()?.providerObjectId).toBe("sb-real");
     expect(f.store.read()?.expiresAtMs).toBe(generation.createdAt + 3_600_000);
+    expect(f.sandbox.ttyd_url).toBeNull();
     expect(f.sandbox.ttyd_token).toBeNull();
+    expect(f.storage.completeProviderResume).toHaveBeenCalledExactlyOnceWith(
+      generation,
+      {
+        providerObjectId: "sb-real",
+        codeServer: { url: "https://editor.example", password: "password" },
+        vnc: null,
+        ttyd: null,
+        tunnelUrls: null,
+      },
+      formatPendingVmReference("test-session", generation.sandboxId)
+    );
+    expect(f.storage.updateSandboxAccess).not.toHaveBeenCalled();
+    expect(f.storage.updateSandboxTunnelUrls).not.toHaveBeenCalled();
   });
 
   it("mints terminal access when the bridge resolves while the original instance holds the token", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
     const f = fixture();
     f.client.createSandbox.mockImplementationOnce(() => new Promise(() => {}));
     const manager = f.makeManager();
     void manager.spawnSandbox();
     await vi.waitFor(() => expect(f.client.createSandbox).toHaveBeenCalledOnce());
-    manager.onSandboxSocketAttached({
+    const createConfig = f.client.createSandbox.mock.calls[0][0];
+    expect(createConfig.sessionId).toBe("test-session");
+    const generation = {
       sandboxId: f.sandbox.modal_sandbox_id!,
       createdAt: f.sandbox.created_at,
-    });
+    };
+    expect(f.sandbox.auth_token).toBeNull();
+    expect(f.sandbox.auth_token_hash).toBeTruthy();
+    expect(createConfig.sandboxAuthToken).not.toBe(f.sandbox.auth_token_hash);
+    manager.onSandboxSocketAttached(generation);
     await vi.waitFor(() => expect(f.sandbox.modal_object_id).toBe("sb-real"));
     expect(f.sandbox.ttyd_url).toBe("https://terminal.example");
     expect(f.sandbox.ttyd_token).toBeTruthy();
+    const token = f.sandbox.ttyd_token!;
+    const [header, payload, signature] = token.split(".");
+    expect(token.split(".")).toHaveLength(3);
+    expect(JSON.parse(Buffer.from(header, "base64url").toString("utf8"))).toEqual({
+      alg: "HS256",
+      typ: "JWT",
+    });
+    expect(JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))).toEqual({
+      sub: createConfig.sessionId,
+      sid: generation.sandboxId,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 86400,
+    });
+    for (const [secret, valid] of [
+      [createConfig.sandboxAuthToken, true],
+      [f.sandbox.auth_token_hash!, false],
+    ] as const) {
+      const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["verify"]
+      );
+      await expect(
+        crypto.subtle.verify(
+          "HMAC",
+          key,
+          Buffer.from(signature, "base64url"),
+          new TextEncoder().encode(`${header}.${payload}`)
+        )
+      ).resolves.toBe(valid);
+    }
+    expect(f.storage.completeProviderResume).toHaveBeenCalledExactlyOnceWith(
+      generation,
+      {
+        providerObjectId: "sb-real",
+        codeServer: { url: "https://editor.example", password: "editor-password" },
+        vnc: { url: "https://desktop.example", password: "desktop-password" },
+        ttyd: { url: "https://terminal.example", token },
+        tunnelUrls: { "8080": "https://port.example" },
+      },
+      formatPendingVmReference(createConfig.sessionId, generation.sandboxId)
+    );
+    expect(f.storage.updateSandboxAccess).not.toHaveBeenCalled();
+    expect(f.storage.updateSandboxTunnelUrls).not.toHaveBeenCalled();
+  });
+
+  it("retains a committed bridge identity when access publication fails in the background", async () => {
+    const f = fixture();
+    f.client.createSandbox.mockImplementationOnce(() => new Promise(() => {}));
+    const manager = f.makeManager();
+    void manager.spawnSandbox();
+    await vi.waitFor(() => expect(f.client.createSandbox).toHaveBeenCalledOnce());
+    const generation = { sandboxId: f.sandbox.modal_sandbox_id!, createdAt: f.sandbox.created_at };
+    const pending = f.sandbox.modal_object_id!;
+    f.client.stopSandbox.mockClear();
+    f.sandbox.spawn_failure_count = 2;
+    f.sandbox.last_spawn_failure = Date.now() - 1000;
+    const lastSpawnFailure = f.sandbox.last_spawn_failure;
+    const shutdownBefore = f.store.read()!;
+    const holdFailedRecovery = vi.spyOn(SandboxShutdownCoordinator.prototype, "holdFailedRecovery");
+    const holdFailedRetainedBoot = vi.spyOn(
+      SandboxShutdownCoordinator.prototype,
+      "holdFailedRetainedBoot"
+    );
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(f.wsManager.getSandboxWebSocket).mockReturnValue({} as WebSocket);
+    vi.mocked(f.broadcaster.broadcast).mockImplementation((message) => {
+      if (message.type === "sandbox_access_changed") {
+        throw new Error("access publication unavailable");
+      }
+      f.broadcaster.messages.push(message);
+    });
+    let work!: Promise<unknown>;
+    f.backgroundTasks.submit.mockImplementation((task) => {
+      work = task();
+    });
+
+    manager.onSandboxSocketAttached(generation);
+    await expect(work).resolves.toBeUndefined();
+
+    expect(warning.mock.calls.map(([entry]) => JSON.parse(String(entry)))).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        event: "sandbox.vm_resolve_failed",
+        msg: "Bridge VM resolution failed",
+        error: "access publication unavailable",
+      })
+    );
+    expect(f.sandbox).toMatchObject({
+      modal_sandbox_id: generation.sandboxId,
+      created_at: generation.createdAt,
+      modal_object_id: "sb-real",
+      status: "connecting",
+      fenced: 0,
+      startup_rejected: 0,
+      code_server_url: "https://editor.example",
+      code_server_password: "editor-password",
+      vnc_url: "https://desktop.example",
+      vnc_password: "desktop-password",
+      ttyd_url: "https://terminal.example",
+      ttyd_token: expect.any(String),
+      tunnel_urls: JSON.stringify({ "8080": "https://port.example" }),
+      last_spawn_error: null,
+      last_spawn_error_at: null,
+      spawn_failure_count: 2,
+      last_spawn_failure: lastSpawnFailure,
+    });
+    expect(f.store.read()).toEqual({ ...shutdownBefore, providerObjectId: "sb-real" });
+    expect(f.storage.completeProviderResume).toHaveBeenCalledExactlyOnceWith(
+      generation,
+      expect.objectContaining({ providerObjectId: "sb-real" }),
+      pending
+    );
+    expect(f.storage.transitionSandboxStatus).toHaveBeenCalledExactlyOnceWith(
+      generation,
+      "spawning",
+      "connecting"
+    );
+    expect(f.storage.updateSandboxStatus).not.toHaveBeenCalled();
+    expect(f.storage.rejectProviderStartup).not.toHaveBeenCalled();
+    expect(f.storage.fenceSandboxGeneration).not.toHaveBeenCalled();
+    expect(f.storage.incrementCircuitBreakerFailure).not.toHaveBeenCalled();
+    expect(f.storage.resetCircuitBreaker).not.toHaveBeenCalled();
+    expect(holdFailedRecovery).not.toHaveBeenCalled();
+    expect(holdFailedRetainedBoot).not.toHaveBeenCalled();
+    expect(f.client.stopSandbox).not.toHaveBeenCalled();
+    expect(f.broadcaster.messages).not.toContainEqual(
+      expect.objectContaining({ type: "sandbox_error" })
+    );
   });
 
   it("claims a restore when the bridge resolved its handle before the lost response", async () => {
@@ -467,6 +619,10 @@ describe("modal-vm startup resolution", () => {
     await vi.waitFor(() => expect(f.client.createSandbox).toHaveBeenCalledOnce());
     let resolve!: (value: ResolveVmSandboxResponse) => void;
     f.client.resolveVmSandbox.mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    let work!: Promise<unknown>;
+    f.backgroundTasks.submit.mockImplementation((task) => {
+      work = task();
+    });
     const restarted = f.makeManager();
     restarted.onSandboxSocketAttached({
       sandboxId: f.sandbox.modal_sandbox_id!,
@@ -477,10 +633,36 @@ describe("modal-vm startup resolution", () => {
     f.sandbox.modal_sandbox_id = "newer-generation";
     f.sandbox.created_at += 1;
     f.sandbox.modal_object_id = "sb-newer";
-    resolve({ sandboxId: oldSandboxId, modalObjectId: "sb-real", sandboxBackend: "modal-vm" });
-    await vi.waitFor(() => expect(f.storage.completeProviderResume).toHaveBeenCalledOnce());
+    Object.assign(f.sandbox, {
+      code_server_url: "https://newer-editor.example",
+      code_server_password: "newer-editor-password",
+      vnc_url: "https://newer-desktop.example",
+      vnc_password: "newer-desktop-password",
+      ttyd_url: "https://newer-terminal.example",
+      ttyd_token: "newer-terminal-token",
+      tunnel_urls: JSON.stringify({ "3000": "https://newer-port.example" }),
+    });
+    const successor = { ...f.sandbox };
+    const shutdownBefore = f.store.read();
+    resolve({
+      sandboxId: oldSandboxId,
+      modalObjectId: "sb-real",
+      sandboxBackend: "modal-vm",
+      codeServerUrl: "https://late-editor.example",
+      codeServerPassword: "late-editor-password",
+      vncUrl: "https://late-desktop.example",
+      vncPassword: "late-desktop-password",
+      ttydUrl: "https://late-terminal.example",
+      tunnelUrls: { "8080": "https://late-port.example" },
+    });
+    await expect(work).resolves.toBeUndefined();
+    expect(f.storage.completeProviderResume).toHaveBeenCalledOnce();
+    expect(f.sandbox).toEqual(successor);
     expect(f.sandbox.modal_object_id).toBe("sb-newer");
+    expect(f.store.read()).toEqual(shutdownBefore);
     expect(f.store.read()?.providerObjectId).not.toBe("sb-real");
+    expect(f.storage.updateSandboxAccess).not.toHaveBeenCalled();
+    expect(f.storage.updateSandboxTunnelUrls).not.toHaveBeenCalled();
   });
 
   it("retries transient bridge lookups after readiness until the same generation resolves", async () => {

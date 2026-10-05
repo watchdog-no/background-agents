@@ -19,8 +19,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 
 type SettingsPermissionPredicate = PermissionId | { allOf: readonly PermissionId[] };
 type SettingsVisibilityPredicate =
-  | SettingsPermissionPredicate
-  | { teamCapability: "canEditMetadata" };
+  SettingsPermissionPredicate | { teamCapability: "canEditMetadata" };
 type SettingsVisibility = { public: true } | { anyOf: readonly SettingsVisibilityPredicate[] };
 export type SettingsCapability = "unarchiveSessions";
 
@@ -72,6 +71,18 @@ export const SETTINGS_GROUPS = [
         ),
       },
       {
+        id: "memories",
+        label: "Memories",
+        description: "Personal knowledge and instructions",
+        keywords: "memory facts directives context",
+        icon: SparkleIcon,
+        // Session creators need the inclusion preference even without catalog management.
+        visibility: anyOf("memories.manage_own", "sessions.create"),
+        panel: lazyPanel(() =>
+          import("./memories-settings").then((module) => module.MemoriesSettings)
+        ),
+      },
+      {
         id: "keyboard-shortcuts",
         label: "Keyboard",
         description: "Customize keyboard shortcuts",
@@ -111,6 +122,17 @@ export const SETTINGS_GROUPS = [
           import("./provider-accounts-settings").then(
             ({ ProviderAccountsSettings }) => ProviderAccountsSettings
           )
+        ),
+      },
+      {
+        id: "shared-memories",
+        label: "Shared memories",
+        description: "Repository and environment knowledge",
+        keywords: "memory facts directives proposals",
+        icon: SparkleIcon,
+        visibility: anyOf("repositories.read", "environments.read"),
+        panel: lazyPanel(() =>
+          import("./memories-settings").then((module) => module.SharedMemoriesSettings)
         ),
       },
       {

@@ -62,6 +62,7 @@ export const controlPlaneReposResponseSchema = z.object({
   repos: z.array(enrichedRepositorySchema),
   cached: z.boolean(),
   cachedAt: z.string(),
+  teamHasRepositoryGrants: z.boolean().optional(),
 });
 
 export type ControlPlaneReposResponse = z.infer<typeof controlPlaneReposResponseSchema>;
@@ -78,6 +79,7 @@ export interface ClassificationResult {
 export interface ClassifyRequest {
   prompt: string;
   model: string;
+  reasoningEffort?: string;
 }
 
 export interface ClassifyRawResult {
@@ -88,10 +90,7 @@ export interface ClassifyRawResult {
 }
 
 export type ClassifyErrorReason =
-  | "oauth_not_configured"
-  | "oauth_unauthorized"
-  | "provider_error"
-  | "invalid_request";
+  "oauth_not_configured" | "oauth_unauthorized" | "provider_error" | "invalid_request";
 
 export interface ClassifyErrorResponse {
   reason: ClassifyErrorReason;

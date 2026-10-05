@@ -12,7 +12,7 @@ import type {
 } from "@open-inspect/shared/types/repository-catalog";
 import type { Env } from "../types";
 import { z } from "zod";
-import { getAvailableRepos, buildRepoDescriptions } from "./repos";
+import { buildRepoDescriptions } from "./repos";
 import { signedControlPlaneFetch } from "../internal-auth";
 import { createLogger } from "../logger";
 
@@ -41,18 +41,17 @@ const classifyErrorResponseSchema = z.object({
 /**
  * Build classification prompt from Linear issue context.
  */
-async function buildClassificationPrompt(
-  env: Env,
+function buildClassificationPrompt(
+  repos: RepoConfig[],
   issueTitle: string,
   issueDescription: string | null | undefined,
   labels: string[],
   projectName: string | null | undefined,
   teamName: string | null | undefined,
   teamKey: string | null | undefined,
-  triggerComment: string | null | undefined,
-  traceId?: string
-): Promise<string> {
-  const repoDescriptions = await buildRepoDescriptions(env, traceId);
+  triggerComment: string | null | undefined
+): string {
+  const repoDescriptions = buildRepoDescriptions(repos);
 
   const escapeUntrusted = (s: string) =>
     s
@@ -112,7 +111,11 @@ async function callClassifyEndpoint(
   traceId?: string
 ): Promise<z.infer<typeof classifyRawResultSchema>> {
   const url = "https://internal/classify";
-  const body = JSON.stringify({ prompt, model });
+  const body = JSON.stringify({
+    prompt,
+    model,
+    reasoningEffort: env.CLASSIFICATION_REASONING_EFFORT,
+  });
   const response = await signedControlPlaneFetch(
     env,
     {
@@ -147,10 +150,12 @@ async function callClassifyEndpoint(
 }
 
 /**
- * Classify which repository a Linear issue belongs to.
+ * Classify which repository a Linear issue belongs to, using the caller's catalog
+ * snapshot so matching, alternatives, and the prompt all see the same repositories.
  */
 export async function classifyRepo(
   env: Env,
+  repos: RepoConfig[],
   issueTitle: string,
   issueDescription: string | null | undefined,
   labels: string[],
@@ -160,8 +165,6 @@ export async function classifyRepo(
   triggerComment: string | null | undefined,
   traceId?: string
 ): Promise<ClassificationResult> {
-  const repos = await getAvailableRepos(env, traceId);
-
   if (repos.length === 0) {
     return {
       repo: null,
@@ -180,19 +183,18 @@ export async function classifyRepo(
     };
   }
 
-  try {
-    const prompt = await buildClassificationPrompt(
-      env,
-      issueTitle,
-      issueDescription,
-      labels,
-      projectName,
-      teamName,
-      teamKey,
-      triggerComment,
-      traceId
-    );
+  const prompt = buildClassificationPrompt(
+    repos,
+    issueTitle,
+    issueDescription,
+    labels,
+    projectName,
+    teamName,
+    teamKey,
+    triggerComment
+  );
 
+  try {
     const model = env.CLASSIFICATION_MODEL || DEFAULT_CLASSIFICATION_MODEL;
     const result = await callClassifyEndpoint(env, prompt, model, traceId);
 

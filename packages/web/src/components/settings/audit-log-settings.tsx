@@ -1,17 +1,27 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AUTHORIZATION_DECISION_ACTIONS,
   interpretAuditEvent,
   type AuditEvent,
   type AuditEventInterpretation,
+  type AuditObservationAction,
   type AuditOperationAction,
   type AuditOperationResult,
 } from "@open-inspect/shared/types/audit-events";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { useAuditEvents } from "@/hooks/use-audit-events";
+import { useTeams } from "@/hooks/use-teams";
+import { useCurrentUserAuthorization } from "@/hooks/use-current-user-authorization";
 import { formatHttpStatus } from "@/lib/http-status";
 import { formatRelativeTime } from "@/lib/time";
 
@@ -19,6 +29,8 @@ interface BadgeTreatment {
   label: string;
   className: string;
 }
+
+const ALL_TEAMS_VALUE = "all-teams";
 
 const OPERATION_OUTCOMES: Record<AuditOperationResult, BadgeTreatment> = {
   applied: { label: "Applied", className: "bg-success-muted text-success" },
@@ -33,6 +45,10 @@ const AUTHORIZATION_DECISIONS: Record<"allowed" | "denied", BadgeTreatment> = {
   denied: { label: "Denied", className: "bg-destructive-muted text-destructive" },
 };
 
+const OBSERVATIONS: Record<"would_deny", BadgeTreatment> = {
+  would_deny: { label: "Would deny", className: "bg-info-muted text-info" },
+};
+
 // The client cannot say what an unrecognized action's stored result means.
 const UNRECOGNIZED: BadgeTreatment = {
   label: "Unrecognized",
@@ -40,7 +56,19 @@ const UNRECOGNIZED: BadgeTreatment = {
 };
 
 const OPERATION_LABELS: Record<AuditOperationAction, string> = {
+  "memory.created": "Memory created",
+  "memory.revised": "Memory revised",
+  "memory.archived": "Memory archived",
+  "memory.restored": "Memory restored",
+  "memory.approved": "Memory approved",
+  "memory.rejected": "Memory rejected",
+  "memory.superseded": "Memory superseded",
   "session.private_break_glass": "Private session break-glass read",
+  "session.visibility_changed": "Session visibility changed",
+  "session.moved": "Session moved",
+  "session.collaborator_added": "Session collaborator added",
+  "session.collaborator_removed": "Session collaborator removed",
+  "session.created_private": "Private session created",
   "workspace.member_role_updated": "Member role updated",
   "workspace.member_status_updated": "Member status updated",
   "workspace.default_role_assigned": "Default role assigned",
@@ -54,11 +82,23 @@ const OPERATION_LABELS: Record<AuditOperationAction, string> = {
   "team.member_role_changed": "Team member role changed",
   "team.member_removed": "Team member removed",
   "team.member_joined": "Team member joined",
+  "team.grant_added": "Team repository grant added",
+  "team.grant_removed": "Team repository grant removed",
+  "team.secret_set": "Team secret set",
+  "team.secret_deleted": "Team secret deleted",
+  "team.binding_added": "Team channel binding added",
+  "team.binding_removed": "Team channel binding removed",
+  "automation.executor_changed": "Automation executor changed",
+};
+
+const OBSERVATION_LABELS: Record<AuditObservationAction, string> = {
+  "session.shadow_denied": "Session read shadow observation",
 };
 
 const ACTION_LABELS = new Map<string, string>([
   [AUTHORIZATION_DECISION_ACTIONS.allowed, "Authorization allowed"],
   [AUTHORIZATION_DECISION_ACTIONS.denied, "Authorization denied"],
+  ...Object.entries(OBSERVATION_LABELS),
   ...Object.entries(OPERATION_LABELS),
 ]);
 
@@ -70,6 +110,8 @@ function badgeTreatment(interpretation: AuditEventInterpretation): BadgeTreatmen
   switch (interpretation.kind) {
     case "authorization_decision":
       return AUTHORIZATION_DECISIONS[interpretation.decision];
+    case "observation":
+      return OBSERVATIONS[interpretation.observation];
     case "operation":
       return OPERATION_OUTCOMES[interpretation.result];
     case "unknown":
@@ -95,7 +137,7 @@ function resourceSummary(event: AuditEvent): string {
     : resource;
 }
 
-function AuditEventCard({ event }: { event: AuditEvent }) {
+export function AuditEventCard({ event }: { event: AuditEvent }) {
   const interpretation = interpretAuditEvent(event);
   const badge = badgeTreatment(interpretation);
   const localTimestamp = new Date(event.occurredAt).toLocaleString();
@@ -173,7 +215,11 @@ function AuditEventCard({ event }: { event: AuditEvent }) {
 
 /** Read-only, cursor-paginated view of durable workspace audit events. */
 export function AuditLogSettings() {
-  const audit = useAuditEvents();
+  const { hasPermission } = useCurrentUserAuthorization();
+  const canReadAudit = hasPermission("workspace.audit.read");
+  const { teams, loading: teamsLoading, error: teamsError } = useTeams(canReadAudit);
+  const [teamId, setTeamId] = useState("");
+  const audit = useAuditEvents({ teamId: teamId || undefined, enabled: canReadAudit });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const focusAfterPaginationRef = useRef(false);
 
@@ -189,6 +235,12 @@ export function AuditLogSettings() {
     navigate();
   };
 
+  if (!canReadAudit) {
+    return (
+      <p className="text-sm text-muted-foreground">You do not have access to the audit log.</p>
+    );
+  }
+
   return (
     <section aria-labelledby="audit-log-heading">
       <h2
@@ -200,13 +252,44 @@ export function AuditLogSettings() {
         Audit log
       </h2>
       <p className="mb-2 text-sm text-muted-foreground">
-        Review workspace operations and authorization decisions. Events are shown newest first.
+        Review workspace operations, authorization decisions, and observations. Events are shown
+        newest first.
       </p>
       <p className="mb-6 text-sm text-muted-foreground">
         Authorization decisions record whether a request was allowed or denied and the HTTP response
         it returned. They do not confirm that the requested change took effect. Applied, No change,
-        and Rejected are recorded only by the operation that made or refused the change.
+        and Rejected are recorded only by the operation that made or refused the change. Shadow
+        observations marked Would deny describe hypothetical denials, not enforced denials or
+        operation outcomes.
       </p>
+
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <label htmlFor="audit-team-filter" className="text-sm font-medium">
+          Team
+        </label>
+        <Select
+          value={teamId || ALL_TEAMS_VALUE}
+          onValueChange={(value) => setTeamId(value === ALL_TEAMS_VALUE ? "" : value)}
+          disabled={teamsLoading || !!teamsError}
+        >
+          <SelectTrigger id="audit-team-filter" className="w-auto min-w-48 max-w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_TEAMS_VALUE}>All teams</SelectItem>
+            {teams.map((team) => (
+              <SelectItem key={team.id} value={team.id}>
+                {team.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {teamsError && (
+          <p role="status" className="text-xs text-destructive">
+            Unable to load team filters.
+          </p>
+        )}
+      </div>
 
       {audit.error && audit.events.length > 0 && (
         <div

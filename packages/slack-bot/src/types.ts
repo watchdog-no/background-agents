@@ -36,6 +36,7 @@ export interface Env {
   DEFAULT_MODEL: string;
   CLASSIFICATION_MODEL?: string; // provider/model for repo classification (default: openai/gpt-5.6-luna)
   CLASSIFICATION_DEFAULT_REPOSITORY?: string; // deterministic fallback after rules, channels, and explicit mentions
+  CLASSIFICATION_REASONING_EFFORT?: string;
   APP_NAME?: string;
 
   // Secrets
@@ -52,6 +53,8 @@ export interface Env {
  */
 export interface ThreadContext {
   channelId: string;
+  teamId?: string | null;
+  userId?: string;
   channelName?: string;
   channelDescription?: string;
   threadTs?: string;
@@ -72,11 +75,7 @@ export interface ClassificationResult {
   needsClarification: boolean;
   /** Which routing stage decided, for observability. */
   source:
-    | "routing_rule"
-    | "channel_association"
-    | "explicit_mention"
-    | "default_repository"
-    | "llm";
+    "routing_rule" | "channel_association" | "explicit_mention" | "default_repository" | "llm";
   /** Set when the classifier itself failed to run, rather than being unsure. */
   failureReason?: ClassifyErrorReason;
 }
@@ -103,6 +102,9 @@ export type BackgroundTaskScheduler = (promise: Promise<void>) => void;
  */
 export interface ThreadSession {
   sessionId: string;
+  /** Missing only on mappings persisted before channel bindings. */
+  teamId?: string | null;
+  closed?: true;
   /** Session-target id: a repo id, environment id, or the no-repository sentinel. */
   repoId: string;
   /** Session-target display label, including `No repository` for an empty sandbox. */

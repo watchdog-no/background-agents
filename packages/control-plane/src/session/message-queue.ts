@@ -187,7 +187,7 @@ export class SessionMessageQueue {
     command: Extract<GitHubAutofixSessionCommand, { type: "enqueue_feedback" }>
   ): Promise<EnqueueAutofixResponse> {
     const session = this.repository.getSession();
-    const sandboxRecoveryRequired = this.getSandboxPromptBlockReason() !== null;
+    const recoveryHold = this.getSandboxPromptBlockReason() !== null;
     const userId = `github:${command.author.id}`;
     const now = Date.now();
     const admission = this.messageRepository.admitAutofixMessage({
@@ -217,20 +217,30 @@ export class SessionMessageQueue {
       windowStart: now - AUTOFIX_ATTEMPT_WINDOW_MS,
       sessionClosed: !session || session.status === "archived" || session.status === "cancelled",
       appendContent: command.prompt,
-      sandboxRecoveryRequired,
     });
-    if (admission.kind === "rejected") return admission;
+    const logFields = {
+      feedback_key: command.feedbackKey,
+      pull_request_number: command.pullRequest.number,
+      artifact_id: command.pullRequest.artifactId,
+      recovery_hold: recoveryHold,
+    };
+    if (admission.kind === "rejected") {
+      this.log.info("autofix.rejected", {
+        event: "autofix.rejected",
+        ...logFields,
+        reason: admission.reason,
+      });
+      return admission;
+    }
 
+    this.log.info("autofix.enqueue", {
+      event: "autofix.enqueue",
+      ...logFields,
+      message_id: admission.messageId,
+      outcome: admission.kind,
+    });
     if (admission.kind === "enqueued" || admission.kind === "coalesced") {
       this.broadcastPromptQueue();
-      this.log.info("autofix.enqueue", {
-        event: "autofix.enqueue",
-        outcome: admission.kind,
-        feedback_key: command.feedbackKey,
-        message_id: admission.messageId,
-        pull_request_number: command.pullRequest.number,
-        artifact_id: command.pullRequest.artifactId,
-      });
     }
     await this.redrivePendingAutofix(admission.messageId);
     return admission;
@@ -249,9 +259,10 @@ export class SessionMessageQueue {
 
     const session = this.repository.getSession();
     if (!session || session.status === "archived" || session.status === "cancelled") return;
-    if (this.getSandboxPromptBlockReason()) return;
 
+    // Retry pending-work status projection even while recovery prevents dispatch.
     await this.sessionStatus.transition("active");
+    if (this.getSandboxPromptBlockReason()) return;
     await this.processMessageQueue();
   }
 
@@ -488,7 +499,6 @@ export class SessionMessageQueue {
         outcome: "deferred",
         reason: "no_sandbox",
       });
-      this.messenger.broadcast({ type: "sandbox_spawning" });
       // Spawn in the background: a snapshot restore can take tens of seconds,
       // and awaiting it here holds the prompt HTTP response open past bot
       // callers' request timeouts. The message is already persisted as
@@ -754,7 +764,8 @@ export class SessionMessageQueue {
 
     if (data.scmEnrichment !== undefined) {
       const enrichment = data.scmEnrichment;
-      this.participantRepository.updateParticipantCoalesce(participant.id, {
+      this.participantRepository.updateParticipantIdentity(participant.id, {
+        canonicalUserId: data.canonicalUserId ?? participant.canonical_user_id ?? null,
         scmName: enrichment.name,
         scmEmail: enrichment.email,
         scmLogin: enrichment.login,

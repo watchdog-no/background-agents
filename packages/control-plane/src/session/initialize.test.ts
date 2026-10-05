@@ -25,6 +25,8 @@ describe("initializeSession", () => {
     reasoningEffort: null,
     participantUserId: "user-1",
     platformUserId: "platform-user-1",
+    participantCanonicalUserId: "platform-user-1",
+    memory: { kind: "inherited", parentSessionId: "parent-memory" },
     scmLogin: "acmedev",
     scmName: "Acme Dev",
     scmEmail: "dev@acme.test",
@@ -37,12 +39,15 @@ describe("initializeSession", () => {
     sandboxSettings: {},
     automationId: null,
     automationRunId: null,
-    managedSkillsManifest: {
-      selection: { mode: "all" },
-      resolverVersion: 1,
-      manifestSha256: "0".repeat(64),
-      resolvedAt: 1,
-      skills: [],
+    managedSkills: {
+      kind: "resolved",
+      value: {
+        selection: { mode: "all" },
+        resolverVersion: 1,
+        manifestSha256: "0".repeat(64),
+        resolvedAt: 1,
+        skills: [],
+      },
     },
     providerAuth: [
       {
@@ -117,24 +122,6 @@ describe("initializeSession", () => {
       buildTimeoutSeconds: 2400,
       terminalEnabled: true,
     });
-  });
-
-  it("requires exactly one resolved or inherited managed skills manifest", async () => {
-    await expect(
-      initializeSession(
-        createEnv(),
-        { ...baseInput, managedSkillsManifest: undefined },
-        ctx as never
-      )
-    ).rejects.toThrow("Session must resolve or inherit exactly one managed skills manifest");
-    await expect(
-      initializeSession(
-        createEnv(),
-        { ...baseInput, managedSkillsSourceSessionId: "parent-session" },
-        ctx as never
-      )
-    ).rejects.toThrow("Session must resolve or inherit exactly one managed skills manifest");
-    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("throws when D1 write fails and does not call DO init", async () => {

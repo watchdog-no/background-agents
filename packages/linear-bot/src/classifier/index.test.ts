@@ -50,9 +50,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function classify(env: Env = TEST_ENV) {
+function classify(env: Env = TEST_ENV, repos = TEST_REPOS) {
   return classifyRepo(
     env,
+    repos,
     "Fix prod worker",
     "the prod worker is down",
     [],
@@ -133,7 +134,7 @@ describe("classifyRepo", () => {
   it("short-circuits to the only repo without calling the endpoint", async () => {
     mockGetAvailableRepos.mockResolvedValue([TEST_REPOS[0]]);
 
-    const result = await classify();
+    const result = await classify(TEST_ENV, [TEST_REPOS[0]]);
 
     expect(result.repo?.fullName).toBe("acme/prod");
     expect(result.needsClarification).toBe(false);

@@ -75,6 +75,12 @@
         "occurrences": ["strftime(", "strftime(", "strftime(", "strftime(", "strftime("],
         "reason": "The SQL-only migration runners must stamp changed configuration rows in milliseconds inside the migration transaction. A bound application timestamp is unavailable in these runners; a future Postgres migration needs its epoch equivalent."
       }
+    },
+    "terraform/d1/migrations/0085_team_default_visibility.sql": {
+      "create-trigger": {
+        "occurrences": ["CREATE TRIGGER", "CREATE TRIGGER"],
+        "reason": "Fence private team-default inserts and updates from the previous Worker between migration commit and deployment. New store validation cannot constrain old binaries; SQLite cannot narrow the existing CHECK in place, and rebuilding the referenced teams table risks deleting dependents. A Postgres migration would ALTER the CHECK instead."
+      }
     }
   },
   "grandfatheredMigrations": [

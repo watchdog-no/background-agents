@@ -190,7 +190,8 @@ Keep credentials in Actions **Secrets**. Non-secret configuration (account/appli
 settings, feature flags, allowlists, and branding) can use Actions **Variables** instead. The
 workflows prefer a non-empty variable, then the same-named secret, then the existing default where
 one exists. Existing secret-only deployments continue to work; an empty variable falls back to the
-secret rather than clearing it. `CLASSIFICATION_MODEL` remains variable-only.
+secret rather than clearing it. `CLASSIFICATION_MODEL` and `CLASSIFICATION_REASONING_EFFORT` remain
+variable-only.
 
 See [the CI/CD setup guide](../docs/GETTING_STARTED.md#set-up-cicd-optional) for the complete
 variable list and bulk upload examples using `gh variable set` and `gh secret set`.
@@ -215,6 +216,10 @@ WEB_PLATFORM # Optional; defaults to vercel
 VERCEL_API_TOKEN
 VERCEL_TEAM_ID
 VERCEL_PROJECT_ID
+
+# Documentation site (packages/docs)
+DOCS_SITE_ENABLED # Optional; defaults to false, which destroys a provisioned docs project
+DOCS_CUSTOM_DOMAIN # Optional; empty serves the vercel.app URL only
 
 # Modal
 MODAL_TOKEN_ID

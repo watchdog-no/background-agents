@@ -86,6 +86,7 @@ Runs on OpenCode only. Credential: a connected ChatGPT account, or `OPENAI_API_K
 | `openai/gpt-5.6-luna`  | GPT 5.6 Luna  | none, low, medium, high, xhigh, max | medium         |
 | `openai/gpt-6-astra`   | GPT-6 Astra   | low, medium, high, xhigh, max       | xhigh          |
 | `openai/gpt-6-sol`     | GPT-6 Sol     | none, low, medium, high, xhigh, max | medium         |
+| `openai/gpt-6.1-sol`   | GPT-6.1 Sol   | low, medium, high, xhigh, max       | medium         |
 | `openai/gpt-6-luna`    | GPT-6 Luna    | none, low, medium, high, xhigh, max | medium         |
 
 "Not set" means the composer shows **Default** and sends no effort unless you choose one.
@@ -185,12 +186,12 @@ Some models appear more than once because they are reachable through more than o
 
 Sessions started by Slack, GitHub, and Linear use Claude Agent for Anthropic models and OpenCode for other providers. Automations use the selected harness, with Anthropic models always routed to Claude Agent. Each surface picks its model from these settings:
 
-| Surface     | Where the default lives                                                                                                                                                                                                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub      | Settings › Integrations › GitHub: **Default model** and **Default reasoning effort**, plus per-repository **Repository Overrides**. Falls back to the deployment default model.                                                                                                         |
-| Linear      | Settings › Integrations › Linear: **Default model and effort** and **Repository Overrides**. A `model:*` issue label wins when **Allow model labels** is on, then a Linear user preference (when allowed), then the repository override or global default, then the deployment default. |
-| Slack       | Each Slack user sets **Model** and **Reasoning effort** in the app's **Home** tab. A request can start with `!model` and `!reasoning` flags to override them; on a request that starts a session the flags become that session's defaults.                                              |
-| Automations | The automation editor picks a model and effort per automation. The list is limited to enabled models the automation's harness can run.                                                                                                                                                  |
+| Surface     | Where the default lives                                                                                                                                                                                                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub      | Settings › Integrations › GitHub: **Default model** and **Default reasoning effort**, plus per-repository **Repository Overrides**. Falls back to the deployment default model. An `@mention` can start with `!model` and `!reasoning` flags to override them for the session it starts. |
+| Linear      | Settings › Integrations › Linear: **Default model and effort** and **Repository Overrides**. A `model:*` issue label wins when **Allow model labels** is on, then a Linear user preference (when allowed), then the repository override or global default, then the deployment default.  |
+| Slack       | Each Slack user sets **Model** and **Reasoning effort** in the app's **Home** tab. A request can start with `!model` and `!reasoning` flags to override them; on a request that starts a session the flags become that session's defaults.                                               |
+| Automations | The automation editor picks a model and effort per automation. The list is limited to enabled models the automation's harness can run.                                                                                                                                                   |
 
 All of these selectors show only models enabled in Settings › Models. Reasoning values must be ones the selected model supports.
 

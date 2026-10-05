@@ -191,7 +191,11 @@ async function callClassifyEndpoint(
   traceId?: string
 ): Promise<ClassifyRawResult> {
   const url = "https://internal/classify";
-  const body = JSON.stringify({ prompt, model });
+  const body = JSON.stringify({
+    prompt,
+    model,
+    reasoningEffort: env.CLASSIFICATION_REASONING_EFFORT,
+  });
   const response = await signedControlPlaneFetch(env, {
     method: "POST",
     url,
@@ -327,7 +331,7 @@ export class RepoClassifier {
     // The target catalog every stage below works over. Environments fail open
     // to []: an environments-fetch problem degrades the catalog — and with it
     // classification — to repository-only.
-    const catalog = await loadTargetCatalog(this.env, traceId);
+    const catalog = await loadTargetCatalog(this.env, traceId, context?.channelId, context?.userId);
 
     // Deterministic routing rules (explicit keyword → repo or environment) take
     // precedence over everything below, but never override an active thread

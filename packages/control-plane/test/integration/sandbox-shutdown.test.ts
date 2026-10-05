@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import type { SessionDO } from "../../src/cloudflare/durable-object";
+import { SessionStatusProjectionStore } from "../../src/db/session-status-projection-store";
 import {
   DEFAULT_LIFECYCLE_CONFIG,
   SandboxLifecycleManager,
 } from "../../src/sandbox/lifecycle/manager";
+import { SandboxAccess } from "../../src/sandbox/lifecycle/sandbox-access";
 import type { RestoreConfig, RestoreResult, SandboxProvider } from "../../src/sandbox/provider";
+import { providerResumesAfterStop } from "../../src/sandbox/provider";
+import { createLogger } from "../../src/logger";
 import { EventRepository } from "../../src/session/event-repository";
+import { SessionMessengerImpl } from "../../src/session/messenger";
 import { SandboxRuntimeEventHandler } from "../../src/session/sandbox-events/runtime.handler";
 import { SandboxShutdownCoordinator } from "../../src/session/sandbox-shutdown";
 import {
@@ -88,6 +93,65 @@ async function readShutdown(stub: DurableObjectStub): Promise<Record<string, unk
 }
 
 describe("sandbox graceful shutdown wiring", () => {
+  it("retires access before detaching through the assembled shutdown callback without manager forwarding", async () => {
+    const { stub } = await initNamedSession(`shutdown-access-composition-${Date.now()}`);
+    await seedSandboxAuth(stub, { authToken: AUTH_TOKEN, sandboxId: SANDBOX_ID, status: "ready" });
+    await seedShutdown(stub, {
+      generationReady: true,
+      runtimeReady: true,
+      lifecyclePolicy: "confirmed",
+      protocolVersion: 1,
+    });
+
+    await runInSessionDO(stub, async (instance) => {
+      const { sandboxRepository, lifecycleManager, wsManager } = componentsOf(instance);
+      for (const kind of ["codeServer", "vnc", "ttyd"] as const) {
+        await sandboxRepository.updateSandboxAccess(kind, `https://${kind}.example`, "secret");
+      }
+      sandboxRepository.updateSandboxTunnelUrls({ "8080": "https://port.example" });
+      const pair = new WebSocketPair();
+      wsManager.acceptAndSetSandboxSocket(pair[1], SANDBOX_ID);
+      pair[0].accept();
+      const clear = vi.spyOn(sandboxRepository, "clearSandboxAccess");
+      const clearTunnels = vi.spyOn(sandboxRepository, "clearSandboxTunnelUrls");
+      const broadcast = vi.spyOn(SessionMessengerImpl.prototype, "broadcast");
+      const detach = vi.spyOn(wsManager, "detachSandboxSocket");
+      const close = vi.spyOn(wsManager, "close");
+      try {
+        expect("retireShutdownAccess" in lifecycleManager).toBe(false);
+        // With no provider handle, emergency shutdown retires access without outbound provider I/O.
+        await lifecycleManager.terminateUnresponsiveSandbox("stop_send_failed");
+
+        expect(clear.mock.calls).toEqual([["codeServer"], ["vnc"], ["ttyd"]]);
+        expect(clearTunnels).toHaveBeenCalledOnce();
+        const notificationIndex = broadcast.mock.calls.findIndex(
+          ([message]) => message.type === "sandbox_access_changed"
+        );
+        expect(notificationIndex).toBeGreaterThanOrEqual(0);
+        const notificationOrder = broadcast.mock.invocationCallOrder[notificationIndex];
+        expect(
+          Math.max(...clear.mock.invocationCallOrder, ...clearTunnels.mock.invocationCallOrder)
+        ).toBeLessThan(notificationOrder);
+        expect(notificationOrder).toBeLessThan(detach.mock.invocationCallOrder[0]);
+        expect(detach).toHaveBeenCalledExactlyOnceWith(1000, "Sandbox state preserved");
+        expect(close).toHaveBeenCalledExactlyOnceWith(pair[1], 1000, "Sandbox state preserved");
+        expect(sandboxRepository.getSandbox()).toMatchObject({
+          code_server_url: null,
+          code_server_password: null,
+          vnc_url: null,
+          vnc_password: null,
+          ttyd_url: null,
+          ttyd_token: null,
+          tunnel_urls: null,
+          active_socket_id: "",
+        });
+      } finally {
+        vi.restoreAllMocks();
+        pair[0].close();
+      }
+    });
+  });
+
   it("holds an interrupted legacy VM capture without recapture or retirement", async () => {
     const { stub } = await initNamedSession(`vm-capture-receipt-${Date.now()}`);
     await seedSandboxAuth(stub, { authToken: AUTH_TOKEN, sandboxId: SANDBOX_ID, status: "ready" });
@@ -251,6 +315,125 @@ describe("sandbox graceful shutdown wiring", () => {
     expect(response.status).toBe(503);
     expect(await response.text()).toBe("Sandbox is being saved");
   });
+
+  it("does not start preservation when the local archive status write fails", async () => {
+    const { stub } = await initNamedSession(`archive-status-write-failure-${Date.now()}`);
+    await seedSandboxAuth(stub, { authToken: AUTH_TOKEN, sandboxId: SANDBOX_ID, status: "ready" });
+    await seedShutdown(stub, {
+      generationReady: true,
+      runtimeReady: true,
+      protocolVersion: 1,
+      lifecyclePolicy: "confirmed",
+    });
+    await queryDO(stub, "UPDATE session SET status = 'completed'");
+    const shutdownBefore = await readShutdown(stub);
+
+    await runInSessionDO(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `CREATE TRIGGER fail_archive_status BEFORE UPDATE OF status ON session
+         WHEN NEW.status = 'archived'
+         BEGIN SELECT RAISE(ABORT, 'injected archive status write failure'); END`
+      );
+      try {
+        await expect(componentsOf(instance).sessionLifecycleHandler.archive()).rejects.toThrow(
+          "injected archive status write failure"
+        );
+      } finally {
+        state.storage.sql.exec("DROP TRIGGER fail_archive_status");
+      }
+    });
+
+    expect(await readShutdown(stub)).toEqual(shutdownBefore);
+    expect(await queryDO(stub, "SELECT status FROM session")).toEqual([{ status: "completed" }]);
+  });
+
+  it("keeps an archived sandbox alive while the status projection is pending", async () => {
+    const name = `archive-pending-projection-${Date.now()}`;
+    const { stub } = await initNamedSession(name);
+    await seedSandboxAuth(stub, { authToken: AUTH_TOKEN, sandboxId: SANDBOX_ID, status: "ready" });
+    await runInSessionDO(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE sandbox SET modal_object_id = 'sb-live'");
+    });
+    await seedShutdown(stub, {
+      providerObjectId: "sb-live",
+      generationReady: true,
+      runtimeReady: true,
+      protocolVersion: 1,
+      lifecyclePolicy: "confirmed",
+    });
+    await queryDO(stub, "UPDATE session SET status = 'completed'");
+
+    // Create and release the gate inside the DO to retain its I/O context.
+    let releaseProjection: (() => void) | undefined;
+    await runInSessionDO(stub, () => {
+      const project = SessionStatusProjectionStore.prototype.project;
+      vi.spyOn(SessionStatusProjectionStore.prototype, "project").mockImplementationOnce(
+        async function (this: SessionStatusProjectionStore, ...args) {
+          await new Promise<void>((resolve) => {
+            releaseProjection = resolve;
+          });
+          return project.call(this, ...args);
+        }
+      );
+    });
+
+    const archiving = stub.fetch("http://internal/internal/archive", { method: "POST" });
+    const archiveSettled = archiving.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(releaseProjection).toBeTypeOf("function"));
+      expect(await queryDO(stub, "SELECT status FROM session")).toEqual([{ status: "archived" }]);
+      const { ws, response } = await openSandboxWs(name, {
+        authToken: AUTH_TOKEN,
+        sandboxId: SANDBOX_ID,
+      });
+      expect(ws).toBeNull();
+      expect(response.status).toBe(503);
+      expect(await response.text()).toBe("Sandbox is being saved");
+      expect(await readShutdown(stub)).toMatchObject({
+        phase: "draining",
+        reason: "session_archived",
+      });
+    } finally {
+      await runInSessionDO(stub, () => {
+        releaseProjection?.();
+        vi.restoreAllMocks();
+      });
+      await archiveSettled;
+    }
+
+    expect((await archiving).status).toBe(200);
+    expect(await readShutdown(stub)).toMatchObject({
+      phase: "draining",
+      reason: "session_archived",
+    });
+  });
+
+  it.each(["missing", "legacy"])(
+    "tells an archived sandbox to exit when its shutdown record is %s",
+    async (policy) => {
+      const name = `archive-unmanaged-${policy}-${Date.now()}`;
+      const { stub } = await initNamedSession(name);
+      await seedSandboxAuth(stub, {
+        authToken: AUTH_TOKEN,
+        sandboxId: SANDBOX_ID,
+        status: "ready",
+      });
+      if (policy === "legacy") {
+        await seedShutdown(stub, { lifecyclePolicy: "legacy" });
+      }
+      await queryDO(stub, "UPDATE session SET status = 'completed'");
+
+      const archived = await stub.fetch("http://internal/internal/archive", { method: "POST" });
+      expect(archived.status).toBe(200);
+      const { ws, response } = await openSandboxWs(name, {
+        authToken: AUTH_TOKEN,
+        sandboxId: SANDBOX_ID,
+      });
+      expect(ws).toBeNull();
+      expect(response.status).toBe(410);
+      expect(await response.text()).toBe("Session is terminal");
+    }
+  );
 
   it("preserves a completed session status when shutdown begins between prompts", async () => {
     const name = `shutdown-completed-status-${Date.now()}`;
@@ -674,6 +857,21 @@ describe("sandbox graceful shutdown wiring", () => {
         },
       };
       const sandbox = componentsOf(instance).sandboxRepository;
+      const broadcaster = { broadcast: () => undefined };
+      const sockets = {
+        getSandboxWebSocket: () => null,
+        getConnectedClientCount: () => 0,
+        sendToSandbox: () => false,
+        detachSandboxWebSocket: () => undefined,
+      };
+      const log = createLogger("shutdown-test");
+      const access = new SandboxAccess({
+        storage: sandbox,
+        broadcaster,
+        sockets,
+        canResumeAfterStop: () => providerResumesAfterStop(provider),
+        getLogger: () => log,
+      });
       const shutdown = new SandboxShutdownCoordinator({
         store: new SandboxShutdownRepository(durableState.storage.sql),
         provider,
@@ -681,14 +879,14 @@ describe("sandbox graceful shutdown wiring", () => {
         session: {
           getSession: () => ({ id: "session-1", session_name: "legacy-session" }),
         },
-        messenger: { broadcast: () => undefined },
+        messenger: broadcaster,
         background: {
           submit: (task: () => Promise<void>) => {
             void task();
           },
         },
         onLifecycleChange: async () => undefined,
-        retireAccess: () => undefined,
+        retireAccess: () => access.retireShutdownAccess(),
       } as never);
       const manager = new SandboxLifecycleManager(
         provider,
@@ -698,15 +896,12 @@ describe("sandbox graceful shutdown wiring", () => {
           getSessionRepositories: () => [],
           getUserEnvVars: async () => undefined,
         } as never,
-        { broadcast: () => undefined },
-        {
-          getConnectedClientCount: () => 0,
-          sendToSandbox: () => false,
-          detachSandboxWebSocket: () => undefined,
-        } as never,
+        broadcaster,
+        sockets,
         { schedule: async () => undefined, cancel: async () => undefined } as never,
         { generateId: () => "generated-id" },
         shutdown,
+        access,
         {
           ...DEFAULT_LIFECYCLE_CONFIG,
           controlPlaneUrl: "https://control-plane.test",

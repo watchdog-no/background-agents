@@ -71,25 +71,21 @@ function createMockClient(
     createSandbox: vi.fn(async () => createSessionResponse()),
     runCommandAndWait: vi.fn(async () => ({ commandId: "cmd-1", exitCode: 0 })),
     startCommand: vi.fn(async () => ({ commandId: "cmd-2", exitCode: null })),
-    snapshotSession: vi.fn(
-      async (): Promise<VercelSnapshotResponse> => ({
-        snapshot: { id: "snapshot-1", status: "created", createdAt: 456 },
-        session: { ...createSessionResponse().session, status: "stopped" },
-      })
-    ),
-    listSnapshots: vi.fn(
-      async (): Promise<VercelSnapshotMetadata[]> => [
-        {
-          id: "base-snapshot-from-name",
-          sourceSessionId: "session-base",
-          status: "created",
-          region: "iad1",
-          sizeBytes: 1024,
-          createdAt: 456,
-          updatedAt: 789,
-        },
-      ]
-    ),
+    snapshotSession: vi.fn(async (): Promise<VercelSnapshotResponse> => ({
+      snapshot: { id: "snapshot-1", status: "created", createdAt: 456 },
+      session: { ...createSessionResponse().session, status: "stopped" },
+    })),
+    listSnapshots: vi.fn(async (): Promise<VercelSnapshotMetadata[]> => [
+      {
+        id: "base-snapshot-from-name",
+        sourceSessionId: "session-base",
+        status: "created",
+        region: "iad1",
+        sizeBytes: 1024,
+        createdAt: 456,
+        updatedAt: 789,
+      },
+    ]),
     deleteSnapshot: vi.fn(async () => {}),
     stopSession: vi.fn(async () => {}),
     ...overrides,
@@ -773,12 +769,10 @@ describe("VercelSandboxProvider", () => {
 
   it("reports a failed snapshot status without throwing", async () => {
     const client = createMockClient({
-      snapshotSession: vi.fn(
-        async (): Promise<VercelSnapshotResponse> => ({
-          snapshot: { id: "snapshot-1", status: "failed", createdAt: 456 },
-          session: createSessionResponse().session,
-        })
-      ),
+      snapshotSession: vi.fn(async (): Promise<VercelSnapshotResponse> => ({
+        snapshot: { id: "snapshot-1", status: "failed", createdAt: 456 },
+        session: createSessionResponse().session,
+      })),
     });
     const provider = new VercelSandboxProvider(client, providerConfig);
 
@@ -825,7 +819,6 @@ describe("VercelSandboxProvider", () => {
     );
     expect(createCall.env).not.toHaveProperty("GITHUB_TOKEN");
     expect(createCall.env).not.toHaveProperty("GITHUB_APP_TOKEN");
-    expect(createCall.env).not.toHaveProperty("OI_GITHUB_TOKEN_IS_FALLBACK");
     expect(createCall.env).not.toHaveProperty("OI_INTERNAL_CALLBACK_SECRET");
     expect(createCall.env).not.toHaveProperty("OI_VERCEL_TOKEN");
     expect(createCall.env).not.toHaveProperty("OI_VERCEL_CALLBACK_URL");

@@ -64,6 +64,8 @@ function resolve(envOverrides: Partial<Env> = {}) {
     client: {} as LinearApiClient,
     agentSessionId: "agent-session-1",
     issue: ISSUE,
+    scope: { linearTeamId: "team-1" },
+    teamId: null,
     labelNames: [],
     projectInfo: null,
     comment: null,

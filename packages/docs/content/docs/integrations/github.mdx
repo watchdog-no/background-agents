@@ -4,11 +4,16 @@ description: Automatic pull request reviews, @mention actions, PR Feedback Autof
 audience: team-owner
 owner: integrations
 status: published
-lastReviewed: "2026-09-28"
+lastReviewed: "2026-10-03"
 relatedCode:
   - docs/integrations/GITHUB.md
   - packages/shared/src/types/integrations.ts
   - packages/shared/src/types/github-autofix.ts
+  - packages/control-plane/src/routes/github-route.ts
+  - packages/control-plane/src/automation/github-event-admission.ts
+  - packages/control-plane/src/authorization/teams-enforcement.ts
+  - packages/github-bot/src/session-startup.ts
+  - packages/github-bot/src/session-target.ts
   - packages/control-plane/src/autofix/service.ts
   - packages/web/src/components/settings/integrations/github-global-settings-section.tsx
   - packages/web/src/components/settings/integrations/github-autofix-settings-fields.tsx
@@ -65,6 +70,8 @@ flowchart TB
 
 ## Automatic PR reviews
 
+**Auto-review new PRs** is the deprecated, workspace-owned review-on-open path. It still works and does not use mention team routing. For team-owned event-driven reviews, use a [GitHub Event automation](/automations/github-events) owned by the intended team. Deprecation does not disable the setting.
+
 **When it runs.** With **Auto-review new PRs** enabled, OpenInspect starts a review session for each newly opened, non-draft PR in an in-scope repository. The agent inspects the diff and posts a GitHub review.
 
 **When it skips.** Auto-review does not run when the PR is a draft, the repository is outside the bot's scope, the opener is not an allowed trigger user, or auto-review is disabled globally or for that repository. A PR opened by the App bot itself can be reviewed if that bot login is explicitly allowed under **Allowed Trigger Users**; in that case the review uses a comment rather than an approval or change request. Converting a draft to ready for review does not trigger it; mention the bot in a comment instead.
@@ -79,9 +86,29 @@ flowchart TB
 @my-app[bot] can you explain why this retry path is failing?
 ```
 
+**Model and reasoning overrides.** Start the request with `!model` or `!reasoning` to override the configured model or reasoning effort for the session that comment starts:
+
+```text
+@my-app[bot] !model openai/gpt-5.6-sol !reasoning high investigate the flaky test
+```
+
+The flags work like Slack's: each accepts a space or a colon before the value (`!model:anthropic/claude-sonnet-4-6`, `!reasoning:max`), and all flags must appear together at the start of the request, right after the mention. Models must be enabled under Settings › Models, and the reasoning value must be supported by the model. A model flag without `!reasoning` keeps the configured effort when the new model supports it. If a flag is invalid, the bot replies on the PR and does not start a session. Auto-reviews and review requests always use the configured model.
+
 **Inline review threads.** When you mention the bot in a review thread, the prompt includes that thread's file path and diff context. The agent can reply in the thread and can also post a summary comment on the PR.
 
 **Branch and session behavior.** Comment-triggered sessions start from the repository's default branch, not the PR head branch, so use them for answers and discussion rather than asking the agent to push to the PR branch. Each accepted webhook starts a new session; GitHub comments do not continue an existing session the way Slack replies do, though the agent reads the current PR conversation when it needs context. Mentions on ordinary issues are ignored, and so are the bot's own comments.
+
+### Team routing
+
+Mention routing uses the numeric GitHub repository ID and PR number, in this order:
+
+1. Use the owning team of a session already linked to the PR, including workspace ownership. This is only an ownership hint: it does not resume or grant access to the linked session, even if that session is private.
+2. Otherwise, consider the sender's linked GitHub identity and current team memberships with repository or installation grants covering the repository. A single eligible team wins.
+3. If several teams qualify, use the sender's most recent session on this repository in a still-eligible team. If that does not resolve the ambiguity, fall back to workspace ownership. Missing identity or no eligible team also falls back to workspace ownership.
+
+A routing lookup failure stops the request rather than guessing. Trigger-user checks still apply, and session creation separately checks actual team membership, team state, and repository grants. A configured default environment must have compatible ownership, include the trigger repository, and pass sender repository checks; otherwise the bot falls back to the triggering repository. Workspace fallback can still be refused when the workspace requires a team for new sessions.
+
+`TEAMS_ENFORCEMENT` remains `shadow` by default, not `on`. Team routing and creation checks do not imply full team-read isolation in that mode.
 
 <Callout type="info" title="Want changes pushed to the PR branch?">
   Enable [PR Feedback Autofix](#pr-feedback-autofix). It resumes the session that created the PR, on
@@ -112,6 +139,8 @@ If **Selected repositories** is chosen with nothing selected, the bot does not r
 
 These settings do not gate [GitHub event automations](/automations/github-events), which match on their own repository, event type, enabled state, and conditions.
 
+Event automations match the numeric repository ID and retain their saved owning team, rather than routing from the sender's memberships. Team-owned automations require a current repository grant at admission and launch. Revoking a grant prevents runs; restoring it permits later events, not replay of previously skipped events.
+
 ### Instructions
 
 | Setting                     | What it controls                                                                                    |
@@ -121,7 +150,7 @@ These settings do not gate [GitHub event automations](/automations/github-events
 
 ### Repository Overrides
 
-Add an override for a repository to replace the global defaults for that repository. Each field can be left on **Use global default** or switched to **Override for this repo**: default model and effort, Auto-review new PRs, PR Feedback Autofix, Allowed Trigger Users, Code Review Instructions, and Comment Action Instructions. If neither an override nor a global default sets a model, sessions use the deployment default model.
+Add an override for a repository to replace the global defaults for that repository. Each field can be left on **Use global default** or switched to **Override for this repo**: default model and effort, Auto-review new PRs, PR Feedback Autofix, Allowed Trigger Users, Code Review Instructions, and Comment Action Instructions. If neither an override nor a global default sets a model, sessions use the deployment default model. A [`!model` or `!reasoning` flag](#mention-actions) at the start of a mention overrides both for that one session.
 
 ## PR Feedback Autofix
 
@@ -168,12 +197,14 @@ Make the smallest correct change and run relevant tests.
 
 Reply concisely on the originating pull request when an outcome response is warranted, including validation results, no-change explanation, or question. Do not comment for suppressed input or add redundant status updates.
 
+Answer each review comment in its own thread, not in a summary comment. Find its thread in the pull request's GraphQL `reviewThreads` by the comment whose `databaseId` matches the comment URL's `#discussion_r{id}` fragment, then reply with the `addPullRequestReviewThreadReply` mutation. Once a comment is fully addressed, resolve that thread with `resolveReviewThread`. Leave the thread unresolved if you made no change or asked a question.
+
 <github_feedback_data>
 …the review or comment, serialized…
 </github_feedback_data>
 ```
 
-The agent works on the PR's branch, pushes when it changes something, and replies on the pull request when there is something to report: validation results, an explanation of why nothing changed, or a question. It does not post status updates for their own sake.
+The agent works on the PR's branch, pushes when it changes something, and replies on the pull request when there is something to report: validation results, an explanation of why nothing changed, or a question. It does not post status updates for their own sake. Inline review comments are answered in their own threads, and each thread is resolved once its comment is addressed.
 
 ### Skip reasons
 
@@ -257,7 +288,8 @@ Setup, rotation, and limitations are covered in [Source control](/configure/sour
 
 </Accordion>
   <Accordion title="The wrong model or instructions were used">
-    Repository overrides beat global defaults. Changes apply to new GitHub-triggered sessions only.
+    Repository overrides beat global defaults, and a `!model` or `!reasoning` flag at the start of
+    a mention beats both for that session. Changes apply to new GitHub-triggered sessions only.
 
 </Accordion>
   <Accordion title="The bot is active in too many repositories">
