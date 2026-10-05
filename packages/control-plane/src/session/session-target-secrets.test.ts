@@ -122,6 +122,7 @@ describe("buildSessionTargetSecretSources", () => {
     };
 
     const sources = await buildSessionTargetSecretSources({
+      teamSecrets: {},
       environmentId: null,
       globalSecrets: { G: "g" },
       members: [member("acme", "web", 0, true), member("acme", "backend", 1, false)],
@@ -137,6 +138,7 @@ describe("buildSessionTargetSecretSources", () => {
     const loadMemberSecrets = vi.fn();
 
     const sources = await buildSessionTargetSecretSources({
+      teamSecrets: {},
       environmentId: "env_flagship",
       globalSecrets: { G: "g" },
       members: [member("acme", "web", 0, true)],
@@ -152,6 +154,7 @@ describe("buildSessionTargetSecretSources", () => {
 
   it("returns only global for an environment session with no environment secrets", async () => {
     const sources = await buildSessionTargetSecretSources({
+      teamSecrets: {},
       environmentId: "env_empty",
       globalSecrets: { G: "g" },
       members: [member("acme", "web", 0, true)],
@@ -164,6 +167,7 @@ describe("buildSessionTargetSecretSources", () => {
 
   it("omits members that contribute no secrets", async () => {
     const sources = await buildSessionTargetSecretSources({
+      teamSecrets: {},
       environmentId: null,
       globalSecrets: {},
       members: [member("acme", "web", 0, true), member("acme", "empty", 1, false)],
@@ -177,6 +181,7 @@ describe("buildSessionTargetSecretSources", () => {
 
   it("returns only global when there are no members", async () => {
     const sources = await buildSessionTargetSecretSources({
+      teamSecrets: {},
       environmentId: null,
       globalSecrets: { G: "g" },
       members: [],

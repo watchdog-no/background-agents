@@ -32,15 +32,14 @@ export function hydrateTargets(
   initialEnvironmentIds: string[]
 ): AutomationSessionTarget[] {
   return [
-    ...initialRepositories.map(
-      (repository): AutomationSessionTarget => ({
-        kind: "repo",
-        repoFullName: repositoryKey(repository.repoOwner, repository.repoName),
-      })
-    ),
-    ...initialEnvironmentIds.map(
-      (environmentId): AutomationSessionTarget => ({ kind: "environment", environmentId })
-    ),
+    ...initialRepositories.map((repository): AutomationSessionTarget => ({
+      kind: "repo",
+      repoFullName: repositoryKey(repository.repoOwner, repository.repoName),
+    })),
+    ...initialEnvironmentIds.map((environmentId): AutomationSessionTarget => ({
+      kind: "environment",
+      environmentId,
+    })),
   ];
 }
 
@@ -69,6 +68,11 @@ export function repoNamesOf(targets: AutomationSessionTarget[]): string[] {
 
 function sameStringList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/** Environment link order is not persisted. */
+export function sameEnvironmentIds(a: readonly string[], b: readonly string[]): boolean {
+  return sameStringList([...a].sort(), [...b].sort());
 }
 
 function sameTarget(a: AutomationSessionTarget, b: AutomationSessionTarget): boolean {

@@ -2,98 +2,84 @@
 
 New features, integrations, and notable improvements to Open-Inspect — newest first.
 
-## September 29, 2026
+## October 4, 2026
 
-### Added
+**GitHub model overrides.** Start a GitHub `@mention` with `!model` or `!reasoning`, the same flags
+Slack uses, to pick the model and reasoning effort for that session. Upgrade the GitHub bot and
+control plane together. See
+[GitHub integration](docs/integrations/GITHUB.md#model-and-reasoning-overrides).
 
-`TEAMS_ENFORCEMENT` controls active-user session item routes (`/sessions/:id` and its subpaths)
-using the persisted session row (`off`, `shadow` by default, or `on`). On those routes, private
-visibility applies in every mode; team visibility and the delete ownership rule apply when `on`.
+## October 3, 2026
 
-WebSocket subscribe and per-command session checks now follow the current session row. Private
-sessions stay restricted in every enforcement mode; team access follows the resolver when
-`TEAMS_ENFORCEMENT=on`, including lifecycle access after membership or scope changes. Workspace-wide
-session lists and bulk export follow in subsequent changes; routes to change a session's team or
-visibility are not yet available.
+**Persistent memory.** Personal, repository, and environment memories carry facts and directives
+between sessions. Agents in both harnesses search, read, and propose memories. Only personal facts
+written in a root session that has stayed private and owner-only become active immediately; all
+other agent writes wait for approval. Manage personal memories under **Settings > Memories** and
+repository and environment memories under **Settings > Shared memories**; each session's sidebar
+lists the memories it loaded. Requires D1 migration 0084 and a sandbox image rebuild. See
+[Persistent session memory](docs/MEMORY.md).
 
-Session lists, the inbox, children lists, bulk export, and analytics now filter by persisted row
-visibility. Private sessions remain restricted in every mode; only Owners and administrators receive
-their unattributed, scope-filtered cost total in analytics. The WebSocket path follows in a later
-change; no route can yet make a session private or team-owned.
+## October 2, 2026
+
+**Analytics redesign.** The analytics page is now an overview plus Usage, Cost, Pull requests, and
+People tabs. The range, scope, and tab are kept in the URL. A new **Session origins** breakdown
+shows where sessions start and who they are attributed to.
+
+**Saved prompt drafts.** Unsent prompts survive page reloads. Each session and the new-session
+composer keep their own draft.
+
+**Teams.** Group members into teams that own sessions, environments, automations, and secrets, with
+repository grants and Slack and Linear channel bindings managed from **Settings > Teams**. GitHub
+work routes to teams by numeric repository ID: upgrade the GitHub bot and control plane together,
+and reselect repositories on older GitHub event automations so they keep matching events. Sandbox
+GitHub tokens now cover only the session's repositories. See
+[Authentication and Authorization](docs/AUTH.md).
+
+**Classifier reasoning effort.** Set `classification_reasoning_effort` to send a reasoning effort to
+OpenAI classification models used by the Slack and Linear bots. Leaving it blank keeps the model
+default.
+
+## October 1, 2026
+
+**Brokered credentials for Modal restores.** Restored Modal sandboxes now fetch git credentials from
+the control plane like fresh ones, so Modal no longer needs the `github-app` secret. You can delete
+it after upgrading.
+
+**Session page redesign.** The session sidebar is split into Info, Changes, Tasks, and Tools tabs,
+with captured media under **Artifacts** in Info. Changed files open in the main column beside the
+sidebar, which leaves room for split diffs.
 
 ## September 28, 2026
 
-### Added
-
 **Claude Sonnet 5.5.** Adds `anthropic/claude-sonnet-5-5` to the model picker and integrations, with
-adaptive thinking controls from low through max. Claude Agent SDK 0.2.161 bundles Claude Code
-2.1.284, which supports the new model.
+adaptive thinking controls from low through max.
 
-OpenCode sessions using a connected ChatGPT subscription now report estimated model costs through
-the existing session cost display and spending limit. These are API-price equivalents, not
-additional subscription charges or an OpenAI invoice; estimates remain zero if catalog pricing is
-unavailable.
-
-Workspace settings now includes Teams. Administrators can create teams, manage members and leads,
-edit team defaults, and archive or restore teams. Team leads can manage their own teams where
-permitted.
+**ChatGPT subscription cost estimates.** OpenCode sessions using a connected ChatGPT subscription
+now report API-equivalent cost estimates in the session cost display and spending limit.
 
 ## September 27, 2026
 
-### Changed
+**Trace export schema 2.** Messages, events, and usage are now exported oldest first, and
+single-session downloads include only the requested session. See the
+[trace export reference](docs/TRACE_EXPORT.md).
 
-Trace export now emits published schema 2: messages, events and usage are all oldest first, and
-session trace byte-budget errors use `trace_budget_exceeded`. Single-session downloads export only
-the requested session; `scope` on that route now returns 400. Whole runs remain available through
-the paginated bulk export.
+**Docker-capable Modal sandboxes.** Operators can select the `modal-vm` backend deployment-wide for
+Docker support; `modal` remains the default. See [Modal VM setup](docs/MODAL_DOCKER.md).
 
-### Added
-
-Operators can select `modal-vm` deployment-wide for Docker-capable Modal sandboxes, with separate
-prepared images and filesystem snapshot recovery. The existing `modal` backend remains the default;
-switching backends does not migrate existing sessions or images. See
-[Modal VM setup](docs/MODAL_DOCKER.md).
-
-The analytics dashboard now shows harness metrics, automation performance in automation and all
-scopes, complete runs, and pull-request cost per merged PR by model and harness.
-
-The analytics dashboard now lets operators select human, agent, automation or all sessions and
-compare token usage, cost by model and provider billing in the selected scope.
-
-Analytics responses now include session token totals and cache hit ratio, pull-request cost by model
-and harness, and the top 20 scoped runs in the dashboard snapshot. Run titles may be null.
-
-Session analytics API now accepts `scope=human|agent|automation|all` (default `human`) on the
-dashboard, summary, timeseries, and breakdown routes, and supports `by=model`, `by=harness`,
-`by=spawnSource`, `by=automation`, and `by=provider` breakdowns. Provider rows include the number of
-sessions billed through a matching provider account.
-
-The [trace export reference](docs/TRACE_EXPORT.md) includes a JSON Schema and instructions for
-manually downloading paginated runs through the web app.
+**Scoped analytics.** The analytics dashboard and API can filter human, agent, automation, or all
+sessions, with breakdowns by model, harness, provider, and automation, token totals, cache hit
+ratio, and cost per merged PR.
 
 ## September 26, 2026
 
-### Added
-
-Bulk session export accepts `include` as a comma-separated list of `messages`, `events`, and
-`usage`, so one session line can carry the prompt, the persisted timeline events, and per-step token
-usage. Each session's included collections are read in one storage snapshot and share one 4 MiB byte
-budget and one page cap, and any include limits the request to 5 sessions per page. Messages keep
-their existing newest-first order; events and usage are listed in timeline order.
+**Richer bulk session export.** Bulk export can now include each session's messages, timeline
+events, and per-step token usage through the `include` parameter.
 
 ## September 25, 2026
 
-### Added
-
-Bulk session export now includes run identity, harness, model provider, repository membership, pull
-request lifecycle, and projected token totals on session lines. Schema 1 consumers must ignore
-unknown fields; `source` is unchanged and also appears as `spawnSource`.
-
-### Changed
-
-Bulk session export now requires `sessions.export` instead of `sessions.read`. Owners,
-Administrators, and users granted the permission through a custom role may export; Viewers, Members,
-and bot services cannot.
+**Bulk export metadata and permission.** Exported session lines now include run identity, harness,
+model provider, repositories, pull request lifecycle, and token totals. Bulk export now requires the
+`sessions.export` permission, granted to Owners and Administrators by default.
 
 ## September 23, 2026
 

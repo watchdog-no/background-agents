@@ -24,6 +24,7 @@ import type {
   GitPushSpec,
   GitPushAuthContext,
   CredentialHelperAuth,
+  CredentialScope,
   ResolvedCommit,
   RepositoryTree,
 } from "../types";
@@ -36,6 +37,8 @@ import { classifyGitTreeEntry } from "./git-tree";
 import {
   getCachedInstallationToken,
   getCachedInstallationTokenWithExpiry,
+  getInstallationTokenCacheKey,
+  invalidateInstallationTokenCache,
   getInstallationRepository,
   listInstallationRepositories,
   listRepositoryBranches,
@@ -295,10 +298,11 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   async getPullRequestFeedback(
-    config: GetGitHubPullRequestFeedbackConfig
+    config: GetGitHubPullRequestFeedbackConfig,
+    scope: CredentialScope
   ): Promise<GitHubPullRequestFeedback> {
     if (config.providerObject.kind === "review") {
-      return this.getPullRequestReviewFeedback(config, config.providerObject.id);
+      return this.getPullRequestReviewFeedback(config, config.providerObject.id, scope);
     }
 
     const repositoryPath = `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
@@ -306,6 +310,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     )}`;
     const data = await this.appJsonRequired(
       `${repositoryPath}/issues/comments/${encodeURIComponent(config.providerObject.id)}`,
+      scope,
       githubPullRequestCommentSchema,
       "get pull request comment"
     );
@@ -333,15 +338,19 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     };
   }
 
-  async hasPullRequestWritePermission(config: {
-    owner: string;
-    name: string;
-    authorLogin: string;
-  }): Promise<boolean> {
+  async hasPullRequestWritePermission(
+    config: {
+      owner: string;
+      name: string;
+      authorLogin: string;
+    },
+    scope: CredentialScope
+  ): Promise<boolean> {
     const data = await this.appJson(
       `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
         config.name
       )}/collaborators/${encodeURIComponent(config.authorLogin)}/permission`,
+      scope,
       githubCollaboratorPermissionSchema,
       "get collaborator permission",
       true
@@ -353,7 +362,8 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
 
   private async getPullRequestReviewFeedback(
     config: GitHubPullRequestFeedbackLocation,
-    reviewId: string
+    reviewId: string,
+    scope: CredentialScope
   ): Promise<Extract<GitHubPullRequestFeedback, { kind: "review" }>> {
     const pullRequestPath = `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
       config.name
@@ -361,6 +371,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     const reviewPath = `${pullRequestPath}/reviews/${encodeURIComponent(reviewId)}`;
     const review = await this.appJsonRequired(
       reviewPath,
+      scope,
       githubPullRequestReviewSchema,
       "get pull request review"
     );
@@ -378,6 +389,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     for (let page = 1; ; page += 1) {
       const pageComments = await this.appJsonRequired(
         `${reviewPath}/comments?per_page=${GITHUB_REVIEW_COMMENTS_PER_PAGE}&page=${page}`,
+        scope,
         z.array(githubReviewCommentSchema),
         "get pull request review comments"
       );
@@ -565,7 +577,10 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
    * On a 404 with a known stable repo id, re-resolves the repository's
    * current owner/name by id and retries once (rename/transfer tolerance).
    */
-  async getPullRequest(config: GetPullRequestConfig): Promise<PullRequestSnapshot> {
+  async getPullRequest(
+    config: GetPullRequestConfig,
+    scope: CredentialScope
+  ): Promise<PullRequestSnapshot> {
     if (!this.appConfig) {
       throw new SourceControlProviderError(
         "GitHub App not configured - cannot get pull request",
@@ -573,26 +588,12 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
       );
     }
 
-    let token: string;
-    try {
-      token = await getCachedInstallationToken(this.appConfig, {
-        cacheStore: this.cacheStore,
-        userAgent: this.userAgent,
-      });
-    } catch (error) {
-      throw SourceControlProviderError.fromFetchError(
-        `Failed to generate GitHub App token: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-        extractHttpStatus(error)
-      );
-    }
-
-    let response = await this.fetchPullRequest(token, config.owner, config.name, config.number);
+    let response = await this.fetchPullRequest(scope, config.owner, config.name, config.number);
 
     if (response.status === 404 && config.repositoryExternalId) {
-      const resolved = await this.resolveRepositoryLocationById(token, config.repositoryExternalId);
+      const resolved = await this.resolveRepositoryLocationById(scope, config.repositoryExternalId);
       if (resolved) {
-        response = await this.fetchPullRequest(token, resolved.owner, resolved.name, config.number);
+        response = await this.fetchPullRequest(scope, resolved.owner, resolved.name, config.number);
       }
     }
 
@@ -637,18 +638,17 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   private fetchPullRequest(
-    token: string,
+    scope: CredentialScope,
     owner: string,
     name: string,
     number: number
   ): Promise<Response> {
-    return fetchWithTimeout(`${GITHUB_API_BASE}/repos/${owner}/${name}/pulls/${number}`, {
-      headers: {
-        Accept: "application/vnd.github.v3+json",
-        Authorization: `Bearer ${token}`,
-        "User-Agent": this.userAgent,
-      },
-    });
+    return this.appFetch(
+      `/repos/${owner}/${name}/pulls/${number}`,
+      scope,
+      "get pull request",
+      "application/vnd.github.v3+json"
+    );
   }
 
   /**
@@ -661,18 +661,14 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
    * and the caller surfaces the original 404.
    */
   private async resolveRepositoryLocationById(
-    token: string,
+    scope: CredentialScope,
     repositoryExternalId: string
   ): Promise<{ owner: string; name: string } | null> {
-    const response = await fetchWithTimeout(
-      `${GITHUB_API_BASE}/repositories/${encodeURIComponent(repositoryExternalId)}`,
-      {
-        headers: {
-          Accept: "application/vnd.github.v3+json",
-          Authorization: `Bearer ${token}`,
-          "User-Agent": this.userAgent,
-        },
-      }
+    const response = await this.appFetch(
+      `/repositories/${encodeURIComponent(repositoryExternalId)}`,
+      scope,
+      "resolve repository location",
+      "application/vnd.github.v3+json"
     );
 
     if (!response.ok) {
@@ -778,7 +774,10 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     }
   }
 
-  async getBranchHead(config: GetRepositoryConfig & { branch: string }): Promise<string | null> {
+  async getBranchHead(
+    config: GetRepositoryConfig & { branch: string },
+    scope: CredentialScope
+  ): Promise<string | null> {
     if (!this.appConfig) {
       throw new SourceControlProviderError(
         "GitHub App not configured - cannot resolve branch head",
@@ -786,21 +785,13 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
       );
     }
     try {
-      const token = await getCachedInstallationToken(this.appConfig, {
-        cacheStore: this.cacheStore,
-        userAgent: this.userAgent,
-      });
-      const response = await fetchWithTimeout(
-        `${GITHUB_API_BASE}/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
+      const response = await this.appFetch(
+        `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
           config.name
         )}/git/ref/heads/${encodeURIComponent(config.branch)}`,
-        {
-          headers: {
-            Accept: "application/vnd.github+json",
-            Authorization: `Bearer ${token}`,
-            "User-Agent": this.userAgent,
-          },
-        }
+        scope,
+        "resolve branch head",
+        "application/vnd.github+json"
       );
       if (response.status === 404) return null;
       if (!response.ok) {
@@ -828,13 +819,15 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   async resolveCommit(
-    config: GetRepositoryConfig & { ref: string }
+    config: GetRepositoryConfig & { ref: string },
+    scope: CredentialScope
   ): Promise<ResolvedCommit | null> {
     try {
       const response = await this.appFetch(
         `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
           config.name
         )}/commits/${encodeURIComponent(config.ref)}`,
+        scope,
         "resolve commit",
         "application/vnd.github.sha"
       );
@@ -854,7 +847,8 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   async listTree(
-    config: GetRepositoryConfig & { commitSha: string; path?: string | null }
+    config: GetRepositoryConfig & { commitSha: string; path?: string | null },
+    scope: CredentialScope
   ): Promise<RepositoryTree> {
     const scopedPath = config.path?.trim() || null;
     let treeSha = config.commitSha;
@@ -864,6 +858,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
           `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
             config.name
           )}/git/trees/${encodeURIComponent(treeSha)}`,
+          scope,
           githubTreeSchema,
           "resolve repository subtree"
         );
@@ -876,6 +871,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
       `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
         config.name
       )}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`,
+      scope,
       githubTreeSchema,
       "list repository tree"
     );
@@ -895,13 +891,15 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   async readBlob(
-    config: GetRepositoryConfig & { blobId: string; maxBytes: number }
+    config: GetRepositoryConfig & { blobId: string; maxBytes: number },
+    scope: CredentialScope
   ): Promise<Uint8Array> {
     try {
       const response = await this.appFetch(
         `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(
           config.name
         )}/git/blobs/${encodeURIComponent(config.blobId)}`,
+        scope,
         "read blob",
         "application/vnd.github.raw"
       );
@@ -918,24 +916,52 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   }
 
   /** Issue an installation-authenticated GitHub API request. */
-  private async appFetch(path: string, operation: string, accept: string): Promise<Response> {
+  private async appFetch(
+    path: string,
+    scope: CredentialScope,
+    operation: string,
+    accept: string
+  ): Promise<Response> {
     if (!this.appConfig) {
       throw new SourceControlProviderError(
         `GitHub App not configured - cannot ${operation}`,
         "permanent"
       );
     }
-    const token = await getCachedInstallationToken(this.appConfig, {
+    const env = {
       cacheStore: this.cacheStore,
       userAgent: this.userAgent,
-    });
-    return fetchWithTimeout(`${GITHUB_API_BASE}${path}`, {
-      headers: {
+    };
+    try {
+      const token = await getCachedInstallationToken(this.appConfig, env, { scope });
+      const headers = {
         Accept: accept,
         Authorization: `Bearer ${token}`,
         "User-Agent": this.userAgent,
-      },
-    });
+      };
+      let response = await fetchWithTimeout(`${GITHUB_API_BASE}${path}`, { headers });
+      if (response.status === 401) {
+        await invalidateInstallationTokenCache(
+          env,
+          await getInstallationTokenCacheKey(this.appConfig, scope)
+        );
+        const refreshedToken = await getCachedInstallationToken(this.appConfig, env, {
+          scope,
+          forceRefresh: true,
+        });
+        response = await fetchWithTimeout(`${GITHUB_API_BASE}${path}`, {
+          headers: { ...headers, Authorization: `Bearer ${refreshedToken}` },
+        });
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof SourceControlProviderError) throw error;
+      throw SourceControlProviderError.fromFetchError(
+        `Failed to ${operation}: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        extractHttpStatus(error)
+      );
+    }
   }
 
   /**
@@ -944,12 +970,13 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
    */
   private async appJson<T>(
     path: string,
+    scope: CredentialScope,
     schema: z.ZodType<T>,
     operation: string,
     notFoundIsAbsence: boolean
   ): Promise<T | null> {
     try {
-      const response = await this.appFetch(path, operation, "application/vnd.github+json");
+      const response = await this.appFetch(path, scope, operation, "application/vnd.github+json");
       if (notFoundIsAbsence && response.status === 404) return null;
       if (!response.ok) throw await githubResponseError(response, operation);
       return await parseProviderResponse(response, schema, `Failed to ${operation}`);
@@ -965,10 +992,11 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
 
   private async appJsonRequired<T>(
     path: string,
+    scope: CredentialScope,
     schema: z.ZodType<T>,
     operation: string
   ): Promise<T> {
-    const data = await this.appJson(path, schema, operation, false);
+    const data = await this.appJson(path, scope, schema, operation, false);
     if (data === null) throw new SourceControlProviderError(`Failed to ${operation}`, "permanent");
     return data;
   }
@@ -976,7 +1004,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
   /**
    * Generate authentication for git push operations using GitHub App.
    */
-  async generatePushAuth(): Promise<GitPushAuthContext> {
+  async generatePushAuth(scope: CredentialScope): Promise<GitPushAuthContext> {
     if (!this.appConfig) {
       throw new SourceControlProviderError(
         "GitHub App not configured - cannot generate push auth",
@@ -985,10 +1013,11 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     }
 
     try {
-      const token = await getCachedInstallationToken(this.appConfig, {
-        cacheStore: this.cacheStore,
-        userAgent: this.userAgent,
-      });
+      const token = await getCachedInstallationToken(
+        this.appConfig,
+        { cacheStore: this.cacheStore, userAgent: this.userAgent },
+        { scope }
+      );
       return {
         authType: "app",
         token,
@@ -1001,7 +1030,7 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
     }
   }
 
-  async generateCredentialHelperAuth(): Promise<CredentialHelperAuth> {
+  async generateCredentialHelperAuth(scope: CredentialScope): Promise<CredentialHelperAuth> {
     if (!this.appConfig) {
       throw new SourceControlProviderError(
         "GitHub App not configured - cannot generate credential helper auth",
@@ -1015,7 +1044,8 @@ export class GitHubSourceControlProvider implements SourceControlProvider {
         {
           cacheStore: this.cacheStore,
           userAgent: this.userAgent,
-        }
+        },
+        { scope }
       );
       return {
         username: "x-access-token",

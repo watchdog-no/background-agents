@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { VALID_MODELS } from "@open-inspect/shared/models";
 import {
   extractModelFromLabels,
-  resolveSessionModelSettings,
+  resolveSessionAgentSettings,
   resolveStaticTarget,
 } from "../model-resolution";
 import { buildOAuthSuccessHtml } from "../index";
@@ -239,9 +239,9 @@ describe("resolveStaticTarget", () => {
   });
 });
 
-describe("resolveSessionModelSettings", () => {
+describe("resolveSessionAgentSettings", () => {
   it("keeps persisted retired Codex defaults on OpenAI", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-sonnet-4-6",
       configModel: "openai/gpt-5.3-codex-spark",
       configReasoningEffort: "high",
@@ -249,11 +249,15 @@ describe("resolveSessionModelSettings", () => {
       allowLabelModelOverride: false,
     });
 
-    expect(result).toEqual({ model: "openai/gpt-6-sol", reasoningEffort: "high" });
+    expect(result).toEqual({
+      harness: "opencode",
+      model: "openai/gpt-6-sol",
+      reasoningEffort: "high",
+    });
   });
 
   it("uses integration model when overrides are disabled", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: "anthropic/claude-sonnet-4-6",
       configReasoningEffort: "high",
@@ -268,7 +272,7 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("applies user preference when enabled", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: "anthropic/claude-sonnet-4-6",
       configReasoningEffort: null,
@@ -283,7 +287,7 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("does not let config effort override user effort when user model wins", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: "anthropic/claude-sonnet-4-6",
       configReasoningEffort: "low",
@@ -298,7 +302,7 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("applies label override over user preference when enabled", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: null,
       configReasoningEffort: null,
@@ -314,7 +318,7 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("falls back to model default reasoning effort when invalid", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: "anthropic/claude-opus-4-6",
       configReasoningEffort: "xhigh",
@@ -328,7 +332,7 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("uses config reasoning effort when config model is selected", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
       envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: "anthropic/claude-opus-4-6",
       configReasoningEffort: "max",
@@ -342,15 +346,51 @@ describe("resolveSessionModelSettings", () => {
   });
 
   it("uses xhigh for the GPT 5.6 Sol environment default", () => {
-    const result = resolveSessionModelSettings({
+    const result = resolveSessionAgentSettings({
+      configModel: null,
+      configReasoningEffort: null,
+      allowUserPreferenceOverride: false,
+      allowLabelModelOverride: false,
       envDefaultModel: "openai/gpt-5.6-sol",
+    });
+    expect(result.reasoningEffort).toBe("xhigh");
+  });
+  describe("harness", () => {
+    const base = {
+      envDefaultModel: "anthropic/claude-haiku-4-5",
       configModel: null,
       configReasoningEffort: null,
       allowUserPreferenceOverride: true,
       allowLabelModelOverride: true,
+    };
+
+    it("routes Anthropic models to Claude Agent when no harness is configured", () => {
+      expect(resolveSessionAgentSettings(base).harness).toBe("claude");
     });
 
-    expect(result.model).toBe("openai/gpt-5.6-sol");
-    expect(result.reasoningEffort).toBe("xhigh");
+    it("runs a resolved Anthropic model on the configured Claude Agent harness", () => {
+      expect(
+        resolveSessionAgentSettings({
+          ...base,
+          configHarness: "claude",
+          userModel: "openai/gpt-6-sol",
+          labelModel: "anthropic/claude-opus-4-6",
+        })
+      ).toMatchObject({ harness: "claude", model: "anthropic/claude-opus-4-6" });
+    });
+
+    it.each([
+      ["env default", { envDefaultModel: "openai/gpt-6-sol" }],
+      ["integration config", { configModel: "openai/gpt-6-sol" }],
+      ["user preference", { userModel: "openai/gpt-6-sol" }],
+      ["model label", { labelModel: "openai/gpt-6-sol" }],
+    ])(
+      "falls back to OpenCode when the %s resolves a model Claude Agent cannot run",
+      (_source, override) => {
+        expect(
+          resolveSessionAgentSettings({ ...base, configHarness: "claude", ...override })
+        ).toMatchObject({ harness: "opencode", model: "openai/gpt-6-sol" });
+      }
+    );
   });
 });

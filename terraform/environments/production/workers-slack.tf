@@ -61,15 +61,18 @@ module "slack_bot_worker" {
     }
   }
 
-  plain_text_bindings = {
-    CONTROL_PLANE_URL                 = { value = local.control_plane_url }
-    WEB_APP_URL                       = { value = local.web_app_url }
-    DEPLOYMENT_NAME                   = { value = var.deployment_name }
-    APP_NAME                          = { value = var.app_name }
-    DEFAULT_MODEL                     = { value = var.slack_bot_default_model }
-    CLASSIFICATION_MODEL              = { value = var.classification_model }
-    CLASSIFICATION_DEFAULT_REPOSITORY = { value = var.classification_default_repository }
-  }
+  plain_text_bindings = merge(
+    {
+      CONTROL_PLANE_URL                 = { value = local.control_plane_url }
+      WEB_APP_URL                       = { value = local.web_app_url }
+      DEPLOYMENT_NAME                   = { value = var.deployment_name }
+      APP_NAME                          = { value = var.app_name }
+      DEFAULT_MODEL                     = { value = var.slack_bot_default_model }
+      CLASSIFICATION_MODEL              = { value = var.classification_model }
+      CLASSIFICATION_DEFAULT_REPOSITORY = { value = var.classification_default_repository }
+    },
+    local.classifier_reasoning_effort_bindings
+  )
 
   # No classifier provider key: this deployment's bots classify through the
   # control plane's /classify endpoint, which holds the credentials.

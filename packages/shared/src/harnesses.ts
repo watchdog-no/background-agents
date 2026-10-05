@@ -101,7 +101,8 @@ export function resolveHarnessForModel(
   requested: string | null | undefined,
   model: string
 ): HarnessId {
-  return harnessForModel(model) ?? getValidHarnessOrDefault(requested);
+  const harness = harnessForModel(model) ?? getValidHarnessOrDefault(requested);
+  return harnessSupportsModel(harness, model) ? harness : DEFAULT_HARNESS;
 }
 
 /** Whether the harness can run a model (by its catalog provider prefix). */

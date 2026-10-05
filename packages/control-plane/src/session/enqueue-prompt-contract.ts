@@ -21,7 +21,8 @@ export const enqueuePromptRequestSchema = z
     clientRequestId: clientRequestIdSchema.optional(),
     coalescingKey: z.string().min(1).max(128).optional(),
     pendingAppendContent: promptContentSchema.optional(),
-    // Trusted SCM enrichment resolved by the router at prompt time.
+    // Authoritative SCM snapshot resolved by the router at prompt time.
+    // Explicit null fields clear stored attribution; absence leaves it unchanged.
     scmEnrichment: z
       .object({
         userId: z.string().nullable(),

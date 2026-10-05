@@ -1,7 +1,9 @@
 // Integration settings types
 
+import { harnessIdSchema } from "../harnesses";
 import { escapeRegExp } from "../regex";
 import { z } from "zod";
+import { teamSettingsSchema } from "./teams";
 
 export type IntegrationId = "github" | "linear" | "code-server" | "vnc" | "sandbox" | "slack";
 
@@ -104,8 +106,10 @@ export const scmGlobalConfigSchema: z.ZodType<ScmGlobalConfig> = z.strictObject(
 /** Repository SCM settings are field-level overrides; omitted fields inherit globally. */
 export type ScmRepoSettings = ScmSettings;
 
-/** Overridable behavior settings for the Linear bot. Used at both global (defaults) and per-repo (overrides) levels. */
+/** Overridable behavior settings for the Linear bot, shared by global defaults and repo overrides. */
 export const linearBotSettingsSchema = z.strictObject({
+  /** Preferred harness for new sessions; see `resolveHarnessForModel`. */
+  harness: harnessIdSchema.optional(),
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
   allowUserPreferenceOverride: z.boolean().optional(),
@@ -115,6 +119,17 @@ export const linearBotSettingsSchema = z.strictObject({
 });
 
 export type LinearBotSettings = z.infer<typeof linearBotSettingsSchema>;
+
+export const linearUnboundChannelsSchema = z.enum(["workspace", "reject"]);
+export type LinearUnboundChannels = z.infer<typeof linearUnboundChannelsSchema>;
+export const DEFAULT_LINEAR_UNBOUND_CHANNELS: LinearUnboundChannels = "workspace";
+
+/** Global Linear defaults include workspace-wide policy that repo overrides cannot change. */
+export const linearBotGlobalSettingsSchema = linearBotSettingsSchema.extend({
+  unboundChannels: linearUnboundChannelsSchema.optional(),
+});
+
+export type LinearBotGlobalSettings = z.infer<typeof linearBotGlobalSettingsSchema>;
 
 /**
  * Maximum length of a custom session-instructions value (Linear
@@ -385,6 +400,10 @@ export function resolveBuildTimeoutSeconds(settings: SandboxSettings | undefined
 
 export type SlackMentionsPolicy = "allow" | "escape" | "strip";
 
+export const slackUnboundChannelsSchema = z.enum(["workspace", "reject"]);
+export type SlackUnboundChannels = z.infer<typeof slackUnboundChannelsSchema>;
+export const DEFAULT_SLACK_UNBOUND_CHANNELS: SlackUnboundChannels = "workspace";
+
 /** What a Slack routing rule points at: a repository or a saved environment. */
 export type SlackRoutingTargetType = "repository" | "environment";
 
@@ -445,6 +464,8 @@ export type SlackRepoSettings = z.infer<typeof slackRepoSettingsSchema>;
 export const slackGlobalSettingsSchema = slackRepoSettingsSchema.extend({
   model: z.string().optional(),
   mentionsPolicy: z.enum(["allow", "escape", "strip"]).optional(),
+  /** Ownership policy for Slack channels without a Team binding (global-only). */
+  unboundChannels: slackUnboundChannelsSchema.optional(),
   /** Workspace-wide keyword→repository routing rules (global-only, like mentionsPolicy). */
   routingRules: z.array(slackRoutingRuleSchema.strict()).optional(),
   /** Custom instructions appended to the first prompt of every Slack-initiated session. */
@@ -535,7 +556,7 @@ export const integrationSettingsSchemas = {
     repo: githubBotSettingsSchema,
   },
   linear: {
-    global: integrationGlobalSettingsSchema(linearBotSettingsSchema),
+    global: integrationGlobalSettingsSchema(linearBotGlobalSettingsSchema),
     repo: linearBotSettingsSchema,
   },
   "code-server": {
@@ -557,6 +578,13 @@ export const integrationSettingsSchemas = {
   scm: {
     global: scmGlobalConfigSchema,
     repo: scmSettingsSchema,
+  },
+  teams: {
+    global: z.strictObject({
+      enabledRepos: z.never().optional(),
+      defaults: teamSettingsSchema.optional(),
+    }),
+    repo: z.strictObject({}),
   },
 } as const;
 

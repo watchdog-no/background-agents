@@ -65,6 +65,11 @@ locals {
     : { ANTHROPIC_API_KEY = { value = local.classifier_anthropic_api_key } }
   )
 
+  # Bound only when set, so an unconfigured classifier keeps the model default.
+  classifier_reasoning_effort_bindings = var.classification_reasoning_effort != "" ? {
+    CLASSIFICATION_REASONING_EFFORT = { value = var.classification_reasoning_effort }
+  } : {}
+
   # Deployment-wide LLM keys injected into Modal session sandboxes. Every key stays
   # present with an empty value when unconfigured, so clearing one reconciles the
   # old credential away on the next apply; Modal rejects a secret with no keys at
@@ -94,8 +99,15 @@ locals {
     var.web_platform == "vercel" ? module.web_app[0].production_url : local.web_app_url
   )
 
+  # Documentation site hostname, null when unset. The Terraform workflow passes
+  # an unset repository variable as "", which must not attach an empty domain.
+  docs_custom_domain = (
+    var.docs_custom_domain == null ? null :
+    trimspace(var.docs_custom_domain) == "" ? null : trimspace(var.docs_custom_domain)
+  )
+
   # Documentation site URL, when it serves a hostname of its own
-  docs_custom_domain_url = var.docs_custom_domain != null ? "https://${var.docs_custom_domain}" : null
+  docs_custom_domain_url = local.docs_custom_domain != null ? "https://${local.docs_custom_domain}" : null
 
   # Worker script paths (deterministic output locations)
   control_plane_script_path = "${var.project_root}/packages/control-plane/dist/index.js"

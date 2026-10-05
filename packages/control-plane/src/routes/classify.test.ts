@@ -244,6 +244,30 @@ describe("POST /classify", () => {
     expect(await res.json()).toMatchObject({ reason: "oauth_unauthorized" });
   });
 
+  it("forwards optional reasoning effort through the broker to the OpenAI API", async () => {
+    mockGetDecryptedSecrets.mockResolvedValue({ OPENAI_API_KEY: "sk-openai" });
+    mockFetch.mockResolvedValue(openaiFunctionResponse());
+    const response = await handler(
+      request({ prompt: "which repo?", model: "openai/gpt-6-luna", reasoningEffort: "low" }),
+      ENV,
+      {},
+      ctx
+    );
+    expect(response.status).toBe(200);
+    expect(lastFetch().body.reasoning).toEqual({ effort: "low" });
+  });
+
+  it("rejects malformed reasoning effort before calling a provider", async () => {
+    const response = await handler(
+      request({ prompt: "which repo?", model: "openai/gpt-6-luna", reasoningEffort: " LOW " }),
+      ENV,
+      {},
+      ctx
+    );
+    expect(response.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid request body", async () => {
     const res = await handler(
       request({ model: "anthropic/claude-haiku-4-5" }),

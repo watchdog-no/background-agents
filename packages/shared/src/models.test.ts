@@ -11,6 +11,7 @@ import {
   extractProviderAndModel,
   getSubscriptionProviderForModel,
   getDefaultReasoningEffort,
+  getModelDisplayName,
   getReasoningConfig,
   getValidModelOrDefault,
   isValidModel,
@@ -46,6 +47,7 @@ const OPENAI_MODELS = [
   "openai/gpt-5.6-luna",
   "openai/gpt-6-astra",
   "openai/gpt-6-sol",
+  "openai/gpt-6.1-sol",
   "openai/gpt-6-luna",
 ] as const;
 
@@ -127,6 +129,13 @@ it.each([
 });
 
 describe("model utilities", () => {
+  it("displays named fork models and preserves unknown provider IDs", () => {
+    expect(getModelDisplayName("openai/gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(getModelDisplayName("openai/gpt-6.1-sol")).toBe("GPT-6.1 Sol");
+    expect(getModelDisplayName("anthropic/claude-fable-5")).toBe("Claude Fable 5");
+    expect(getModelDisplayName("custom/private-model")).toBe("custom/private-model");
+  });
+
   it("derives every public model view from the authoritative catalog", () => {
     const catalogModels = MODEL_CATALOG.flatMap((group) => group.models);
 
@@ -468,6 +477,10 @@ describe("model utilities", () => {
       efforts: ["none", "low", "medium", "high", "xhigh", "max"],
       default: "medium",
     });
+    expect(getReasoningConfig("openai/gpt-6.1-sol")).toEqual({
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      default: "medium",
+    });
     expect(getReasoningConfig("openai/gpt-5.6-sol")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       default: "xhigh",
@@ -518,6 +531,8 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("openai/gpt-6-astra", "none")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-6-sol", "none")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-6-sol", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6.1-sol", "max")).toBe(true);
+    expect(isValidReasoningEffort("openai/gpt-6.1-sol", "none")).toBe(false);
     expect(isValidReasoningEffort("openai/gpt-6-luna", "none")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-6-luna", "max")).toBe(true);
     expect(isValidReasoningEffort("openai/gpt-5.6-sol", "xhigh")).toBe(true);

@@ -250,7 +250,8 @@ type OpenAICred = { apiKey: string } | { oauthToken: string; accountId?: string 
 async function openaiRequest(
   prompt: string,
   model: string,
-  cred: OpenAICred
+  cred: OpenAICred,
+  reasoningEffort?: string
 ): Promise<ClassifyRawResult> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   let url: string;
@@ -268,6 +269,7 @@ async function openaiRequest(
 
   const body = {
     model,
+    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     input: prompt,
     tools: [
       {
@@ -314,14 +316,15 @@ async function classifyWithOpenAI(
   env: Env,
   db: SqlDatabase,
   prompt: string,
-  model: string
+  model: string,
+  reasoningEffort?: string
 ): Promise<ClassifyRawResult> {
   const oauthAvailable = oauthSecretsConfigured(env);
 
   const apiKey = await readGlobalSecret(env, db, "OPENAI_API_KEY");
   if (apiKey) {
     try {
-      return await openaiRequest(prompt, model, { apiKey });
+      return await openaiRequest(prompt, model, { apiKey }, reasoningEffort);
     } catch (e) {
       if (!shouldFallbackToOAuth(e, oauthAvailable)) throw e;
       log.warn("classify.api_key_rejected_falling_back_to_oauth", { provider: "openai" });
@@ -329,7 +332,7 @@ async function classifyWithOpenAI(
   }
 
   const { accessToken, accountId } = await getOpenAIOAuthToken(env, db);
-  return openaiRequest(prompt, model, { oauthToken: accessToken, accountId });
+  return openaiRequest(prompt, model, { oauthToken: accessToken, accountId }, reasoningEffort);
 }
 
 async function getOpenAIOAuthToken(
@@ -393,7 +396,7 @@ export async function handleClassify(
   _params: object,
   ctx: RequestContext
 ): Promise<Response> {
-  let payload: { prompt?: unknown; model?: unknown };
+  let payload: { prompt?: unknown; model?: unknown; reasoningEffort?: unknown };
   try {
     payload = (await request.json()) as typeof payload;
   } catch {
@@ -410,12 +413,21 @@ export async function handleClassify(
     );
   }
 
+  const reasoningEffort = payload.reasoningEffort;
+  if (
+    reasoningEffort !== undefined &&
+    (typeof reasoningEffort !== "string" || !/^[a-z]+$/.test(reasoningEffort))
+  ) {
+    return classifyErrorResponse(
+      new ClassifyError("invalid_request", "reasoningEffort must be a lowercase effort name", 400)
+    );
+  }
   const { provider, model: modelId } = extractProviderAndModel(model);
 
   try {
     const result =
       provider === "openai"
-        ? await classifyWithOpenAI(env, ctx.db, prompt, modelId)
+        ? await classifyWithOpenAI(env, ctx.db, prompt, modelId, reasoningEffort)
         : await classifyWithAnthropic(env, ctx.db, prompt, modelId);
     return json(result);
   } catch (e) {

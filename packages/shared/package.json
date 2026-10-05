@@ -46,6 +46,10 @@
       "import": "./dist/http-body.js",
       "types": "./dist/http-body.d.ts"
     },
+    "./inline-prompt-flags": {
+      "import": "./dist/inline-prompt-flags.js",
+      "types": "./dist/inline-prompt-flags.d.ts"
+    },
     "./regex": {
       "import": "./dist/regex.js",
       "types": "./dist/regex.d.ts"
@@ -77,6 +81,10 @@
     "./types/teams": {
       "import": "./dist/types/teams.js",
       "types": "./dist/types/teams.d.ts"
+    },
+    "./types/team-channel-bindings": {
+      "import": "./dist/types/team-channel-bindings.js",
+      "types": "./dist/types/team-channel-bindings.d.ts"
     },
     "./types/team-access": {
       "import": "./dist/types/team-access.js",
@@ -213,6 +221,14 @@
     "./types/audit-events": {
       "import": "./dist/types/audit-events.js",
       "types": "./dist/types/audit-events.d.ts"
+    },
+    "./types/memories": {
+      "import": "./dist/types/memories.js",
+      "types": "./dist/types/memories.d.ts"
+    },
+    "./memory-tools": {
+      "import": "./dist/memory-tools.js",
+      "types": "./dist/memory-tools.d.ts"
     }
   },
   "scripts": {
@@ -220,10 +236,13 @@
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix"
+    "lint:fix": "eslint src/ --fix",
+    "generate:memory-contract": "UPDATE_MEMORY_CONTRACT=1 vitest run src/memory-tools.test.ts"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.7.2",
     "vitest": "^4.1.11"
   },

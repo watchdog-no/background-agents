@@ -222,6 +222,21 @@ An invocation's status is **derived from its child runs, never stored**: no chil
 any child starting/running → `starting`/`running`; all terminal → `completed` (none failed),
 `failed` (none completed), `partial_failed` (a mix), or `skipped` (all skipped).
 
+#### Webhook triggers
+
+Webhook automations are called with their API key (`Authorization: Bearer <key>`) instead of a user
+session:
+
+| Endpoint                                             | Method | Description                                                                            |
+| ---------------------------------------------------- | ------ | -------------------------------------------------------------------------------------- |
+| `/webhooks/automation/:id`                           | POST   | Fire with a JSON body → `{ok, triggered, skipped, steered, invocationId}`              |
+| `/webhooks/automation/:id/invocations/:invocationId` | GET    | Status of a webhook firing → `{invocationId, status, runs: [{id, status, sessionId}]}` |
+
+`invocationId` is `null` when nothing was recorded (conditions did not match, the automation is
+paused, or execution was denied before admission). A retry with the same `idempotencyKey` returns
+the original firing's ID, even while it is still running. The status endpoint serves only
+invocations this webhook caused, and never exposes session content.
+
 ### Audit Events
 
 | Endpoint        | Method | Description                                                    |
@@ -445,6 +460,21 @@ Existing sessions remain pinned to their stored authentication mode.
 > **Single-Tenant Only**: This control plane is designed for single-tenant deployment where all
 > users are trusted members of the same organization.
 
+Slack-bot `POST /sessions/:id/prompt` and `POST /sessions/:id/attachments` requests require exactly
+one `channel=slack:<channelId>` query coordinate covered by the service signature. Before actor
+enrollment or session writes, admission compares the live channel binding with the session's
+persisted owning team in every `TEAMS_ENFORCEMENT` mode. Matching workspace/unbound scopes remain
+valid; this check does not replace the user's collaboration or membership authorization. Scope
+refusals return `slack_channel_scope_denied`, which closes the bot's thread mapping rather than
+treating the refusal as a per-user denial or retrying with cached ownership.
+
+Slack channel catalogs use signed `GET /repos?channel=slack:<channelId>` and
+`GET /environments?channel=slack:<channelId>` requests with the requesting user's actor assertion.
+The control plane derives the team from its current binding, checks user access, and filters current
+repository grants; a bot-supplied `teamId` cannot override that scope. Unbound channel scopes
+include only workspace-owned environments, even for multi-team users and administrators. The bot
+does not cache channel-catalog responses or fall back to workspace/team data on failed scoped reads.
+
 Bulk archiving uses `POST /sessions/batch-archive` with an explicit selection:
 
 ```json
@@ -495,35 +525,25 @@ The former `/operator/sessions/archive` and `/internal/operator-archive` proposa
 
 ### GitHub App Token Flow
 
-The system uses two types of GitHub tokens:
+The sandbox helper calls `/sessions/:id/scm-credentials` with its sandbox auth token. The control
+plane resolves the persisted session repositories, intersects current owning-team grants only for
+team-owned sessions, and passes that scope to the provider. GitHub mints a short-lived installation
+token for that scope; GitLab returns its deployment-wide PAT without narrowing it. Installation-wide
+metadata/catalog credentials are separate from GitHub session credentials.
 
-| Token            | Used For           | Delivery                      | Access Scope                     |
-| ---------------- | ------------------ | ----------------------------- | -------------------------------- |
-| GitHub App Token | Clone, fetch, push | Brokered to credential helper | All repos where App is installed |
-| User OAuth Token | Create PRs         | Server-only                   | User's accessible repos          |
-
-Fresh and prebuilt-image sandboxes do not receive a long-lived `GITHUB_TOKEN`, `GITHUB_APP_TOKEN`,
-or `VCS_CLONE_TOKEN` for normal git operations. Git invokes the sandbox credential helper, which
-calls `/sessions/:id/scm-credentials` with the sandbox auth token and receives short-lived
-credentials on demand. Legacy snapshots and one-shot image builds may still receive env-token
-fallbacks for compatibility. The helper preserves the existing installation-wide model by serving
-credentials for HTTPS git requests to the configured SCM host, including setup/start hooks that
-clone auxiliary private repos. This avoids stale embedded credentials in long-running sessions and
-Daytona persistent resumes; Modal snapshot restores still mint a fresh fallback token during
-restore.
-
-If a `create-pr` request is triggered by a participant without a user OAuth token (for example,
-Slack-created or Google-login sessions), the sandbox can still push the branch with brokered GitHub
-App credentials and the control plane returns a manual GitHub `pull/new` URL instead of failing the
-request.
+The helper caches the returned password on disk; Modal filesystem snapshots can retain that cache.
+Grant changes constrain subsequent credential resolution, not already-issued tokens. Image builds
+receive `VCS_CLONE_TOKEN` because they have no session broker. For the authoritative delivery,
+provider, user-identity, and snapshot boundaries, see
+[Repository and Credential Boundaries](../../docs/AUTH.md#repository-and-credential-boundaries).
 
 ### Why This Matters
 
-- **No per-user repo access validation**: When a session is created, the system does not verify that
-  the user has access to the requested repository
+- **No personal GitHub access comparison**: Session creation checks Open-Inspect permissions and
+  resource access, not the user's personal GitHub repository permissions
 - **Shared GitHub App installation**: A single `GITHUB_APP_INSTALLATION_ID` is used for all users
-- **Trust boundary is the organization**: All users with access to the web app can work with any
-  repository the GitHub App is installed on
+- **Trust boundary is the organization**: Teams and session visibility add internal access controls,
+  not multi-tenant isolation. See [Authentication and Authorization](../../docs/AUTH.md).
 
 ### Configuration
 
