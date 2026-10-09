@@ -44,34 +44,24 @@ function createMockModalClient(
   }> = {}
 ): ModalClient {
   return {
-    createSandbox: vi.fn(
-      async (): Promise<CreateSandboxResponse> => ({
-        sandboxId: "sandbox-123",
-        modalObjectId: "modal-obj-123",
-        createdAt: Date.now(),
-      })
-    ),
-    restoreSandbox: vi.fn(
-      async (): Promise<RestoreSandboxResponse> => ({
-        sandboxId: "sandbox-123",
-        modalObjectId: "modal-obj-123",
-      })
-    ),
-    snapshotSandbox: vi.fn(
-      async (): Promise<SnapshotSandboxResponse> => ({
-        imageId: "image-123",
-      })
-    ),
-    snapshotBuildSandbox: vi.fn(
-      async (): Promise<SnapshotSandboxResponse> => ({
-        imageId: "build-image-123",
-      })
-    ),
-    createImageBuildSandbox: vi.fn(
-      async (): Promise<CreateImageBuildSandboxResponse> => ({
-        providerSessionId: "modal-session-123",
-      })
-    ),
+    createSandbox: vi.fn(async (): Promise<CreateSandboxResponse> => ({
+      sandboxId: "sandbox-123",
+      modalObjectId: "modal-obj-123",
+      createdAt: Date.now(),
+    })),
+    restoreSandbox: vi.fn(async (): Promise<RestoreSandboxResponse> => ({
+      sandboxId: "sandbox-123",
+      modalObjectId: "modal-obj-123",
+    })),
+    snapshotSandbox: vi.fn(async (): Promise<SnapshotSandboxResponse> => ({
+      imageId: "image-123",
+    })),
+    snapshotBuildSandbox: vi.fn(async (): Promise<SnapshotSandboxResponse> => ({
+      imageId: "build-image-123",
+    })),
+    createImageBuildSandbox: vi.fn(async (): Promise<CreateImageBuildSandboxResponse> => ({
+      providerSessionId: "modal-session-123",
+    })),
     startImageBuildSandbox: vi.fn(async () => undefined),
     terminateImageBuildSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(async () => undefined),
