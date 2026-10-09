@@ -104,7 +104,10 @@ describe("POST /classify", () => {
     expect(call.url).toBe("https://api.anthropic.com/v1/messages");
     expect(call.headers["x-api-key"]).toBe("sk-ant-test");
     expect(call.headers["Authorization"]).toBeUndefined();
-    expect(call.body.system).toBeUndefined();
+    // Opus 4.7+ reject a non-default temperature and Opus 5.5 a forced tool call.
+    expect(call.body).not.toHaveProperty("temperature");
+    expect(call.body.tool_choice).toEqual({ type: "auto" });
+    expect(call.body.system).toContain("classify_repository");
   });
 
   it("reports a missing Anthropic API key without calling the provider", async () => {

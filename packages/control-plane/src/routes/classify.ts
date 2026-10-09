@@ -27,6 +27,7 @@ import { type RequestContext, json } from "./shared";
 const log = createLogger("router:classify");
 
 const CLASSIFY_TOOL_NAME = "classify_repository";
+const CLASSIFY_SYSTEM_PROMPT = `Answer by calling the ${CLASSIFY_TOOL_NAME} tool exactly once. Do not reply in plain text.`;
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -97,10 +98,13 @@ async function anthropicRequest(
     "anthropic-version": ANTHROPIC_VERSION,
     "x-api-key": apiKey,
   };
-  const body: Record<string, unknown> = {
+  // Claude Opus 4.7 and later reject a non-default `temperature`, and Opus 5.5
+  // rejects a forced tool call, each with HTTP 400, so the system prompt asks
+  // for the call instead.
+  const body = {
     model,
     max_tokens: 500,
-    temperature: 0,
+    system: CLASSIFY_SYSTEM_PROMPT,
     tools: [
       {
         name: CLASSIFY_TOOL_NAME,
@@ -108,7 +112,7 @@ async function anthropicRequest(
         input_schema: CLASSIFY_INPUT_SCHEMA,
       },
     ],
-    tool_choice: { type: "tool", name: CLASSIFY_TOOL_NAME },
+    tool_choice: { type: "auto" },
     messages: [{ role: "user", content: prompt }],
   };
 

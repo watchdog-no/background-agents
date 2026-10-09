@@ -30,6 +30,7 @@ import { createLogger } from "../logger";
 import { fetchInteractiveThreadContext } from "../interactive-thread-context";
 import {
   buildWorkingMessage,
+  formatHarnessModelRefusal,
   formatSessionDefaultsNotice,
   scheduleStartingStatus,
 } from "../messages/blocks";
@@ -40,7 +41,6 @@ import {
   formatInterimThreadContext,
 } from "../messages/context";
 import { storePendingRequest } from "../pending-requests/pending-request-store";
-import { followUpHarnessMismatch } from "../sessions/harness-mismatch";
 import { deliverPrompt } from "../sessions/prompt-delivery";
 import { checkPublicationAccess } from "../sessions/control-plane-client";
 import {
@@ -230,14 +230,6 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
         return;
       }
       turnPlan = resolvedTurn.turnPlan;
-      const harnessMismatch = followUpHarnessMismatch(
-        existingSession.model,
-        turnPlan.effective.model
-      );
-      if (harnessMismatch) {
-        await postMessage(env.SLACK_BOT_TOKEN, channel, harnessMismatch, { thread_ts: threadTs });
-        return;
-      }
     }
     if (hasInlineOverrides) {
       scheduleStartingStatus(scheduleBackground, env, channel, threadTs, traceId);
@@ -325,6 +317,15 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
     // An image-only follow-up that lost every image sends no prompt; the
     // user was already told inside deliverPrompt.
     if (promptResult.reason === "no_images_delivered") return;
+    if (promptResult.reason === "harness_model_incompatible") {
+      await postMessage(
+        env.SLACK_BOT_TOKEN,
+        channel,
+        formatHarnessModelRefusal(promptResult.message),
+        { thread_ts: threadTs }
+      );
+      return;
+    }
     if (promptResult.reason === "transient") {
       await postMessage(
         env.SLACK_BOT_TOKEN,
