@@ -233,19 +233,14 @@ Create an R2 API Token:
 
 ### Anthropic (Optional)
 
-Optional for the core path, which sets `enable_slack_bot = false` and `enable_linear_bot = false` in
-Step 5. Terraform's own default enables the Slack bot, and its classifier runs on Claude, so
-`terraform apply` fails without this key unless both bots are disabled or `classification_model`
-points at an OpenAI model. If you enable Slack or Linear later, set either
-`classification_anthropic_api_key` or `anthropic_api_key` then; prefer the classifier-only key
-unless you also want a deployment-wide sandbox key, because it is never injected into sandboxes.
-Coding sessions themselves need no key here — those model credentials can be added as secrets in the
-web app after deploying. With Modal, a key set in `anthropic_api_key` is also injected into session
-sandboxes as a deployment-wide default.
+Claude models run on the **Claude Agent** harness. Connect a Claude subscription under Settings >
+Accounts after deploying (see [Claude Agent](CLAUDE_AGENT.md)), or add `ANTHROPIC_API_KEY` as a
+global secret in Settings > Secrets for metered API access.
 
-1. Go to [Anthropic Console](https://console.anthropic.com)
-2. Create an API key
-3. Note the **API Key** (starts with `sk-ant-`)
+The Slack and Linear classifiers call the control plane's `/classify` endpoint, which reads model
+credentials only from the global secret store, not from Terraform. If `classification_model` is an
+Anthropic model, add `ANTHROPIC_API_KEY` as a global secret; for an OpenAI model, add
+`OPENAI_API_KEY`.
 
 > **Want to use your OpenAI ChatGPT subscription?** See [Using OpenAI Models](OPENAI_MODELS.md) for
 > setup instructions (can be configured after deployment).
