@@ -81,6 +81,16 @@
         "occurrences": ["CREATE TRIGGER", "CREATE TRIGGER"],
         "reason": "Fence private team-default inserts and updates from the previous Worker between migration commit and deployment. New store validation cannot constrain old binaries; SQLite cannot narrow the existing CHECK in place, and rebuilding the referenced teams table risks deleting dependents. A Postgres migration would ALTER the CHECK instead."
       }
+    },
+    "terraform/d1/migrations/9014_enable_claude_haiku_5_5.sql": {
+      "json-function": {
+        "occurrences": ["json_insert(", "json_each("],
+        "reason": "One-time data migration appends the model to the saved enabled-models JSON array without touching other entries, atomically in both D1 and Node SQLite migration runners. A TypeScript rewrite would require a new application-level migration protocol; a future Postgres migration needs JSONB equivalents."
+      },
+      "strftime": {
+        "occurrences": ["strftime("],
+        "reason": "The SQL-only migration runners must stamp the changed preferences row in milliseconds inside the migration transaction. A bound application timestamp is unavailable in these runners; a future Postgres migration needs its epoch equivalent."
+      }
     }
   },
   "grandfatheredMigrations": [
