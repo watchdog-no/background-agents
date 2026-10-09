@@ -102,7 +102,6 @@ export const SessionInternalPaths = {
   expireDraft: "/internal/expire-draft",
   verifySandboxToken: "/internal/verify-sandbox-token",
   openaiTokenRefresh: "/internal/openai-token-refresh",
-  anthropicTokenRefresh: "/internal/anthropic-token-refresh",
   xaiTokenRefresh: "/internal/xai-token-refresh",
   scmCredentials: "/internal/scm-credentials",
   tunnelUrls: "/internal/tunnel-urls",

@@ -34,7 +34,6 @@ import {
   type SandboxLifetime,
   type StopConfig,
 } from "../provider";
-import { prepareSandboxOAuthEnv } from "../oauth-env";
 import {
   evaluateCircuitBreaker,
   evaluateSpawnDecision,
@@ -805,7 +804,7 @@ export class SandboxLifecycleManager
         repo_name: session.repo_name,
       });
 
-      const sandboxEnv = prepareSandboxOAuthEnv(await this.launchContext.getUserEnvVars());
+      const userEnvVars = await this.launchContext.getUserEnvVars();
       const agent = this.launchContext.resolveAgent(session);
       const { repositories, fields: repositoryFields } =
         this.launchContext.resolveRepositories(session);
@@ -840,8 +839,7 @@ export class SandboxLifecycleManager
         harness: agent.harness,
         provider: agent.provider,
         model: agent.model,
-        userEnvVars: sandboxEnv.userEnvVars,
-        anthropicOauthEnabled: sandboxEnv.anthropicOauthEnabled,
+        userEnvVars,
         prebuiltImageId,
         prebuiltImageSha,
         timeoutSeconds,
@@ -1162,7 +1160,7 @@ export class SandboxLifecycleManager
         snapshot_image_id: snapshotImageId,
       });
 
-      const sandboxEnv = prepareSandboxOAuthEnv(await this.launchContext.getUserEnvVars());
+      const userEnvVars = await this.launchContext.getUserEnvVars();
       const agent = this.launchContext.resolveAgent(session);
 
       const { repositories, fields: repositoryFields } =
@@ -1185,8 +1183,7 @@ export class SandboxLifecycleManager
         harness: agent.harness,
         provider: agent.provider,
         model: agent.model,
-        userEnvVars: sandboxEnv.userEnvVars,
-        anthropicOauthEnabled: sandboxEnv.anthropicOauthEnabled,
+        userEnvVars,
         timeoutSeconds,
         codeServerEnabled,
         vncEnabled,

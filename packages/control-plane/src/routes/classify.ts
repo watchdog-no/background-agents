@@ -5,31 +5,23 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
  * Repository classification endpoint.
  *
  * Runs the small "which repo does this issue/message belong to?" LLM call on
- * behalf of the bots (linear-bot, slack-bot), so the call can use the same
- * subscription OAuth credentials the coding agents use — those live as global
- * secrets in this control plane, not in the bots, and classification happens
- * before any session/sandbox exists.
+ * behalf of the bots (linear-bot, slack-bot), using model credentials stored as
+ * global secrets in this control plane — classification happens before any
+ * session/sandbox exists.
  *
- * Credentials resolve **API-key-first** (fastest — no token-refresh round trip),
- * falling back to the global subscription OAuth token when no key is configured
- * or the stored key is rejected.
+ * Anthropic models use ANTHROPIC_API_KEY. OpenAI models resolve **API-key-first**
+ * (fastest — no token-refresh round trip), falling back to the global ChatGPT
+ * subscription OAuth token when no key is configured or the stored key is
+ * rejected.
  */
 
 import type { Env } from "../types";
 import type { ClassifyRawResult, ClassifyErrorReason, ConfidenceLevel } from "@open-inspect/shared";
-import {
-  extractProviderAndModel,
-  CLAUDE_CODE_AGENT_SDK_IDENTITY,
-  CLAUDE_CODE_BILLING_HEADER,
-  CLAUDE_CODE_MAX_TOKENS,
-  CLAUDE_CODE_USER_AGENT,
-  ANTHROPIC_OAUTH_BETA,
-} from "@open-inspect/shared";
+import { extractProviderAndModel } from "@open-inspect/shared";
 import { createLogger } from "../logger";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import type { SqlDatabase } from "../db/sql-database";
 import { OpenAITokenRefreshService } from "../session/openai-token-refresh-service";
-import { AnthropicTokenRefreshService } from "../session/anthropic-token-refresh-service";
 import { type RequestContext, json } from "./shared";
 
 const log = createLogger("router:classify");
@@ -95,16 +87,15 @@ interface AnthropicContentBlock {
   input?: unknown;
 }
 
-type AnthropicCred = { apiKey: string } | { oauthToken: string };
-
 async function anthropicRequest(
   prompt: string,
   model: string,
-  cred: AnthropicCred
+  apiKey: string
 ): Promise<ClassifyRawResult> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "anthropic-version": ANTHROPIC_VERSION,
+    "x-api-key": apiKey,
   };
   const body: Record<string, unknown> = {
     model,
@@ -120,21 +111,6 @@ async function anthropicRequest(
     tool_choice: { type: "tool", name: CLASSIFY_TOOL_NAME },
     messages: [{ role: "user", content: prompt }],
   };
-
-  if ("apiKey" in cred) {
-    headers["x-api-key"] = cred.apiKey;
-  } else {
-    headers["Authorization"] = `Bearer ${cred.oauthToken}`;
-    headers["anthropic-beta"] = ANTHROPIC_OAUTH_BETA;
-    headers["anthropic-dangerous-direct-browser-access"] = "true";
-    headers["user-agent"] = CLAUDE_CODE_USER_AGENT;
-    headers["x-app"] = "cli";
-    body.max_tokens = CLAUDE_CODE_MAX_TOKENS;
-    body.system = [
-      { type: "text", text: CLAUDE_CODE_BILLING_HEADER },
-      { type: "text", text: CLAUDE_CODE_AGENT_SDK_IDENTITY },
-    ];
-  }
 
   const response = await fetch(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
@@ -162,20 +138,15 @@ async function classifyWithAnthropic(
   prompt: string,
   model: string
 ): Promise<ClassifyRawResult> {
-  // Prefer the API key (fastest), but fall back to OAuth if a configured key is
-  // rejected — a revoked/blank key shouldn't break classification when an OAuth
-  // token is available.
   const apiKey = await readGlobalSecret(env, db, "ANTHROPIC_API_KEY");
-  if (apiKey) {
-    try {
-      return await anthropicRequest(prompt, model, { apiKey });
-    } catch (e) {
-      if (!shouldFallbackToOAuth(e, oauthSecretsConfigured(env))) throw e;
-      log.warn("classify.api_key_rejected_falling_back_to_oauth", { provider: "anthropic" });
-    }
+  if (!apiKey) {
+    throw new ClassifyError(
+      "oauth_not_configured",
+      "ANTHROPIC_API_KEY is not configured in global secrets",
+      500
+    );
   }
-  const oauthToken = await getAnthropicOAuthToken(env, db);
-  return anthropicRequest(prompt, model, { oauthToken });
+  return anthropicRequest(prompt, model, apiKey);
 }
 
 function oauthSecretsConfigured(env: Env): boolean {
@@ -209,32 +180,6 @@ async function readGlobalSecret(
 /** An auth rejection is recoverable only when an OAuth fallback is available. */
 function shouldFallbackToOAuth(e: unknown, oauthAvailable: boolean): boolean {
   return oauthAvailable && e instanceof ClassifyError && e.reason === "oauth_unauthorized";
-}
-
-async function getAnthropicOAuthToken(env: Env, db: SqlDatabase): Promise<string> {
-  if (!env.REPO_SECRETS_ENCRYPTION_KEY) {
-    throw new ClassifyError(
-      "oauth_not_configured",
-      "No ANTHROPIC_API_KEY and OAuth secret store is not configured",
-      500
-    );
-  }
-  const oauthConfig =
-    env.ANTHROPIC_OAUTH_CLIENT_ID || env.ANTHROPIC_OAUTH_TOKEN_URL
-      ? { clientId: env.ANTHROPIC_OAUTH_CLIENT_ID, tokenUrl: env.ANTHROPIC_OAUTH_TOKEN_URL }
-      : undefined;
-  const service = new AnthropicTokenRefreshService(
-    db,
-    env.REPO_SECRETS_ENCRYPTION_KEY,
-    refreshRepoIdUnsupported,
-    log,
-    oauthConfig
-  );
-  const result = await service.refreshGlobal();
-  if (!result.ok) {
-    throw oauthRefreshError(result.status);
-  }
-  return result.accessToken;
 }
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────────

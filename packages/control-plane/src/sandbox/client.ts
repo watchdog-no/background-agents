@@ -180,7 +180,6 @@ export interface CreateSandboxRequest {
   provider?: string;
   model?: string;
   userEnvVars?: Record<string, string>;
-  anthropicOauthEnabled?: boolean;
   prebuiltImageId?: string | null;
   prebuiltImageSha?: string | null;
   timeoutSeconds?: number;
@@ -224,7 +223,6 @@ export interface RestoreSandboxRequest {
   provider: string;
   model: string;
   userEnvVars?: Record<string, string>;
-  anthropicOauthEnabled?: boolean;
   timeoutSeconds?: number;
   branch?: string | null;
   codeServerEnabled?: boolean;
@@ -347,7 +345,11 @@ export function isAmbiguousModalVmLaunchError(error: ModalApiError): boolean {
 }
 
 export type ModalVmStartupOutcome =
-  "unknown" | "not_visible" | "other_generation" | "window_closed" | "race_pending";
+  | "unknown"
+  | "not_visible"
+  | "other_generation"
+  | "window_closed"
+  | "race_pending";
 
 export class ModalVmStartupError extends Error {
   constructor(
@@ -517,7 +519,6 @@ export class ModalClient {
           provider: request.provider || "openai",
           model: request.model || DEFAULT_MODEL,
           user_env_vars: request.userEnvVars || null,
-          anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
           repo_image_id: request.prebuiltImageId || null,
           repo_image_sha: request.prebuiltImageSha || null,
           timeout_seconds: request.timeoutSeconds || null,
@@ -599,7 +600,6 @@ export class ModalClient {
           control_plane_url: request.controlPlaneUrl,
           sandbox_auth_token: request.sandboxAuthToken,
           user_env_vars: request.userEnvVars || null,
-          anthropic_oauth_enabled: request.anthropicOauthEnabled ?? false,
           timeout_seconds: request.timeoutSeconds || null,
           code_server_enabled: request.codeServerEnabled ?? false,
           vnc_enabled: request.vncEnabled ?? false,

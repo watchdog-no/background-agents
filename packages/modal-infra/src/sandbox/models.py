@@ -34,7 +34,6 @@ class SandboxConfig:
     agent_slack_notify_enabled: bool = (
         False  # Whether to install the agent-initiated slack-notify tool
     )
-    anthropic_oauth_enabled: bool = False
     settings: dict[str, Any] | None = (
         None  # Sandbox settings (tunnelPorts, etc.) from control plane
     )

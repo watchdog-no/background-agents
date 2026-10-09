@@ -2,7 +2,7 @@
  * Repository classifier for the Linear bot.
  *
  * Delegates the LLM call to the control-plane `POST /classify` endpoint, which
- * holds the subscription OAuth credentials (and any API-key fallback). The bot
+ * holds the model credentials in its global secrets store. The bot
  * builds the prompt and matches the returned repo id against its own repo list.
  */
 

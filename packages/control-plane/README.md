@@ -65,28 +65,27 @@ not pass through Hono.
 
 ### Sessions
 
-| Endpoint                                | Method    | Description                                         |
-| --------------------------------------- | --------- | --------------------------------------------------- |
-| `/sessions`                             | GET       | List workspace sessions                             |
-| `/sessions`                             | POST      | Create new session                                  |
-| `/sessions/:id`                         | GET       | Get canonical session snapshot                      |
-| `/sessions/:id`                         | DELETE    | Delete session                                      |
-| `/sessions/:id/sandbox-access`          | GET       | Get sandbox connection details                      |
-| `/sessions/:id/prompt`                  | POST      | Enqueue prompt                                      |
-| `/sessions/:id/stop`                    | POST      | Stop execution                                      |
-| `/sessions/:id/ws`                      | WebSocket | Real-time connection                                |
-| `/sessions/:id/events`                  | GET       | Paginated events                                    |
-| `/sessions/:id/artifacts`               | GET       | List artifacts                                      |
-| `/sessions/:id/participants`            | GET       | List runtime participants                           |
-| `/sessions/:id/messages`                | GET       | List messages                                       |
-| `/sessions/:id/pr`                      | POST      | Create pull request                                 |
-| `/sessions/:id/scm-credentials`         | POST      | Broker sandbox git credentials                      |
-| `/sessions/:id/openai-token-refresh`    | POST      | Refresh OpenAI OAuth access token (sandbox-only)    |
-| `/sessions/:id/anthropic-token-refresh` | POST      | Refresh Anthropic OAuth access token (sandbox-only) |
-| `/sessions/:id/ws-token`                | POST      | Generate WebSocket token                            |
-| `/sessions/:id/archive`                 | POST      | Archive session                                     |
-| `/sessions/:id/unarchive`               | POST      | Unarchive session                                   |
-| `/sessions/batch-archive`               | POST      | Archive explicitly selected sessions                |
+| Endpoint                             | Method    | Description                                      |
+| ------------------------------------ | --------- | ------------------------------------------------ |
+| `/sessions`                          | GET       | List workspace sessions                          |
+| `/sessions`                          | POST      | Create new session                               |
+| `/sessions/:id`                      | GET       | Get canonical session snapshot                   |
+| `/sessions/:id`                      | DELETE    | Delete session                                   |
+| `/sessions/:id/sandbox-access`       | GET       | Get sandbox connection details                   |
+| `/sessions/:id/prompt`               | POST      | Enqueue prompt                                   |
+| `/sessions/:id/stop`                 | POST      | Stop execution                                   |
+| `/sessions/:id/ws`                   | WebSocket | Real-time connection                             |
+| `/sessions/:id/events`               | GET       | Paginated events                                 |
+| `/sessions/:id/artifacts`            | GET       | List artifacts                                   |
+| `/sessions/:id/participants`         | GET       | List runtime participants                        |
+| `/sessions/:id/messages`             | GET       | List messages                                    |
+| `/sessions/:id/pr`                   | POST      | Create pull request                              |
+| `/sessions/:id/scm-credentials`      | POST      | Broker sandbox git credentials                   |
+| `/sessions/:id/openai-token-refresh` | POST      | Refresh OpenAI OAuth access token (sandbox-only) |
+| `/sessions/:id/ws-token`             | POST      | Generate WebSocket token                         |
+| `/sessions/:id/archive`              | POST      | Archive session                                  |
+| `/sessions/:id/unarchive`            | POST      | Unarchive session                                |
+| `/sessions/batch-archive`            | POST      | Archive explicitly selected sessions             |
 
 ### Create PR Payload
 

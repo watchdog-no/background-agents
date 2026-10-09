@@ -25,7 +25,6 @@ from sandbox_runtime.repo_image_callback import (
 from ..app import app
 from ..app_config import APP_NAME
 from ..images.base import base_image
-from .launch import _filter_sandbox_user_env_vars
 from .launch_policy import (
     ModalBackend,
     _identity_digest,
@@ -96,7 +95,7 @@ class ModalBuildSessionService:
         if sandbox_backend == "modal":
             docker = parse_launch(sandbox_backend, None)  # Preserve standard build sizing.
         primary = repositories[0]
-        env_vars = _filter_sandbox_user_env_vars(user_env_vars)
+        env_vars = dict(user_env_vars or {})
         for name in RESERVED_USER_ENV_KEYS:
             env_vars.pop(name, None)
         env_vars.update(

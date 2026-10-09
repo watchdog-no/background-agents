@@ -189,7 +189,7 @@ class TestCodexAuthPluginSetup:
         with (
             patch.dict(
                 "os.environ",
-                {"OPENAI_OAUTH_MANAGED": "", "ANTHROPIC_OAUTH_ENABLED": ""},
+                {"OPENAI_OAUTH_MANAGED": ""},
                 clear=False,
             ),
             patch("sandbox_runtime.opencode_server.asyncio.create_subprocess_exec", create_proc),

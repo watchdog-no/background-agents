@@ -234,13 +234,9 @@ linear_webhook_secret = ""   # Webhook Signing Secret from the application confi
 # linear_bot_default_model = "claude-sonnet-4-6"
 
 # =============================================================================
-# Anthropic model access
+# API Keys
 # =============================================================================
 
-# Claude subscription OAuth is the default Anthropic path for coding sessions.
-# Leave these unset unless Anthropic issues different public OAuth values for your deployment.
-# anthropic_oauth_client_id = ""
-# anthropic_oauth_token_url = ""
 # Anthropic API key for Claude. Injected into Modal session sandboxes and
 # OpenComputer sandboxes; Daytona, E2B and Vercel read model keys only from the
 # secret store in the web app, which overrides this value everywhere. Optional:

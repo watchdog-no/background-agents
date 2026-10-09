@@ -144,7 +144,6 @@ class CreateSandboxRequest(_RepositoryContextModel):
     code_server_enabled: bool = False
     vnc_enabled: bool | None = None
     agent_slack_notify_enabled: bool = False
-    anthropic_oauth_enabled: bool = False
     sandbox_settings: dict[str, Any] | None = None
     sandbox_backend: ModalBackend = "modal"
     retire_sandbox_id: str | None = None
@@ -182,7 +181,6 @@ class RestoreSandboxRequest(_ModalRequestModel):
     code_server_enabled: bool = False
     vnc_enabled: bool | None = None
     agent_slack_notify_enabled: bool = False
-    anthropic_oauth_enabled: bool = False
     sandbox_settings: dict[str, Any] | None = None
     sandbox_backend: ModalBackend = "modal"
     retire_sandbox_id: str | None = None
@@ -466,7 +464,6 @@ async def api_create_sandbox(
             clone_host=parsed_request.clone_host,
             clone_username=parsed_request.clone_username,
             user_env_vars=parsed_request.user_env_vars or None,
-            anthropic_oauth_enabled=parsed_request.anthropic_oauth_enabled,
             repo_image_id=parsed_request.repo_image_id or None,
             repo_image_sha=parsed_request.repo_image_sha or None,
             code_server_enabled=parsed_request.code_server_enabled,
@@ -876,7 +873,6 @@ async def api_restore_sandbox(
             clone_host=parsed_request.clone_host,
             clone_username=parsed_request.clone_username,
             user_env_vars=parsed_request.user_env_vars or None,
-            anthropic_oauth_enabled=parsed_request.anthropic_oauth_enabled,
             timeout_seconds=(
                 parsed_request.timeout_seconds
                 if parsed_request.timeout_seconds is not None

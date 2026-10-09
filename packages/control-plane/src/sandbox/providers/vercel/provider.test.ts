@@ -71,21 +71,25 @@ function createMockClient(
     createSandbox: vi.fn(async () => createSessionResponse()),
     runCommandAndWait: vi.fn(async () => ({ commandId: "cmd-1", exitCode: 0 })),
     startCommand: vi.fn(async () => ({ commandId: "cmd-2", exitCode: null })),
-    snapshotSession: vi.fn(async (): Promise<VercelSnapshotResponse> => ({
-      snapshot: { id: "snapshot-1", status: "created", createdAt: 456 },
-      session: { ...createSessionResponse().session, status: "stopped" },
-    })),
-    listSnapshots: vi.fn(async (): Promise<VercelSnapshotMetadata[]> => [
-      {
-        id: "base-snapshot-from-name",
-        sourceSessionId: "session-base",
-        status: "created",
-        region: "iad1",
-        sizeBytes: 1024,
-        createdAt: 456,
-        updatedAt: 789,
-      },
-    ]),
+    snapshotSession: vi.fn(
+      async (): Promise<VercelSnapshotResponse> => ({
+        snapshot: { id: "snapshot-1", status: "created", createdAt: 456 },
+        session: { ...createSessionResponse().session, status: "stopped" },
+      })
+    ),
+    listSnapshots: vi.fn(
+      async (): Promise<VercelSnapshotMetadata[]> => [
+        {
+          id: "base-snapshot-from-name",
+          sourceSessionId: "session-base",
+          status: "created",
+          region: "iad1",
+          sizeBytes: 1024,
+          createdAt: 456,
+          updatedAt: 789,
+        },
+      ]
+    ),
     deleteSnapshot: vi.fn(async () => {}),
     stopSession: vi.fn(async () => {}),
     ...overrides,
@@ -648,20 +652,6 @@ describe("VercelSandboxProvider", () => {
     expect(createCall.env?.PATH).not.toContain("/vercel/runtimes/node24/bin");
   });
 
-  it("sets the Anthropic OAuth sandbox flag when configured", async () => {
-    const client = createMockClient();
-    const provider = new VercelSandboxProvider(client, providerConfig);
-
-    await provider.createSandbox({ ...baseCreateConfig, anthropicOauthEnabled: true });
-
-    const createCall = vi.mocked(client.createSandbox).mock.calls[0][0];
-    expect(createCall.env).toEqual(
-      expect.objectContaining({
-        ANTHROPIC_OAUTH_ENABLED: "true",
-      })
-    );
-  });
-
   it("restores from a session snapshot and sets restore mode env vars", async () => {
     const client = createMockClient({
       createSandbox: vi.fn(async () =>
@@ -769,10 +759,12 @@ describe("VercelSandboxProvider", () => {
 
   it("reports a failed snapshot status without throwing", async () => {
     const client = createMockClient({
-      snapshotSession: vi.fn(async (): Promise<VercelSnapshotResponse> => ({
-        snapshot: { id: "snapshot-1", status: "failed", createdAt: 456 },
-        session: createSessionResponse().session,
-      })),
+      snapshotSession: vi.fn(
+        async (): Promise<VercelSnapshotResponse> => ({
+          snapshot: { id: "snapshot-1", status: "failed", createdAt: 456 },
+          session: createSessionResponse().session,
+        })
+      ),
     });
     const provider = new VercelSandboxProvider(client, providerConfig);
 

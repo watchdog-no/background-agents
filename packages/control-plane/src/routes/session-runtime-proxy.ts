@@ -470,20 +470,6 @@ sessionRuntimeProxyRoutes.post("/sessions/:id/archive", LIFECYCLE, (c) =>
 sessionRuntimeProxyRoutes.post("/sessions/:id/unarchive", LIFECYCLE, (c) =>
   dispatchSession(c, lifecycleProxy(SessionInternalPaths.unarchive))
 );
-
-sessionRuntimeProxyRoutes.post(
-  "/sessions/:id/anthropic-token-refresh",
-  admit({ ...SCM_AGNOSTIC_SANDBOX_ROUTE, authorization: NO_AUTHORIZATION }),
-  (c) =>
-    dispatchSession(
-      c,
-      simpleProxy({
-        internalPath: SessionInternalPaths.anthropicTokenRefresh,
-        runtimeMethod: "POST",
-      })
-    )
-);
-
 sessionRuntimeProxyRoutes.patch(
   "/sessions/:id/budget",
   admit({

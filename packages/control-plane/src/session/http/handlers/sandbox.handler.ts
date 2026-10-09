@@ -13,7 +13,6 @@ import {
   isDeadSandboxStatus,
   isSandboxReconnectBlockedStatus,
 } from "../../../sandbox/lifecycle/decisions";
-import type { AnthropicTokenRefreshResult } from "../../anthropic-token-refresh-service";
 import {
   OpenAITokenNotConfiguredError,
   OpenAITokenStorageError,
@@ -64,10 +63,6 @@ export class SandboxHandler {
     private readonly sandboxEventProcessor: SessionSandboxEventProcessor,
     private readonly messenger: SessionMessenger,
     private readonly refreshOpenAIToken: (session: SessionRow, log: Logger) => Promise<OpenAIToken>,
-    private readonly refreshAnthropicToken: (
-      session: SessionRow,
-      log: Logger
-    ) => Promise<AnthropicTokenRefreshResult>,
     private readonly refreshXaiToken: (
       session: SessionRow,
       log: Logger
@@ -331,26 +326,6 @@ export class SandboxHandler {
         access_token: token.accessToken,
         expires_in: token.expiresIn,
         account_id: token.accountId,
-      },
-      { status: 200, headers: { "Cache-Control": "no-store" } }
-    );
-  }
-
-  async anthropicTokenRefresh(log: Logger): Promise<Response> {
-    const session = this.sessionCoreRepository.getSession();
-    if (!session) {
-      return Response.json({ error: "No session" }, { status: 404 });
-    }
-
-    const result = await this.refreshAnthropicToken(session, log);
-    if (!result.ok) {
-      return Response.json({ error: result.error }, { status: result.status });
-    }
-
-    return Response.json(
-      {
-        access_token: result.accessToken,
-        expires_in: result.expiresIn,
       },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );

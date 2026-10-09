@@ -38,17 +38,6 @@ from .tunnels import SandboxTunnels
 from .vcs_env import inject_vcs_env_vars
 from .vm_recovery import VMAllocationOutcome, VMServiceLaunch, find_owned_vm, owned_vm_tags_match
 
-ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS = {
-    "ANTHROPIC_OAUTH_REFRESH_TOKEN",
-    "ANTHROPIC_OAUTH_ACCESS_TOKEN",
-    "ANTHROPIC_OAUTH_ACCESS_TOKEN_EXPIRES_AT",
-    "ANTHROPIC_OAUTH_ENABLED",
-    "ANTHROPIC_OAUTH_AUTHORIZE_URL",
-    "ANTHROPIC_OAUTH_CLIENT_ID",
-    "ANTHROPIC_OAUTH_TOKEN_URL",
-    "ANTHROPIC_OAUTH_REDIRECT_URI",
-    "ANTHROPIC_OAUTH_SCOPES",
-}
 _RESERVED_LAUNCH_ENV_VARS = {
     "RESTORED_FROM_SNAPSHOT",
     "FROM_REPO_IMAGE",
@@ -56,7 +45,6 @@ _RESERVED_LAUNCH_ENV_VARS = {
     "IMAGE_BUILD_MODE",
     "TERMINAL_ENABLED",
     "AGENT_SLACK_NOTIFY_ENABLED",
-    "ANTHROPIC_OAUTH_ENABLED",
     "SESSION_CONFIG",
     "CODE_SERVER_PASSWORD",
     CODE_SERVER_PORT_ENV_VAR,
@@ -73,15 +61,6 @@ ACCESS_PASSWORD_READ_TIMEOUT_SECONDS = 30
 
 class RepositoryImageUnavailableError(RuntimeError):
     """The selected repository image no longer exists in Modal."""
-
-
-def _filter_sandbox_user_env_vars(user_env_vars: dict[str, str] | None) -> dict[str, str]:
-    """Remove control-plane-only Anthropic OAuth values from sandbox user env."""
-    return {
-        key: value
-        for key, value in (user_env_vars or {}).items()
-        if key.upper() not in ANTHROPIC_OAUTH_SANDBOX_FILTERED_KEYS
-    }
 
 
 @dataclass(frozen=True)
@@ -162,7 +141,7 @@ class SandboxLauncher:
         docker = parse_launch(config.sandbox_backend, config.settings)
         env_vars = {
             key: value
-            for key, value in _filter_sandbox_user_env_vars(config.user_env_vars).items()
+            for key, value in (config.user_env_vars or {}).items()
             if key not in _RESERVED_LAUNCH_ENV_VARS
         }
         env_vars.update(
@@ -218,8 +197,6 @@ class SandboxLauncher:
 
         if config.agent_slack_notify_enabled:
             env_vars["AGENT_SLACK_NOTIFY_ENABLED"] = "true"
-        if config.anthropic_oauth_enabled:
-            env_vars["ANTHROPIC_OAUTH_ENABLED"] = "true"
 
         tunnels = SandboxTunnels(
             code_server_enabled=config.code_server_enabled,

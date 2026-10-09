@@ -96,7 +96,6 @@ import { SessionPullRequestStore } from "../db/session-pull-request-store";
 import { PullRequestCreationClaims, SessionPullRequestService } from "./pull-request-service";
 import { refreshSessionPullRequests } from "./pull-request-refresh";
 import { OpenAITokenRefreshService } from "./openai-token-refresh-service";
-import { AnthropicTokenRefreshService } from "./anthropic-token-refresh-service";
 import { XaiTokenRefreshService } from "./xai-token-refresh-service";
 import { ScmCredentialsService } from "./scm-credentials-service";
 import { ParticipantService } from "./participant-service";
@@ -735,25 +734,6 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     );
     return service.refresh(sessionRow);
   };
-  const refreshAnthropicToken = async (sessionRow: SessionRow, requestLog: Logger) => {
-    if (!db || !repoSecretsEncryptionKey)
-      return { ok: false as const, status: 500, error: "Secrets not configured" };
-    const oauthConfig =
-      env.ANTHROPIC_OAUTH_CLIENT_ID || env.ANTHROPIC_OAUTH_TOKEN_URL
-        ? {
-            clientId: env.ANTHROPIC_OAUTH_CLIENT_ID,
-            tokenUrl: env.ANTHROPIC_OAUTH_TOKEN_URL,
-          }
-        : undefined;
-    const service = new AnthropicTokenRefreshService(
-      db!,
-      repoSecretsEncryptionKey,
-      resolveRepoId,
-      requestLog,
-      oauthConfig
-    );
-    return service.refresh(sessionRow);
-  };
   const refreshXaiToken = async (sessionRow: SessionRow, requestLog: Logger) => {
     const service = new XaiTokenRefreshService(
       db,
@@ -777,7 +757,6 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     sandboxEventProcessor,
     messenger,
     refreshOpenAIToken,
-    refreshAnthropicToken,
     refreshXaiToken,
     getScmCredentials,
     isValidSandboxToken,
@@ -976,8 +955,6 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
       sandboxHandler.verifySandboxToken(request, requestLog),
     openaiTokenRefresh: (_request, _url, requestLog) =>
       sandboxHandler.openaiTokenRefresh(requestLog),
-    anthropicTokenRefresh: (_request, _url, requestLog) =>
-      sandboxHandler.anthropicTokenRefresh(requestLog),
     xaiTokenRefresh: (_request, _url, requestLog) => sandboxHandler.xaiTokenRefresh(requestLog),
     scmCredentials: (_request, _url, requestLog) => sandboxHandler.scmCredentials(requestLog),
     tunnelUrls: (_request, _url, requestLog) => sandboxHandler.tunnelUrls(requestLog),

@@ -92,18 +92,6 @@ describe("E2BSandboxProvider", () => {
     expect(env).not.toHaveProperty("GITHUB_APP_TOKEN");
   });
 
-  it("propagates the Anthropic OAuth flag to the sandbox", async () => {
-    const client = mockClient();
-    const provider = new E2BSandboxProvider(client, providerConfig);
-    await provider.createSandbox({
-      ...baseCreateConfig,
-      anthropicOauthEnabled: true,
-      userEnvVars: { ANTHROPIC_OAUTH_ENABLED: "false" },
-    });
-
-    expect(createEnv(client).ANTHROPIC_OAUTH_ENABLED).toBe("true");
-  });
-
   it("applies the pinned sandbox env as a system overlay that beats user secrets", async () => {
     // These keys are boot-critical (E2B runs as non-root `user`; the
     // entrypoint import path is /app; spawn selection gates on the reported

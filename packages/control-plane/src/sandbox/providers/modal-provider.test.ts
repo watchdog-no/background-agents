@@ -44,24 +44,34 @@ function createMockModalClient(
   }> = {}
 ): ModalClient {
   return {
-    createSandbox: vi.fn(async (): Promise<CreateSandboxResponse> => ({
-      sandboxId: "sandbox-123",
-      modalObjectId: "modal-obj-123",
-      createdAt: Date.now(),
-    })),
-    restoreSandbox: vi.fn(async (): Promise<RestoreSandboxResponse> => ({
-      sandboxId: "sandbox-123",
-      modalObjectId: "modal-obj-123",
-    })),
-    snapshotSandbox: vi.fn(async (): Promise<SnapshotSandboxResponse> => ({
-      imageId: "image-123",
-    })),
-    snapshotBuildSandbox: vi.fn(async (): Promise<SnapshotSandboxResponse> => ({
-      imageId: "build-image-123",
-    })),
-    createImageBuildSandbox: vi.fn(async (): Promise<CreateImageBuildSandboxResponse> => ({
-      providerSessionId: "modal-session-123",
-    })),
+    createSandbox: vi.fn(
+      async (): Promise<CreateSandboxResponse> => ({
+        sandboxId: "sandbox-123",
+        modalObjectId: "modal-obj-123",
+        createdAt: Date.now(),
+      })
+    ),
+    restoreSandbox: vi.fn(
+      async (): Promise<RestoreSandboxResponse> => ({
+        sandboxId: "sandbox-123",
+        modalObjectId: "modal-obj-123",
+      })
+    ),
+    snapshotSandbox: vi.fn(
+      async (): Promise<SnapshotSandboxResponse> => ({
+        imageId: "image-123",
+      })
+    ),
+    snapshotBuildSandbox: vi.fn(
+      async (): Promise<SnapshotSandboxResponse> => ({
+        imageId: "build-image-123",
+      })
+    ),
+    createImageBuildSandbox: vi.fn(
+      async (): Promise<CreateImageBuildSandboxResponse> => ({
+        providerSessionId: "modal-session-123",
+      })
+    ),
     startImageBuildSandbox: vi.fn(async () => undefined),
     terminateImageBuildSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(async () => undefined),
@@ -601,37 +611,6 @@ describe("ModalSandboxProvider", () => {
       });
       expect(client.createSandbox).toHaveBeenCalledWith(
         expect.objectContaining({ vncEnabled: true }),
-        undefined
-      );
-    });
-
-    it("passes Anthropic OAuth flag through to the Modal client", async () => {
-      const client = createMockModalClient();
-      const provider = new ModalSandboxProvider(client, "modal", "github");
-
-      await provider.createSandbox({ ...testConfig, anthropicOauthEnabled: true });
-
-      expect(client.createSandbox).toHaveBeenCalledWith(
-        expect.objectContaining({ anthropicOauthEnabled: true }),
-        undefined
-      );
-    });
-
-    it("filters Anthropic OAuth token env vars before calling Modal", async () => {
-      const client = createMockModalClient();
-      const provider = new ModalSandboxProvider(client, "modal", "github");
-
-      await provider.createSandbox({
-        ...testConfig,
-        userEnvVars: {
-          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
-          ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
-          CUSTOM_SECRET: "value",
-        },
-      });
-
-      expect(client.createSandbox).toHaveBeenCalledWith(
-        expect.objectContaining({ userEnvVars: { CUSTOM_SECRET: "value" } }),
         undefined
       );
     });

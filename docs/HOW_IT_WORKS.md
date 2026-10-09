@@ -719,8 +719,8 @@ You can configure environment variables (API keys, credentials) at global, team,
 environment scope. Precedence is global, then owning team when present, then the **session
 target's** secrets; later layers win collisions:
 
-- **Global secrets** apply to all sessions (e.g., `ANTHROPIC_OAUTH_REFRESH_TOKEN`,
-  `DEEPSEEK_API_KEY`, `ZHIPU_API_KEY`, `OPENCODE_API_KEY`)
+- **Global secrets** apply to all sessions (e.g., `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,
+  `ZHIPU_API_KEY`, `OPENCODE_API_KEY`)
 - **Team secrets** apply to sessions owned by that team, overriding global values
 - **Repository secrets** apply to repository-targeted sessions and override global and team secrets
   with the same key; ad-hoc multi-repository sessions receive each selected repository's secrets,
@@ -728,10 +728,7 @@ target's** secrets; later layers win collisions:
 - **Environment secrets** apply to sessions launched from that environment — its repositories'
   repository secrets do not flow in
 - Stored encrypted (AES-256-GCM) in D1 database
-- Generally injected into sandboxes at startup
-- Anthropic OAuth refresh tokens and cached access-token secrets stay control-plane-only; sandboxes
-  receive a non-secret enabled flag and request short-lived access tokens through an internal
-  endpoint
+- Injected into sandboxes at startup
 - Visible to authenticated Settings users with values masked by default
 
 OpenAI and xAI subscription credentials are installation-wide provider accounts. Account rows store
@@ -766,12 +763,10 @@ operators may remove legacy keys after legacy-bound sessions are no longer neede
 [Using OpenAI Models](./OPENAI_MODELS.md) and
 [Using Grok with a SuperGrok Subscription](./GROK_MODELS.md).
 
-> **Daytona and Vercel users**: Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a global secret for the
-> default Claude subscription path. Add provider API keys only if you intentionally use metered API
-> billing. **LLM API keys** (e.g., `ANTHROPIC_API_KEY` for Claude models) are added as global
-> secrets. A deployment can instead configure `anthropic_api_key` in Terraform to inject one
-> fleet-wide key into Modal session sandboxes and OpenComputer sandboxes; a global secret of the
-> same name takes precedence over it, and the other providers read only the secret store.
+> **LLM API keys** (e.g., `ANTHROPIC_API_KEY` for Claude models) are added as global secrets. A
+> deployment can instead configure `anthropic_api_key` in Terraform to inject one fleet-wide key
+> into Modal session sandboxes and OpenComputer sandboxes; a global secret of the same name takes
+> precedence over it, and the other providers read only the secret store.
 >
 > **Opt-in model providers**: DeepSeek models require `DEEPSEEK_API_KEY`, Z.AI Coding Plan models
 > require `ZHIPU_API_KEY`, and OpenCode Zen and OpenCode Go models require `OPENCODE_API_KEY` (Go
