@@ -2,7 +2,6 @@ import type { HarnessId } from "@open-inspect/shared/harnesses";
 import type { McpServerConfig } from "@open-inspect/shared/types/integrations";
 import { computeHmacHex } from "@open-inspect/shared/auth";
 import type { SourceControlProviderName } from "../source-control";
-import { ANTHROPIC_OAUTH_SANDBOX_FLAG, filterSandboxCredentialEnvVars } from "./oauth-env";
 import {
   DEFAULT_SANDBOX_TIMEOUT_SECONDS,
   type CreateSandboxConfig,
@@ -316,10 +315,7 @@ export function buildSandboxEnvVars(
   config: CreateSandboxConfig | RestoreConfig,
   options: SandboxEnvVarsOptions
 ): Record<string, string> {
-  const userEnvVars = options.baseEnvVars ?? config.userEnvVars;
-  const envVars: Record<string, string> = {
-    ...(filterSandboxCredentialEnvVars(userEnvVars) ?? {}),
-  };
+  const envVars: Record<string, string> = { ...(options.baseEnvVars ?? config.userEnvVars ?? {}) };
   delete envVars.CODE_SERVER_PORT;
   delete envVars.CODE_SERVER_PASSWORD;
   delete envVars.VNC_PASSWORD;
@@ -355,10 +351,6 @@ export function buildSandboxEnvVars(
     REPO_NAME: config.repoName ?? "",
     [SESSION_CONFIG_ENV_VAR]: JSON.stringify(sessionConfig),
   });
-
-  if (config.anthropicOauthEnabled) {
-    envVars[ANTHROPIC_OAUTH_SANDBOX_FLAG] = "true";
-  }
 
   if (portPlan.codeServerPort !== undefined) {
     envVars.CODE_SERVER_PORT = String(portPlan.codeServerPort);

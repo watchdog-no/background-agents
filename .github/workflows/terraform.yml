@@ -232,8 +232,6 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ vars.ENABLE_SLACK_BOT || secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
-          TF_VAR_anthropic_oauth_client_id: ${{ secrets.ANTHROPIC_OAUTH_CLIENT_ID }}
-          TF_VAR_anthropic_oauth_token_url: ${{ secrets.ANTHROPIC_OAUTH_TOKEN_URL }}
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'openai/gpt-6-sol' }}"
           TF_VAR_classification_anthropic_api_key: ${{ secrets.CLASSIFICATION_ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}
@@ -520,8 +518,6 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ vars.ENABLE_SLACK_BOT || secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
-          TF_VAR_anthropic_oauth_client_id: ${{ secrets.ANTHROPIC_OAUTH_CLIENT_ID }}
-          TF_VAR_anthropic_oauth_token_url: ${{ secrets.ANTHROPIC_OAUTH_TOKEN_URL }}
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'openai/gpt-6-sol' }}"
           TF_VAR_classification_anthropic_api_key: ${{ secrets.CLASSIFICATION_ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}

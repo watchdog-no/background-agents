@@ -26,7 +26,6 @@ function createHandler() {
   const isValidSandboxToken = vi.fn();
   const getSession = vi.fn<() => SessionRow | null>();
   const refreshOpenAIToken = vi.fn();
-  const refreshAnthropicToken = vi.fn();
   const refreshXaiToken = vi.fn();
   const getScmCredentials = vi.fn();
   const broadcast = vi.fn();
@@ -52,7 +51,6 @@ function createHandler() {
     { processSandboxEvent } as unknown as SessionSandboxEventProcessor,
     messenger,
     refreshOpenAIToken,
-    refreshAnthropicToken,
     refreshXaiToken,
     getScmCredentials,
     isValidSandboxToken,
@@ -69,7 +67,6 @@ function createHandler() {
     createMediaArtifact: (request: Request) => sandboxHandler.createMediaArtifact(request),
     verifySandboxToken: (request: Request) => sandboxHandler.verifySandboxToken(request, log),
     openaiTokenRefresh: () => sandboxHandler.openaiTokenRefresh(log),
-    anthropicTokenRefresh: () => sandboxHandler.anthropicTokenRefresh(log),
     xaiTokenRefresh: () => sandboxHandler.xaiTokenRefresh(log),
     scmCredentials: () => sandboxHandler.scmCredentials(log),
     tunnelUrls: () => sandboxHandler.tunnelUrls(log),
@@ -84,7 +81,6 @@ function createHandler() {
     isValidSandboxToken,
     getSession,
     refreshOpenAIToken,
-    refreshAnthropicToken,
     refreshXaiToken,
     getScmCredentials,
     broadcast,
@@ -783,53 +779,6 @@ describe("SandboxHandler", () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "No session" });
-  });
-
-  it("returns 404 when anthropic token refresh has no session", async () => {
-    const { handler, getSession } = createHandler();
-    getSession.mockReturnValue(null);
-
-    const response = await handler.anthropicTokenRefresh();
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "No session" });
-  });
-
-  it("returns anthropic access token payload on success", async () => {
-    const { handler, getSession, refreshAnthropicToken, log } = createHandler();
-    const session = { id: "session-1" } as SessionRow;
-    getSession.mockReturnValue(session);
-    refreshAnthropicToken.mockResolvedValue({
-      ok: true,
-      accessToken: "access-token",
-      expiresIn: 3600,
-    });
-
-    const response = await handler.anthropicTokenRefresh();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({
-      access_token: "access-token",
-      expires_in: 3600,
-    });
-    expect(refreshAnthropicToken).toHaveBeenCalledWith(session, log);
-  });
-
-  it("returns mapped service error from anthropic token refresh", async () => {
-    const { handler, getSession, refreshAnthropicToken, log } = createHandler();
-    const session = { id: "session-1" } as SessionRow;
-    getSession.mockReturnValue(session);
-    refreshAnthropicToken.mockResolvedValue({
-      ok: false,
-      status: 502,
-      error: "Anthropic token refresh failed",
-    });
-
-    const response = await handler.anthropicTokenRefresh();
-
-    expect(response.status).toBe(502);
-    expect(await response.json()).toEqual({ error: "Anthropic token refresh failed" });
-    expect(refreshAnthropicToken).toHaveBeenCalledWith(session, log);
   });
 
   it("returns mapped service error from xAI token refresh", async () => {

@@ -300,7 +300,6 @@ class OpenCodeServer:
         managed_providers = {
             "openai": bool(os.environ.get("OPENAI_OAUTH_MANAGED")),
             "xai": bool(os.environ.get("XAI_OAUTH_MANAGED")),
-            "anthropic": os.environ.get("ANTHROPIC_OAUTH_ENABLED") == "true",
         }
         enabled_providers = {provider for provider, enabled in managed_providers.items() if enabled}
         if not enabled_providers:
@@ -458,11 +457,6 @@ class OpenCodeServer:
         managed_plugins = (
             ("OPENAI_OAUTH_MANAGED", "codex-auth-plugin.js", "openai_oauth.plugin_deployed"),
             ("XAI_OAUTH_MANAGED", "xai-auth-plugin.js", "xai_oauth.plugin_deployed"),
-            (
-                "ANTHROPIC_OAUTH_ENABLED",
-                "anthropic-auth-plugin.js",
-                "anthropic_oauth.plugin_deployed",
-            ),
         )
         broker_client_deployed = False
         for marker, filename, log_event in managed_plugins:

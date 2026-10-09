@@ -133,12 +133,6 @@ module "control_plane_worker" {
       DAYTONA_BASE_SNAPSHOT     = { value = module.daytona_infra[0].snapshot_name }
       DAYTONA_PREBUILDS_ENABLED = { value = tostring(var.daytona_prebuilds_enabled) }
     } : {},
-    var.anthropic_oauth_client_id != "" ? {
-      ANTHROPIC_OAUTH_CLIENT_ID = { value = var.anthropic_oauth_client_id }
-    } : {},
-    var.anthropic_oauth_token_url != "" ? {
-      ANTHROPIC_OAUTH_TOKEN_URL = { value = var.anthropic_oauth_token_url }
-    } : {},
     trimspace(var.opencomputer_api_url) != "" ? {
       OPENCOMPUTER_API_URL = { value = var.opencomputer_api_url }
     } : {},

@@ -10,7 +10,6 @@
         "vitest.workspace.ts",
         "packages/sandbox-runtime/src/sandbox_runtime/bin/upload-media.js",
         "packages/sandbox-runtime/src/sandbox_runtime/plugins/codex-auth-plugin.js",
-        "packages/sandbox-runtime/src/sandbox_runtime/plugins/anthropic-auth-plugin.js",
         "packages/sandbox-runtime/src/sandbox_runtime/plugins/inspect-plugin.js",
         "packages/sandbox-runtime/src/sandbox_runtime/plugins/xai-auth-plugin.js",
         "packages/sandbox-runtime/src/sandbox_runtime/tools/cancel-child.js",

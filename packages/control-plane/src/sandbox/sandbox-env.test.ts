@@ -235,25 +235,6 @@ describe("buildSandboxEnvVars", () => {
     expect(envVars.VCS_HOST).toBe("github.com");
   });
 
-  it("filters Anthropic OAuth credentials and sets the runtime flag from config", () => {
-    const envVars = buildSandboxEnvVars(
-      {
-        ...baseConfig,
-        anthropicOauthEnabled: true,
-        userEnvVars: {
-          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-secret",
-          ANTHROPIC_OAUTH_ENABLED: "false",
-          USER_SECRET: "value",
-        },
-      },
-      { scmIdentity: scmCloneIdentity("github") }
-    );
-
-    expect(envVars).not.toHaveProperty("ANTHROPIC_OAUTH_REFRESH_TOKEN");
-    expect(envVars.ANTHROPIC_OAUTH_ENABLED).toBe("true");
-    expect(envVars.USER_SECRET).toBe("value");
-  });
-
   it("serializes null repo identity to empty strings", () => {
     const envVars = buildSandboxEnvVars(
       { ...baseConfig, repoOwner: null, repoName: null },

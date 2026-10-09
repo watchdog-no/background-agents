@@ -40,7 +40,6 @@ import {
   type StopConfig,
   type StopResult,
 } from "../provider";
-import { filterSandboxCredentialEnvVars } from "../oauth-env";
 
 /** Preserve typed VM lookup details separately from ambiguous-launch classification. */
 export function modalVmAllocationDetail(error: unknown): string | undefined {
@@ -229,8 +228,7 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
           harness: config.harness,
           provider: config.provider,
           model: config.model,
-          userEnvVars: filterSandboxCredentialEnvVars(config.userEnvVars),
-          anthropicOauthEnabled: config.anthropicOauthEnabled,
+          userEnvVars: config.userEnvVars,
           scmIdentity: this.scmIdentity,
           prebuiltImageId: config.prebuiltImageId,
           prebuiltImageSha: config.prebuiltImageSha,
@@ -290,8 +288,7 @@ export class ModalSandboxProvider implements SandboxProvider, ModalImageBuildPro
           harness: config.harness,
           provider: config.provider,
           model: config.model,
-          userEnvVars: filterSandboxCredentialEnvVars(config.userEnvVars),
-          anthropicOauthEnabled: config.anthropicOauthEnabled,
+          userEnvVars: config.userEnvVars,
           timeoutSeconds,
           branch: config.branch,
           codeServerEnabled: config.codeServerEnabled,

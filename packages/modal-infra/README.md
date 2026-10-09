@@ -195,10 +195,10 @@ Set via Modal secrets:
 | `MODAL_API_SECRET` | `internal-api` | Shared secret for control plane auth |
 | `ALLOWED_CONTROL_PLANE_HOSTS` | `internal-api` | Comma-separated allowed hostnames for URL validation |
 
-Anthropic model auth uses Claude subscription OAuth (configured in the Settings
-UI), so no LLM API key is injected into sandboxes. Any optional model API keys
-are added as global secrets via the Settings UI (D1 secrets store), which the
-control plane merges into the sandbox environment — not as Modal secrets.
+Model API keys are added as global secrets via the Settings UI (D1 secrets
+store), which the control plane merges into the sandbox environment — not as
+Modal secrets. Claude subscriptions are connected as provider accounts and used
+by the Claude Agent harness.
 
 ## Verification Criteria
 

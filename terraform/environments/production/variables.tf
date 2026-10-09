@@ -399,12 +399,6 @@ variable "classification_openai_api_key" {
   default     = ""
 }
 
-variable "anthropic_oauth_token_url" {
-  description = "Optional Claude subscription OAuth token endpoint override"
-  type        = string
-  default     = ""
-}
-
 variable "classification_reasoning_effort" {
   description = "Reasoning effort the Slack and Linear bot classifiers request from an OpenAI classification_model, sent as reasoning_effort (for example \"low\"). Blank sends none, so OpenAI applies the model's default."
   type        = string
@@ -859,12 +853,6 @@ variable "unsafe_allow_all_users" {
   description = "Bypass Terraform's access-control safety check and allow any authenticated user to sign in when all allowlists are empty. Set to true only for intentionally open deployments."
   type        = bool
   default     = false
-}
-
-variable "anthropic_oauth_client_id" {
-  description = "Optional Claude subscription OAuth public client ID override"
-  type        = string
-  default     = ""
 }
 
 variable "docs_site_enabled" {

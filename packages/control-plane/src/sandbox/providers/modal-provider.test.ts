@@ -605,37 +605,6 @@ describe("ModalSandboxProvider", () => {
       );
     });
 
-    it("passes Anthropic OAuth flag through to the Modal client", async () => {
-      const client = createMockModalClient();
-      const provider = new ModalSandboxProvider(client, "modal", "github");
-
-      await provider.createSandbox({ ...testConfig, anthropicOauthEnabled: true });
-
-      expect(client.createSandbox).toHaveBeenCalledWith(
-        expect.objectContaining({ anthropicOauthEnabled: true }),
-        undefined
-      );
-    });
-
-    it("filters Anthropic OAuth token env vars before calling Modal", async () => {
-      const client = createMockModalClient();
-      const provider = new ModalSandboxProvider(client, "modal", "github");
-
-      await provider.createSandbox({
-        ...testConfig,
-        userEnvVars: {
-          ANTHROPIC_OAUTH_REFRESH_TOKEN: "refresh-token",
-          ANTHROPIC_OAUTH_ACCESS_TOKEN: "access-token",
-          CUSTOM_SECRET: "value",
-        },
-      });
-
-      expect(client.createSandbox).toHaveBeenCalledWith(
-        expect.objectContaining({ userEnvVars: { CUSTOM_SECRET: "value" } }),
-        undefined
-      );
-    });
-
     it("reports a missing prebuilt image explicitly", async () => {
       const error = new ModalApiError("Repository image unavailable", 410);
       const client = createMockModalClient({

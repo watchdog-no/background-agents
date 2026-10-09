@@ -268,10 +268,6 @@ ENABLE_SLACK_BOT # Optional; defaults to true
 SLACK_BOT_TOKEN
 SLACK_SIGNING_SECRET
 
-# Anthropic OAuth overrides (optional; public-client config)
-ANTHROPIC_OAUTH_CLIENT_ID
-ANTHROPIC_OAUTH_TOKEN_URL
-
 # GitHub bot
 ENABLE_GITHUB_BOT # Optional; defaults to false
 GH_WEBHOOK_SECRET

@@ -221,13 +221,11 @@ Anthropic and OpenAI models are enabled by default. xAI / SuperGrok, OpenCode Ze
 Coding Plan, and DeepSeek models are opt-in. See [Available Models](docs/AVAILABLE_MODELS.md) for
 current model IDs, descriptions, and reasoning efforts.
 
-Claude models use Claude Pro/Max subscription OAuth by default in our deployment, and OpenAI models
-work with your existing ChatGPT subscription via OAuth. Anthropic models can also run on the
-**Claude Agent** harness with a connected Claude subscription; see
+OpenAI models work with your existing ChatGPT subscription via OAuth — no separate API key needed.
+Anthropic models run on the **Claude Agent** harness with a connected Claude subscription; see
 [Using the Claude Agent Harness](docs/CLAUDE_AGENT.md). Grok models work with an eligible SuperGrok
 subscription through control-plane-managed OAuth. See
 **[docs/AVAILABLE_MODELS.md](docs/AVAILABLE_MODELS.md)** for the full model list,
-**[docs/ANTHROPIC_MODELS.md](docs/ANTHROPIC_MODELS.md)** for Claude setup,
 **[docs/OPENAI_MODELS.md](docs/OPENAI_MODELS.md)** for OpenAI setup, and
 **[docs/GROK_MODELS.md](docs/GROK_MODELS.md)** for SuperGrok setup.
 

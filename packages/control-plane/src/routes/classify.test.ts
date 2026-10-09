@@ -1,21 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ANTHROPIC_OAUTH_BETA,
-  CLAUDE_CODE_AGENT_SDK_IDENTITY,
-  CLAUDE_CODE_BILLING_HEADER,
-  CLAUDE_CODE_MAX_TOKENS,
-  CLAUDE_CODE_USER_AGENT,
-} from "@open-inspect/shared";
 import type { Env } from "../types";
 import type { RequestContext } from "./shared";
 
-const { mockOpenAIRefreshGlobal, mockAnthropicRefreshGlobal, mockGetDecryptedSecrets } = vi.hoisted(
-  () => ({
-    mockOpenAIRefreshGlobal: vi.fn(),
-    mockAnthropicRefreshGlobal: vi.fn(),
-    mockGetDecryptedSecrets: vi.fn(),
-  })
-);
+const { mockOpenAIRefreshGlobal, mockGetDecryptedSecrets } = vi.hoisted(() => ({
+  mockOpenAIRefreshGlobal: vi.fn(),
+  mockGetDecryptedSecrets: vi.fn(),
+}));
 
 vi.mock("../db/global-secrets", () => ({
   GlobalSecretsStore: vi.fn().mockImplementation(function () {
@@ -29,19 +19,13 @@ vi.mock("../session/openai-token-refresh-service", () => ({
   }),
 }));
 
-vi.mock("../session/anthropic-token-refresh-service", () => ({
-  AnthropicTokenRefreshService: vi.fn().mockImplementation(function () {
-    return { refreshGlobal: mockAnthropicRefreshGlobal };
-  }),
-}));
-
 import { handleClassify as handler } from "./classify";
 
 const ctx = { trace_id: "test-trace" } as unknown as RequestContext;
 const mockFetch = vi.fn();
 
 // Every real deployment that can read API keys from global secrets can also do
-// OAuth (both need DB + REPO_SECRETS_ENCRYPTION_KEY).
+// OpenAI OAuth (both need DB + REPO_SECRETS_ENCRYPTION_KEY).
 const ENV = { DB: {}, REPO_SECRETS_ENCRYPTION_KEY: "enc" } as unknown as Env;
 
 const VALID_RESULT = {
@@ -101,28 +85,14 @@ function classify(model: string, env: Env = ENV) {
   );
 }
 
-function expectAnthropicOAuthEnvelope(call: ReturnType<typeof lastFetch>) {
-  expect(call.headers["Authorization"]).toBe("Bearer oauth-token");
-  expect(call.headers["anthropic-beta"]).toBe(ANTHROPIC_OAUTH_BETA);
-  expect(call.headers["anthropic-beta"]).toContain("claude-code-20250219");
-  expect(call.headers["anthropic-beta"]).toContain("extended-cache-ttl-2025-04-11");
-  expect(call.headers["anthropic-dangerous-direct-browser-access"]).toBe("true");
-  expect(call.headers["user-agent"]).toBe(CLAUDE_CODE_USER_AGENT);
-  expect(call.headers["x-app"]).toBe("cli");
-  expect(call.body.max_tokens).toBe(CLAUDE_CODE_MAX_TOKENS);
-  const system = call.body.system as Array<{ type: string; text: string }>;
-  expect(system[0].text).toBe(CLAUDE_CODE_BILLING_HEADER);
-  expect(system[1].text).toBe(CLAUDE_CODE_AGENT_SDK_IDENTITY);
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("fetch", mockFetch);
-  mockGetDecryptedSecrets.mockResolvedValue({}); // no API keys by default → OAuth path
+  mockGetDecryptedSecrets.mockResolvedValue({}); // no API keys by default
 });
 
 describe("POST /classify", () => {
-  it("uses an Anthropic API key from global secrets directly (no identity injection)", async () => {
+  it("uses an Anthropic API key from global secrets", async () => {
     mockGetDecryptedSecrets.mockResolvedValue({ ANTHROPIC_API_KEY: "sk-ant-test" });
     mockFetch.mockResolvedValue(anthropicToolResponse());
 
@@ -135,34 +105,27 @@ describe("POST /classify", () => {
     expect(call.headers["x-api-key"]).toBe("sk-ant-test");
     expect(call.headers["Authorization"]).toBeUndefined();
     expect(call.body.system).toBeUndefined();
-    expect(mockAnthropicRefreshGlobal).not.toHaveBeenCalled();
   });
 
-  it("uses Anthropic OAuth with the Claude Code envelope when no API key is stored", async () => {
-    mockAnthropicRefreshGlobal.mockResolvedValue({ ok: true, accessToken: "oauth-token" });
-    mockFetch.mockResolvedValue(anthropicToolResponse());
-
+  it("reports a missing Anthropic API key without calling the provider", async () => {
     const res = await classify("anthropic/claude-haiku-4-5");
 
-    expect(res.status).toBe(200);
-    const call = lastFetch();
-    expectAnthropicOAuthEnvelope(call);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ reason: "oauth_not_configured" });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("falls back to Anthropic OAuth when a stored API key is rejected", async () => {
+  it("surfaces a rejected Anthropic API key without falling back", async () => {
     mockGetDecryptedSecrets.mockResolvedValue({ ANTHROPIC_API_KEY: "sk-ant-revoked" });
-    mockFetch
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "bad key" }), { status: 401 }))
-      .mockResolvedValueOnce(anthropicToolResponse());
-    mockAnthropicRefreshGlobal.mockResolvedValue({ ok: true, accessToken: "oauth-token" });
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "bad key" }), { status: 401 })
+    );
 
     const res = await classify("anthropic/claude-haiku-4-5");
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(VALID_RESULT);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    const fallback = lastFetch();
-    expectAnthropicOAuthEnvelope(fallback);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ reason: "oauth_unauthorized" });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("uses an OpenAI API key from global secrets against the platform Responses API", async () => {
@@ -236,9 +199,9 @@ describe("POST /classify", () => {
   });
 
   it("surfaces an OAuth-unauthorized failure with a reason code", async () => {
-    mockAnthropicRefreshGlobal.mockResolvedValue({ ok: false, status: 401, error: "nope" });
+    mockOpenAIRefreshGlobal.mockResolvedValue({ ok: false, status: 401, error: "nope" });
 
-    const res = await classify("anthropic/claude-haiku-4-5");
+    const res = await classify("openai/gpt-5.4-mini");
 
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ reason: "oauth_unauthorized" });

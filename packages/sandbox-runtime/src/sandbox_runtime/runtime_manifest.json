@@ -1,6 +1,6 @@
 {
-  "runtimeVersion": "v80-persistent-memory",
-  "generation": 80,
+  "runtimeVersion": "v81-remove-anthropic-oauth",
+  "generation": 81,
   "minimumCompatibleGeneration": 76,
   "minimumPreservationGeneration": 77,
   "minimumRebuildGeneration": 80,

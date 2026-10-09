@@ -231,14 +231,16 @@ Create an R2 API Token:
    lowercase suffix made of letters, digits, and dashes. Leave it empty for the environment whose
    endpoints use `https://<workspace>--...modal.run`.
 
-### Anthropic
+### Anthropic (Optional)
 
-Claude subscription OAuth is the default Anthropic model path. Use
-[`docs/ANTHROPIC_MODELS.md`](ANTHROPIC_MODELS.md) to capture an `ANTHROPIC_OAUTH_REFRESH_TOKEN` and
-save it as a global or repo secret.
+Claude models run on the **Claude Agent** harness. Connect a Claude subscription under Settings >
+Accounts after deploying (see [Claude Agent](CLAUDE_AGENT.md)), or add `ANTHROPIC_API_KEY` as a
+global secret in Settings > Secrets for metered API access.
 
-A Settings global `ANTHROPIC_API_KEY` is only needed for control-plane classification when you
-intentionally use metered API billing instead of OAuth for that small routing call.
+The Slack and Linear classifiers call the control plane's `/classify` endpoint, which reads model
+credentials only from the global secret store, not from Terraform. If `classification_model` is an
+Anthropic model, add `ANTHROPIC_API_KEY` as a global secret; for an OpenAI model, add
+`OPENAI_API_KEY`.
 
 > **Want to use your OpenAI ChatGPT subscription?** See [Using OpenAI Models](OPENAI_MODELS.md) for
 > setup instructions (can be configured after deployment).
@@ -820,10 +822,9 @@ Two optional settings:
   from one. It defaults to `false`; see [Daytona prebuilds](IMAGE_PREBUILD.md#daytona-prebuilds) for
   the gates an operator should clear against their own organization and target before turning it on.
 
-> **Important**: the Daytona provider has no fleet-wide key of its own, and neither does the default
-> Claude subscription path. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` as a **global secret** in Settings >
-> Secrets after deploying. Add provider API keys only if you intentionally want those standard SDK
-> credentials available to sandbox code. See [Secrets Management](SECRETS.md) for details.
+> **Important**: the Daytona provider has no fleet-wide key of its own. Add the key for the models
+> you plan to use — `ANTHROPIC_API_KEY` for Claude — as a **global secret** in Settings > Secrets
+> after deploying. See [Secrets Management](SECRETS.md) for details.
 
 ### Vercel Sandboxes
 
@@ -924,10 +925,6 @@ GitHub attribution unless the same verified email is also a linked GitHub identi
 > **Security note**: Under restricted access, Google sign-in is admitted only for **verified**
 > emails that match an allowlist. Because addresses on shared domains like `gmail.com` are generic,
 > prefer `allowed_emails` (exact match) over `allowed_email_domains` for those users.
-
-> **Want to use your Claude Pro/Max subscription?** See
-> [Using Claude Subscription Models](ANTHROPIC_MODELS.md) for setup instructions (can be configured
-> after deployment).
 
 ---
 
@@ -1408,8 +1405,6 @@ Secrets for credentials:
 | `GH_BOT_USERNAME`                  | GitHub App bot username, e.g., `my-app[bot]` (required if GitHub bot enabled)               |
 | `APP_NAME`                         | Optional display name for whitelabeling (default: `Open-Inspect`)                           |
 | `APP_ICON_URL`                     | Optional URL to a custom logo/favicon (default: built-in icon)                              |
-| `ANTHROPIC_OAUTH_CLIENT_ID`        | Optional Claude subscription OAuth public client ID override                                |
-| `ANTHROPIC_OAUTH_TOKEN_URL`        | Optional Claude subscription OAuth token endpoint override                                  |
 
 An empty allowlist only means that list is not used; it does not admit everyone. Terraform fails the
 plan unless at least one of `ALLOWED_USERS`, `ALLOWED_EMAIL_DOMAINS`, `ALLOWED_EMAILS`, or
@@ -1418,10 +1413,10 @@ also needs a compatible allowlist; see [Choose Sign-In Providers](#choose-sign-i
 
 `CLASSIFICATION_MODEL` is an optional Actions variable. Watchdog defaults to `openai/gpt-6-luna`.
 Slack and Linear classify through the control plane's `/classify` endpoint. Configure classifier
-credentials in Open-Inspect's global Secrets settings (`OPENAI_API_KEY` for OpenAI; an Anthropic API
-key or subscription OAuth credentials for Anthropic). Bot Workers receive no provider keys. The
-optional `CLASSIFICATION_REASONING_EFFORT` variable sets the reasoning effort an OpenAI classifier
-requests (for example `low`); leave it unset to use the model's default.
+credentials in Open-Inspect's global Secrets settings (`OPENAI_API_KEY` for OpenAI;
+`ANTHROPIC_API_KEY` for Anthropic). Bot Workers receive no provider keys. The optional
+`CLASSIFICATION_REASONING_EFFORT` variable sets the reasoning effort an OpenAI classifier requests
+(for example `low`); leave it unset to use the model's default.
 
 When enabling or upgrading the Linear bot, also enable **Client credentials tokens** on the OAuth
 application in **Linear Settings → API → Applications**. This provider-side setting is not managed
@@ -1666,15 +1661,14 @@ If the bot doesn't see the original message when tagged in a thread reply:
 
 ### "Model not found" errors
 
-If sessions fail with "Model not found" when using `sandbox_provider = "daytona"` or
-`sandbox_provider = "vercel"`, the Claude OAuth refresh token or optional API-key fallback is likely
-missing. Add the required credential as a global secret:
+If sessions fail with "Model not found", the API key for the selected model is missing. Deployments
+that set no fleet-wide key in Terraform supply model credentials as secrets instead:
 
 1. Go to **Settings > Secrets** in the web app
 2. Select **All Repositories (Global)** from the scope dropdown
-3. Add `ANTHROPIC_OAUTH_REFRESH_TOKEN` for the default Claude subscription path (or provider API
-   keys only when intentionally using metered/opt-in providers, e.g. `ANTHROPIC_API_KEY`,
-   `DEEPSEEK_API_KEY`, `ZHIPU_API_KEY`, or `OPENCODE_API_KEY`)
+3. Add the key for your chosen provider (e.g., `ANTHROPIC_API_KEY` for Claude models or
+   `DEEPSEEK_API_KEY` for DeepSeek models, `ZHIPU_API_KEY` for Z.AI Coding Plan models, or
+   `OPENCODE_API_KEY` for OpenCode Zen and OpenCode Go models)
 4. Click **Save**
 
 See [Secrets Management](SECRETS.md) for more on global and repository secrets.

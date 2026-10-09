@@ -48,7 +48,6 @@ export interface SessionInternalRouteHandlers {
   expireDraft: SessionInternalRouteHandler;
   verifySandboxToken: SessionInternalRouteHandler;
   openaiTokenRefresh: SessionInternalRouteHandler;
-  anthropicTokenRefresh: SessionInternalRouteHandler;
   xaiTokenRefresh: SessionInternalRouteHandler;
   scmCredentials: SessionInternalRouteHandler;
   tunnelUrls: SessionInternalRouteHandler;
@@ -132,11 +131,6 @@ export function createSessionInternalRoutes(
       method: "POST",
       path: SessionInternalPaths.xaiTokenRefresh,
       handler: handlers.xaiTokenRefresh,
-    },
-    {
-      method: "POST",
-      path: SessionInternalPaths.anthropicTokenRefresh,
-      handler: handlers.anthropicTokenRefresh,
     },
     {
       method: "POST",
