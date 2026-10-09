@@ -36,6 +36,7 @@ authenticates with a connected Claude subscription (Settings > Provider Accounts
 | Model ID                      | Display name      | Description                                       | Reasoning efforts             | Default effort |
 | ----------------------------- | ----------------- | ------------------------------------------------- | ----------------------------- | -------------- |
 | `anthropic/claude-haiku-4-5`  | Claude Haiku 4.5  | Fast and efficient                                | high, max                     | max            |
+| `anthropic/claude-haiku-5-5`  | Claude Haiku 5.5  | Latest Haiku, fast and low cost                   | low, medium, high, xhigh, max | medium         |
 | `anthropic/claude-sonnet-4-5` | Claude Sonnet 4.5 | Balanced performance                              | high, max                     | max            |
 | `anthropic/claude-sonnet-4-6` | Claude Sonnet 4.6 | Balanced, fast coding                             | low, medium, high, max        | high           |
 | `anthropic/claude-sonnet-5`   | Claude Sonnet 5   | Balanced performance, adaptive thinking           | low, medium, high, xhigh, max | high           |

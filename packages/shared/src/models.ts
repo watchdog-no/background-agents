@@ -55,6 +55,15 @@ export const MODEL_CATALOG = [
         reasoning: { efforts: ["high", "max"], default: "max" },
       },
       {
+        id: "anthropic/claude-haiku-5-5",
+        name: "Claude Haiku 5.5",
+        description: "Latest Haiku, fast and low cost",
+        reasoning: {
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          default: "medium",
+        },
+      },
+      {
         id: "anthropic/claude-sonnet-4-5",
         name: "Claude Sonnet 4.5",
         description: "Balanced performance",

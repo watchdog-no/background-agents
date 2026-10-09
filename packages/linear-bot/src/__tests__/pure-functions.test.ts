@@ -169,6 +169,12 @@ describe("extractModelFromLabels", () => {
     expect(extractModelFromLabels([{ name: "model:opus-5-5" }])).toBe("anthropic/claude-opus-5-5");
   });
 
+  it("returns Haiku 5.5 for model:haiku-5-5 label", () => {
+    expect(extractModelFromLabels([{ name: "model:haiku-5-5" }])).toBe(
+      "anthropic/claude-haiku-5-5"
+    );
+  });
+
   it("returns Sonnet 5 for model:sonnet-5 label", () => {
     expect(extractModelFromLabels([{ name: "model:sonnet-5" }])).toBe("anthropic/claude-sonnet-5");
   });

@@ -24,6 +24,7 @@ import {
 
 const ANTHROPIC_MODELS = [
   "anthropic/claude-haiku-4-5",
+  "anthropic/claude-haiku-5-5",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-sonnet-4-6",
   "anthropic/claude-sonnet-5",
@@ -198,6 +199,7 @@ describe("model utilities", () => {
     expect(normalizeModelId("claude-opus-5")).toBe("anthropic/claude-opus-5");
     expect(normalizeModelId("claude-opus-5-5")).toBe("anthropic/claude-opus-5-5");
     expect(normalizeModelId("claude-sonnet-5-5")).toBe("anthropic/claude-sonnet-5-5");
+    expect(normalizeModelId("claude-haiku-5-5")).toBe("anthropic/claude-haiku-5-5");
     expect(normalizeModelId("claude-fable-5")).toBe("anthropic/claude-fable-5");
     expect(normalizeModelId("claude-fable-5-1")).toBe("anthropic/claude-fable-5-1");
     expect(normalizeModelId("gpt-6-sol")).toBe("openai/gpt-6-sol");
@@ -209,6 +211,7 @@ describe("model utilities", () => {
     expect(isValidModel("claude-opus-5")).toBe(true);
     expect(isValidModel("claude-opus-5-5")).toBe(true);
     expect(isValidModel("claude-sonnet-5-5")).toBe(true);
+    expect(isValidModel("claude-haiku-5-5")).toBe(true);
     expect(isValidModel("claude-fable-5")).toBe(true);
     expect(isValidModel("claude-fable-5-1")).toBe(true);
     expect(isValidModel("gpt-6-sol")).toBe(true);
@@ -413,6 +416,7 @@ describe("model utilities", () => {
     expect(getDefaultReasoningEffort("anthropic/claude-opus-4-8")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-sonnet-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-sonnet-5-5")).toBe("high");
+    expect(getDefaultReasoningEffort("anthropic/claude-haiku-5-5")).toBe("medium");
     expect(getDefaultReasoningEffort("anthropic/claude-opus-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-opus-5-5")).toBe("high");
     expect(getDefaultReasoningEffort("anthropic/claude-fable-5")).toBe("xhigh");
@@ -518,6 +522,8 @@ describe("model utilities", () => {
     expect(isValidReasoningEffort("anthropic/claude-sonnet-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-sonnet-5-5", "max")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-sonnet-5-5", "none")).toBe(false);
+    expect(isValidReasoningEffort("anthropic/claude-haiku-5-5", "xhigh")).toBe(true);
+    expect(isValidReasoningEffort("anthropic/claude-haiku-5-5", "none")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "xhigh")).toBe(true);
     expect(isValidReasoningEffort("anthropic/claude-opus-5", "none")).toBe(false);
     expect(isValidReasoningEffort("anthropic/claude-opus-5-5", "xhigh")).toBe(true);

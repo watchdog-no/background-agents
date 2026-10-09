@@ -175,7 +175,7 @@ On any Linear issue:
 - Assign the issue to `OpenInspect` → agent picks it up
 - Agent status is visible directly in Linear (thinking, working, done)
 - Add a `model:<name>` label to override the model (e.g., `model:opus`, `model:sonnet`,
-  `model:opus-5`, `model:opus-5-5`, `model:sonnet-5`, `model:fable-5-1`, `model:haiku`,
+  `model:opus-5`, `model:opus-5-5`, `model:sonnet-5`, `model:fable-5-1`, `model:haiku-5-5`,
   `model:gpt-5.6-luna`, `model:gpt-5.4`, `model:gpt-6-sol`)
 
 ## Repo Resolution
