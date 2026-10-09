@@ -413,6 +413,7 @@ async function handleGetResolvedConfig(
       repo,
       config: {
         model: githubSettings.model ?? null,
+        harness: getValidHarnessOrDefault(githubSettings.harness),
         reasoningEffort,
         autoReviewOnOpen: githubSettings.autoReviewOnOpen ?? true,
         enabledRepos,
@@ -488,6 +489,8 @@ async function handleGetResolvedConfig(
         // null → use the provider's default reservation (no override configured).
         cpuCores: sandboxSettings.cpuCores ?? null,
         memoryMib: sandboxSettings.memoryMib ?? null,
+        cpuLimitCores: sandboxSettings.cpuLimitCores ?? null,
+        memoryLimitMib: sandboxSettings.memoryLimitMib ?? null,
         sandboxTimeoutMs: sandboxSettings.sandboxTimeoutMs ?? null,
         finalSnapshotBufferMs: sandboxSettings.finalSnapshotBufferMs ?? null,
         enabledRepos,

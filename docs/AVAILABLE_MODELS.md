@@ -10,8 +10,9 @@ OpenCode Go require `OPENCODE_API_KEY`; Z.AI Coding Plan requires `ZHIPU_API_KEY
 OpenAI, xAI and Anthropic session selectors offer provider policy, any active connected account, and
 API-key mode. Automation editors can resolve defaults on each run or pin an account/API-key choice.
 Unattended Slack, GitHub, Linear, and unpinned automation launches follow the provider's configured
-unattended mode. Every Anthropic launch runs on the Claude Agent harness, so that policy covers
-Slack, GitHub, Linear and automation sessions alike.
+unattended mode. Every Anthropic launch runs on the Claude Agent harness, whatever harness an
+integration or user prefers, so that policy covers Slack, GitHub, Linear and automation sessions
+alike. Other models run on the preferred harness, falling back to OpenCode when it cannot run them.
 
 ## Harnesses
 

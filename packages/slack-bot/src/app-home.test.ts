@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { HarnessId } from "@open-inspect/shared/harnesses";
 import type { RepoConfig } from "@open-inspect/shared/types/repository-catalog";
 import { buildAppHomeIntroText, buildAppHomeView } from "./app-home";
 
@@ -26,6 +27,8 @@ describe("buildAppHomeView", () => {
           value: "anthropic/claude-haiku-4-5",
         },
       ],
+      userHarness: undefined,
+      workspaceHarness: "opencode",
       currentModel: "anthropic/claude-haiku-4-5",
       currentEffort: "max",
       currentBranch: undefined,
@@ -77,6 +80,8 @@ describe("buildAppHomeView", () => {
           value: "anthropic/claude-haiku-4-5",
         },
       ],
+      userHarness: undefined,
+      workspaceHarness: "opencode",
       currentModel: "anthropic/claude-haiku-4-5",
       currentEffort: "max",
       currentBranch: undefined,
@@ -97,5 +102,88 @@ describe("buildAppHomeView", () => {
         block.elements.some((element) => element.text.includes("10 more overrides"))
     );
     expect(hasMoreNote).toBe(true);
+  });
+
+  describe("agent harness", () => {
+    const models = [
+      { label: "Claude Haiku", value: "anthropic/claude-haiku-4-5" },
+      { label: "GPT 5.4", value: "openai/gpt-5.4" },
+    ];
+
+    function render(state: {
+      userHarness: HarnessId | undefined;
+      workspaceHarness: HarnessId;
+      currentModel: string;
+    }) {
+      const view = buildAppHomeView({
+        appName: "Open-Inspect",
+        availableModels: models,
+        currentEffort: undefined,
+        currentBranch: undefined,
+        repos: [],
+        repoBranchPreferences: new Map(),
+        ...state,
+      });
+      const select = (blockId: string) => {
+        const block = view.blocks.find(
+          (candidate) => candidate.type === "actions" && candidate.block_id === blockId
+        );
+        if (block?.type !== "actions") return undefined;
+        const element = block.elements[0];
+        return element.type === "static_select" && "options" in element ? element : undefined;
+      };
+      const texts = view.blocks.flatMap((block) =>
+        block.type === "context"
+          ? block.elements.map((element) => element.text)
+          : block.type === "section"
+            ? [block.text.text]
+            : []
+      );
+      return { harness: select("harness_selection"), model: select("model_selection"), texts };
+    }
+
+    it("offers the workspace default and every harness, selecting the workspace by default", () => {
+      const { harness } = render({
+        userHarness: undefined,
+        workspaceHarness: "claude",
+        currentModel: "anthropic/claude-haiku-4-5",
+      });
+
+      expect(harness?.options.map((option) => option.text.text)).toEqual([
+        "Workspace default (Claude Agent)",
+        "OpenCode",
+        "Claude Agent",
+      ]);
+      expect(harness?.initial_option?.value).toBe("__workspace__");
+    });
+
+    // Fork policy: Anthropic models always run on Claude Agent and other models
+    // fall back to OpenCode, so the picker offers every enabled model.
+    it("lists every model and shows the harness the current model runs on", () => {
+      const { harness, model, texts } = render({
+        userHarness: "opencode",
+        workspaceHarness: "opencode",
+        currentModel: "anthropic/claude-haiku-4-5",
+      });
+
+      expect(harness?.initial_option?.value).toBe("opencode");
+      expect(model?.options.map((option) => option.value)).toEqual([
+        "anthropic/claude-haiku-4-5",
+        "openai/gpt-5.4",
+      ]);
+      expect(model?.initial_option?.value).toBe("anthropic/claude-haiku-4-5");
+      expect(texts.at(-1)).toBe("Currently using: *Claude Haiku* · max · Claude Agent");
+    });
+
+    it("keeps a model Claude Agent cannot run selected and runs it on OpenCode", () => {
+      const { model, texts } = render({
+        userHarness: "claude",
+        workspaceHarness: "opencode",
+        currentModel: "openai/gpt-5.4",
+      });
+
+      expect(model?.initial_option?.value).toBe("openai/gpt-5.4");
+      expect(texts.at(-1)).toContain("OpenCode");
+    });
   });
 });
