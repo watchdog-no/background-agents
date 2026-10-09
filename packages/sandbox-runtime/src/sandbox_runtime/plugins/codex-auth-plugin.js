@@ -88,7 +88,6 @@ const ALLOWED_MODELS = new Set([
   "gpt-5.1-codex-mini",
   "gpt-5.4",
   "gpt-5.5",
-  "gpt-5.5-pro",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -98,21 +97,6 @@ const ALLOWED_MODELS = new Set([
   "gpt-6-luna",
   "gpt-5.1-codex",
 ]);
-
-// Models OpenCode may not have in its bundled metadata yet. Catalog prices,
-// when present, replace the fallback cost below.
-const INJECTED_MODELS = {
-  "gpt-5.5-pro": {
-    name: "GPT 5.5 Pro",
-    attachment: false,
-    reasoning: true,
-    temperature: false,
-    options: {},
-    variants: {},
-    limit: { context: 1000000, output: 128000 },
-    cost: { input: 30, output: 180, cache: { read: 30, write: 0 } },
-  },
-};
 
 async function ensureAccessToken(getAuth, setAuth) {
   const result = await tokenBroker.getAccessToken(async (refreshed) => {
@@ -147,7 +131,7 @@ export const CodexAuthProxy = async (input) => {
         const catalog = await openAiCatalogModels();
         // The built-in hook filters models and zeroes OAuth prices first.
         const models = Object.fromEntries(
-          Object.entries({ ...INJECTED_MODELS, ...provider.models })
+          Object.entries(provider.models)
             .filter(([modelId]) => ALLOWED_MODELS.has(modelId))
             .map(([modelId, model]) => {
               const cost = catalogCost(catalog?.[modelId]?.cost);
