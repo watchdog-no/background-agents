@@ -1,11 +1,11 @@
 {
-  "runtimeVersion": "v81-remove-anthropic-oauth",
-  "generation": 81,
+  "runtimeVersion": "v82-fix-codex-model-hook",
+  "generation": 82,
   "minimumCompatibleGeneration": 76,
   "minimumPreservationGeneration": 77,
-  "minimumRebuildGeneration": 80,
+  "minimumRebuildGeneration": 82,
   "harnessMinimumGeneration": {
     "claude": 80,
-    "opencode": 80
+    "opencode": 82
   }
 }
