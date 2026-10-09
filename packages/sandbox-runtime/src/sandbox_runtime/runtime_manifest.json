@@ -1,11 +1,11 @@
 {
-  "runtimeVersion": "v82-fix-codex-model-hook",
-  "generation": 82,
+  "runtimeVersion": "v83-claude-haiku-5-5",
+  "generation": 83,
   "minimumCompatibleGeneration": 76,
   "minimumPreservationGeneration": 77,
   "minimumRebuildGeneration": 82,
   "harnessMinimumGeneration": {
-    "claude": 80,
+    "claude": 83,
     "opencode": 82
   }
 }
