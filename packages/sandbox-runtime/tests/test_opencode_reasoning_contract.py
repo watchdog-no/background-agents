@@ -1,6 +1,6 @@
 """Opt-in wire tests: OPENCODE_TEST_BINARY=/path/to/opencode pytest ... -v.
 
-Uses real OpenCode 1.18.29, an isolated catalog/config, and fake localhost providers.
+Uses real OpenCode 1.19.4, an isolated catalog/config, and fake localhost providers.
 Only synthetic requests are captured; no real provider keys or user context are used.
 
 Fixture: public subset of https://models.opencode.ai/api.json, retrieved 2026-09-09.
@@ -107,7 +107,7 @@ def anthropic_events(model):
 
 @pytest.fixture
 async def wire_server(tmp_path, reasoning_config, request):
-    assert subprocess.check_output([BINARY, "--version"], text=True).strip() == "1.18.29"
+    assert subprocess.check_output([BINARY, "--version"], text=True).strip() == "1.19.4"
     captured = []
 
     class Handler(BaseHTTPRequestHandler):

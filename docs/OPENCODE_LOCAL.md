@@ -31,7 +31,7 @@ The sandbox image pins its OpenCode version in
 Match the pinned version when you are debugging harness behaviour rather than writing ordinary code:
 
 ```bash
-opencode upgrade 1.18.29        # use the value from toolchain.json
+opencode upgrade 1.19.4         # use the value from toolchain.json
 ```
 
 ## First run

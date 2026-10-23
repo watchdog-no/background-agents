@@ -27,13 +27,13 @@
     "version": "152.0.7977.82",
     "sha256": "0704631fb3e4f741092e08f55272f90abc3e307f991f05f332924364415b02e0"
   },
-  "opencode": "1.18.29",
+  "opencode": "1.19.4",
   "opencodeMinimum": "1.18.15",
   "opencodeMinimumReason": "Earlier releases order turns by wrapped message IDs rather than creation time.",
   "agentBrowser": "0.37.0",
   "agentBrowserSha256": "78e0c5a14a7fa1f3d1ae2acdbdcc94a047b435b998a8c505fcc49d7fa4935a49",
   "pnpm": "10.34.5",
-  "bun": "1.4.2",
+  "bun": "1.4.4",
   "zod": "4.4.3",
   "python": "3.12.12",
   "uv": {
@@ -44,8 +44,8 @@
   "websockify": "0.13.0",
   "node": {
     "24": {
-      "version": "24.20.0",
-      "sha256": "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"
+      "version": "24.22.1",
+      "sha256": "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6"
     }
   },
   "codeServer": {
