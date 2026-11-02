@@ -6,6 +6,7 @@
     "@opencode-ai/plugin": "1.18.29"
   },
   "overrides": {
-    "toml": "5.0.1"
+    "toml": "5.0.1",
+    "zod": "4.6.6"
   }
 }
