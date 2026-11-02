@@ -17,10 +17,14 @@ from pathlib import Path
 import httpx
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+OPENCODE_VERSION = json.loads(
+    (Path(__file__).resolve().parents[2] / "packages/sandbox-images/toolchain.json").read_text()
+)["opencode"]
+
 
 async def main(binary: str, origin: str) -> None:
     assert importlib.metadata.version("claude-agent-sdk") == "0.2.168"
-    assert subprocess.check_output([binary, "--version"], text=True).strip() == "1.18.29"
+    assert subprocess.check_output([binary, "--version"], text=True).strip() == OPENCODE_VERSION
     proxy = f"{origin}/sessions/local/mcp/example"
     headers = {"Authorization": "Bearer sandbox-fixture"}
     async with httpx.AsyncClient(timeout=30) as http:
@@ -170,7 +174,7 @@ async def main(binary: str, origin: str) -> None:
         print(
             json.dumps(
                 {
-                    "opencode": "1.18.29",
+                    "opencode": OPENCODE_VERSION,
                     "claude_sdk": "0.2.168",
                     "native_generations": "reader then operator for both harnesses",
                     "rbac": "reader denied; operator allowed",

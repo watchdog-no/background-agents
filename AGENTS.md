@@ -98,7 +98,7 @@ All TypeScript packages use **Vitest**; Python uses **pytest** + pytest-asyncio.
 
 - **control-plane unit**: co-located as `src/**/*.test.ts` — run in Node environment
 - **control-plane integration**: separate `test/integration/*.test.ts` — run in workerd via
-  `@cloudflare/vitest-pool-workers` with real D1 bindings
+  `@cloudflare/vitest-plugin` with real D1 bindings
 - **web, slack-bot, linear-bot, mcp-server**: co-located `src/**/*.test.ts`
 - **github-bot**: separate `test/*.test.ts`
 - **modal-infra**: `tests/test_*.py`
@@ -106,7 +106,7 @@ All TypeScript packages use **Vitest**; Python uses **pytest** + pytest-asyncio.
 ### Control-plane integration tests
 
 These run inside a real `workerd` runtime with Miniflare, using the `cloudflareTest()` plugin from
-`@cloudflare/vitest-pool-workers`. Important:
+`@cloudflare/vitest-plugin`. Important:
 
 - Integration tests share one D1 instance — use `cleanD1Tables()` or equivalent cleanup in
   `beforeEach`/`afterEach` to avoid cross-test pollution

@@ -3,13 +3,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "opencode-ai": "1.18.29",
-    "@opencode-ai/plugin": "1.18.29",
+    "opencode-ai": "1.19.5",
+    "@opencode-ai/plugin": "1.19.5",
     "zod": "4.6.6",
     "pnpm": "10.34.5",
     "bun": "1.4.2"
   },
   "overrides": {
-    "toml": "5.0.1"
+    "toml": "5.0.1",
+    "zod": "4.6.6"
   }
 }

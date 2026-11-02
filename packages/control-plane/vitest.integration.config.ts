@@ -1,5 +1,5 @@
 import { ManagedMcpGatewayFixture } from "./test/fixtures/managed-mcp-gateway";
-import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import path from "path";
 import { webcrypto } from "node:crypto";
@@ -10,7 +10,7 @@ const migrationsPath = path.resolve(__dirname, "../../terraform/d1/migrations");
 // Pin luxon to its CommonJS build. vite 8 resolves luxon via the "import"
 // condition to its ESM build, but cron-parser (a CJS transitive dep of
 // @open-inspect/shared, used by the scheduler's nextCronOccurrence) reads it as
-// `require("luxon").DateTime`. Under @cloudflare/vitest-pool-workers that
+// `require("luxon").DateTime`. Under @cloudflare/vitest-plugin that
 // CJS->ESM interop yields `undefined`, so the scheduler tick throws "Cannot read
 // properties of undefined (reading 'DateTime')" and silently skips every overdue
 // automation (see Scheduler.tick tests). vite 7 used the CJS build,
@@ -23,11 +23,11 @@ function generateTestEncryptionKey(): string {
   return Buffer.from(key).toString("base64");
 }
 
-// vitest 4 / @cloudflare/vitest-pool-workers v0.16 replaced the
-// `defineWorkersConfig` + `test.poolOptions.workers` setup with the
-// `cloudflareTest()` Vite plugin, configured via `defineConfig` from
+// vitest 4 replaced the `@cloudflare/vitest-pool-workers` `defineWorkersConfig` +
+// `test.poolOptions.workers` setup with the `cloudflareTest()` Vite plugin (the
+// package is now `@cloudflare/vitest-plugin`), configured via `defineConfig` from
 // "vitest/config". The old `singleWorker`/`isolatedStorage` poolOptions are not
-// configured here; pool-workers isolates D1 storage per test FILE, so files run
+// configured here; the plugin isolates D1 storage per test FILE, so files run
 // in parallel without cross-file interference. Within a file, tests share one D1
 // instance and rely on explicit `cleanD1Tables()` cleanup (see
 // test/integration/cleanup.ts) for isolation.

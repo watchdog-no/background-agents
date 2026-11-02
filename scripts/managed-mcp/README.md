@@ -18,17 +18,18 @@ In a second terminal:
 ```sh
 uv venv --python 3.12 .venv-managed-mcp
 uv pip install --python .venv-managed-mcp/bin/python -e 'packages/sandbox-runtime[dev]'
-npm install --prefix /tmp/open-inspect-managed-mcp-tools opencode-ai@1.18.29
+npm install --prefix /tmp/open-inspect-managed-mcp-tools opencode-ai@"$(jq -r .opencode packages/sandbox-images/toolchain.json)"
 .venv-managed-mcp/bin/python scripts/managed-mcp/native-canary.py --opencode /tmp/open-inspect-managed-mcp-tools/node_modules/.bin/opencode
 ```
 
-The canary verifies OpenCode **1.18.29** and Claude Agent SDK **0.2.168**, creates isolated native
-HOME/config/data directories, and makes no model inference calls. It checks native deferred OpenCode
-connect, fresh personal sessions/catalogs for both users in both clients, teardown after route
-eligibility closes, fixture reader denial/operator success, and a single mutation despite a failed
-response. The example proxy uses the production relay/credential store with real local HTTP on both
-sides, but synthetic context selection; actual route, admission and Durable Object behavior are
-tested separately in Workerd. Hosted callback behavior requires separate deployment verification.
+The canary verifies the OpenCode version pinned in `packages/sandbox-images/toolchain.json` and
+Claude Agent SDK **0.2.168**, creates isolated native HOME/config/data directories, and makes no
+model inference calls. It checks native deferred OpenCode connect, fresh personal sessions/catalogs
+for both users in both clients, teardown after route eligibility closes, fixture reader
+denial/operator success, and a single mutation despite a failed response. The example proxy uses the
+production relay/credential store with real local HTTP on both sides, but synthetic context
+selection; actual route, admission and Durable Object behavior are tested separately in Workerd.
+Hosted callback behavior requires separate deployment verification.
 
 The separate Claude configuration regression needs only the Python environment, not the example
 server or an API key:
