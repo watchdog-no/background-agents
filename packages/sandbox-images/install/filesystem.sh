@@ -11,7 +11,7 @@ mkdir -p /workspace /tmp/opencode /app/plugins /app/verify \
 cp "$OI_INSTALL_DIR/agent-browser.json" "$OI_RUNTIME_HOME/.agent-browser/config.json"
 cp -a /app/opencode-deps/. "$OI_RUNTIME_HOME/.config/opencode/"
 install -m 0755 /app/sandbox_runtime/gh-wrapper.sh /usr/local/bin/gh
-printf '%s\n' '#!/bin/sh' 'exec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"' > /usr/local/bin/oi-git-credentials
+printf '%s\n' '#!/bin/sh' 'exec /opt/openinspect/python/bin/python -m sandbox_runtime.credentials.git_credential_helper "$@"' > /usr/local/bin/oi-git-credentials
 chmod 0755 /usr/local/bin/oi-git-credentials
 git config --system credential.helper /usr/local/bin/oi-git-credentials
 git config --system credential.useHttpPath true

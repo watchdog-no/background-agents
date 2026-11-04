@@ -143,9 +143,7 @@ class RepositorySynchronizer:
 
     async def ensure_credentials_configured(self) -> None:
         shim_path = Path("/usr/local/bin/oi-git-credentials")
-        shim_body = (
-            '#!/bin/sh\nexec python3 -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
-        )
+        shim_body = '#!/bin/sh\nexec /opt/openinspect/python/bin/python -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
         shim_available = False
         try:
             if shim_path.exists() and shim_path.read_text() == shim_body:

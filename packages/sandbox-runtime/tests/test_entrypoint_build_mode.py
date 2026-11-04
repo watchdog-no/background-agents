@@ -1510,13 +1510,16 @@ class TestEnsureCredentialHelperConfigured:
                 "sandbox_runtime.repository_sync.asyncio.create_subprocess_exec",
                 side_effect=fake_subprocess,
             ),
-            patch("sandbox_runtime.repository_sync.Path.write_text"),
+            patch("sandbox_runtime.repository_sync.Path.write_text") as shim_write,
             patch("sandbox_runtime.repository_sync.Path.chmod"),
             patch("sandbox_runtime.repository_sync.Path.exists", return_value=False),
             patch.object(supervisor.repository_boot.synchronizer, "_install_gh_wrapper"),
         ):
             await supervisor.repository_boot.synchronizer.ensure_credentials_configured()
 
+        shim_write.assert_called_once_with(
+            '#!/bin/sh\nexec /opt/openinspect/python/bin/python -m sandbox_runtime.credentials.git_credential_helper "$@"\n'
+        )
         assert all("--replace-all" in c for c in git_config_calls)
         pairs = {(c[4], c[5]) for c in git_config_calls}
         assert ("credential.helper", "/usr/local/bin/oi-git-credentials") in pairs

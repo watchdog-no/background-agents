@@ -47,7 +47,7 @@ EXITS_NONZERO = "#!/bin/sh\nexit 1\n"
 # present before use so that a drift in the wrapper body fails loudly here
 # instead of silently leaving the test running the real gh / helper.
 REAL_GH_ANCHOR = 'REAL_GH="/usr/bin/gh"'
-HELPER_ANCHOR = "python3 -m sandbox_runtime.credentials.git_credential_helper gh-token"
+HELPER_ANCHOR = "/opt/openinspect/python/bin/python -m sandbox_runtime.credentials.git_credential_helper gh-token"
 
 
 def _build_wrapper(tmp_path: Path, *, token_cmd_body: str) -> Path:
@@ -111,18 +111,19 @@ def test_codex_environment_supports_real_gh_credential_helper(
     real_gh.write_text(REAL_GH_DECISION)
     real_gh.chmod(0o755)
     assert REAL_GH_ANCHOR in GH_WRAPPER_BODY
-    assert HELPER_ANCHOR in GH_WRAPPER_BODY
     wrapper = tmp_path / "gh"
     wrapper.write_text(
         GH_WRAPPER_BODY.replace(REAL_GH_ANCHOR, f'REAL_GH="{real_gh}"').replace(
-            HELPER_ANCHOR,
-            f"{shlex.quote(sys.executable)} -m sandbox_runtime.credentials.git_credential_helper gh-token",
+            "/opt/openinspect/python/bin/python", shlex.quote(sys.executable)
         )
     )
     wrapper.chmod(0o755)
+    wrong_python = tmp_path / "python3"
+    wrong_python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -S "$@"\n')
+    wrong_python.chmod(0o755)
     env = clean_codex_env(
         {
-            "PATH": os.environ["PATH"],
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
             "PYTHONPATH": str(Path(repository_sync.__file__).parents[1]),
             "CONTROL_PLANE_URL": "https://control-plane.example.invalid",
             "SANDBOX_AUTH_TOKEN": "synthetic-sandbox-token",

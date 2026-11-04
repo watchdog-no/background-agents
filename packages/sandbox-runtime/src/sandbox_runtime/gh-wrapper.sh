@@ -34,7 +34,7 @@ if [ "$pos1" = "pr" ] && { [ "$pos2" = "create" ] || [ "$pos2" = "new" ]; }; the
   exit 1
 fi
 
-token=$(python3 -m sandbox_runtime.credentials.git_credential_helper gh-token || true)
+token=$(/opt/openinspect/python/bin/python -m sandbox_runtime.credentials.git_credential_helper gh-token || true)
 if [ -n "$token" ]; then
   export GH_TOKEN="$token"
 fi
