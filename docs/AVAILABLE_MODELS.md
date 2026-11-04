@@ -62,6 +62,7 @@ OpenAI models support connected ChatGPT provider accounts or `OPENAI_API_KEY` mo
 | `openai/gpt-6-astra`   | GPT-6 Astra   | Most capable model for complex, demanding work      | low, medium, high, xhigh, max       | medium         |
 | `openai/gpt-6-sol`     | GPT-6 Sol     | Complex coding and agentic workflows                | none, low, medium, high, xhigh, max | medium         |
 | `openai/gpt-6.1-sol`   | GPT-6.1 Sol   | Complex coding, computer use, and professional work | low, medium, high, xhigh, max       | medium         |
+| `openai/gpt-6.1-terra` | GPT-6.1 Terra | Visual reasoning, computer use, and natural writing | none, low, medium, high, xhigh, max | medium         |
 | `openai/gpt-6-luna`    | GPT-6 Luna    | Efficient model for focused, high-volume tasks      | none, low, medium, high, xhigh, max | medium         |
 
 ## xAI / SuperGrok

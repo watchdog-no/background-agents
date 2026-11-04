@@ -242,6 +242,16 @@ export const MODEL_CATALOG = [
         },
       },
       {
+        id: "openai/gpt-6.1-terra",
+        codex: { default: "low" },
+        name: "GPT-6.1 Terra",
+        description: "Visual reasoning, computer use, and natural writing",
+        reasoning: {
+          efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+          default: "medium",
+        },
+      },
+      {
         id: "openai/gpt-6-luna",
         codex: {},
         name: "GPT-6 Luna",

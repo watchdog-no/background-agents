@@ -13,7 +13,9 @@ Claude Sonnet 5.5 added from the 2026-09-28 retrieval.
 Source SHA-256: 06e0071dd4ae9c9da2db1fabf28eb4994914fefdc5dd10270a5b340c88a49aec
 GPT-6.1 Sol added from the 2026-09-29 retrieval.
 Source SHA-256: e4677e698a53d3b8b11c569c0ecc2f5722cd8126677bf5f7dbff23daf942a17b
-Subset SHA-256: 121c3cf245d515b9862685a084ca8fdb1b9200ab672cca1658949b1dd0de6265
+GPT-6.1 Terra added from the 2026-11-04 retrieval.
+Source SHA-256: 3c98c4ea4ce2fc866e8f7cf858f7c79ce96d12aa190b6f26b9af77b448519b02
+Subset SHA-256: fbc59c3d17de9575cd489fd67a4f6da4e9c73caa971d1738fc3b968cb5ffb52b
 Reconcile this frozen fixture with shared model/effort definitions when changing
 models or the binary. Mocks verify serialization, not live provider acceptance.
 """

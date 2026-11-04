@@ -198,6 +198,7 @@ describe("Codex pinned native compatibility", () => {
     ["openai/gpt-6-astra", "low", true],
     ["openai/gpt-6-sol", "medium", true],
     ["openai/gpt-6.1-sol", "low", true],
+    ["openai/gpt-6.1-terra", "low", true],
     ["openai/gpt-6-luna", "medium", true],
   ] as const)(
     "preserves native reasoning for %s without changing legacy settings",
