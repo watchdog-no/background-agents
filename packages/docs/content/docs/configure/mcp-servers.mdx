@@ -80,7 +80,7 @@ A remote server uses one of three authentication modes, chosen under **Authentic
 
 A routed server must speak Streamable HTTP at a public HTTPS URL: no IP address, single-label or `localhost`, `.local`, or `.internal` hostname, credentials in the URL, fragment, or port other than 443. The hostname is checked as written; OpenInspect does not check the addresses it resolves to. Routed requests have per-sandbox rate and size limits; see [Limits](/reference/limits#mcp-servers).
 
-For **Each user's OAuth connection**, also enter the **OAuth issuer**. Leave **OAuth resource** blank: it defaults to the server URL, and connecting fails for any other value. When you change an existing server's URL, clear **OAuth resource** or set it to the new URL. The server must publish OAuth metadata that names that issuer and resource exactly, keep its authorization, token, and registration endpoints on the issuer's origin, and support dynamic client registration for a public client with S256 PKCE.
+For **Each user's OAuth connection**, also enter the **OAuth issuer**. Leave **OAuth resource** blank: it defaults to the server URL, and connecting fails for any other value. When you change an existing server's URL, clear **OAuth resource** or set it to the new URL. The server must publish OAuth metadata that names that issuer and resource exactly, keep its token and registration endpoints on the issuer's origin and its authorization endpoint on the issuer's registrable domain (for example `foo.test` for an issuer at `api.foo.test`), and support dynamic client registration for a public client with S256 PKCE.
 
 ## Saved credentials
 

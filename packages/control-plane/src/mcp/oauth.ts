@@ -7,7 +7,7 @@ import {
   type McpGrantBinding,
 } from "../db/mcp-connections";
 import type { McpServerMetadata } from "@open-inspect/shared/types/integrations";
-import { mcpDestination } from "./destination";
+import { mcpDestination, mcpDestinationInRegistrableDomain } from "./destination";
 import { McpError } from "./errors";
 
 export const MCP_CREDENTIAL_TIMEOUT_MS = 20_000;
@@ -74,6 +74,24 @@ async function oauthRequest(
     )
   );
 }
+/**
+ * RFC 9728 discovery by probing: the path-inserted well-known URL first, then the origin-root URL
+ * for servers that only publish metadata there. A probe that returns a non-success response falls
+ * through to the next candidate; timeouts, oversized bodies and other failures do not.
+ */
+async function protectedResourceMetadata(fetcher: McpFetch, resource: URL): Promise<unknown> {
+  const base = `${resource.origin}/.well-known/oauth-protected-resource`;
+  const candidates = resource.pathname === "/" ? [base] : [`${base}${resource.pathname}`, base];
+  for (const [index, url] of candidates.entries()) {
+    try {
+      return await oauthRequest(fetcher, url);
+    } catch (error) {
+      const retryable = error instanceof McpError && error.code === "mcp_reconnect_required";
+      if (!retryable || index === candidates.length - 1) throw error;
+    }
+  }
+  throw new McpError("mcp_unavailable", 503);
+}
 async function exchange(
   fetcher: McpFetch,
   endpoint: string,
@@ -126,13 +144,10 @@ export class McpOAuthService {
       current.redirect_uri === redirectUri
     ) {
       this.assertProfile(current);
-      mcpDestination(current.authorization_endpoint, issuer.origin);
+      mcpDestinationInRegistrableDomain(current.authorization_endpoint, issuer);
       return current;
     }
-    const protectedMetadata = await oauthRequest(
-      this.fetcher,
-      `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname === "/" ? "" : resource.pathname}`
-    );
+    const protectedMetadata = await protectedResourceMetadata(this.fetcher, resource);
     const protectedProfile = z
       .object({ resource: z.string(), authorization_servers: z.array(z.string()) })
       .parse(protectedMetadata);
@@ -152,11 +167,10 @@ export class McpOAuthService {
       !metadata.code_challenge_methods_supported.includes("S256")
     )
       throw new McpError("mcp_denied");
-    for (const endpoint of [
-      metadata.authorization_endpoint,
-      metadata.token_endpoint,
-      metadata.registration_endpoint,
-    ])
+    // The browser-only authorization endpoint may live elsewhere on the issuer's registrable domain;
+    // endpoints the control plane calls directly stay pinned to the issuer's exact origin.
+    mcpDestinationInRegistrableDomain(metadata.authorization_endpoint, issuer);
+    for (const endpoint of [metadata.token_endpoint, metadata.registration_endpoint])
       mcpDestination(endpoint, issuer.origin);
     const registration = z
       .object({

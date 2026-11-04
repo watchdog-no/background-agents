@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mcpDestination } from "./destination";
+import { mcpDestination, mcpDestinationInRegistrableDomain } from "./destination";
 
 describe("mcpDestination", () => {
   it("accepts a public HTTPS endpoint", () => {
@@ -35,5 +35,41 @@ describe("mcpDestination", () => {
     expect(
       mcpDestination("https://auth.example.com/token", "https://auth.example.com").pathname
     ).toBe("/token");
+  });
+});
+
+describe("mcpDestinationInRegistrableDomain", () => {
+  const anchor = new URL("https://api.foo.test");
+
+  it("accepts other hosts on the same registrable domain", () => {
+    expect(
+      mcpDestinationInRegistrableDomain("https://foo.test/oauth/authorize", anchor).origin
+    ).toBe("https://foo.test");
+    expect(mcpDestinationInRegistrableDomain("https://auth.foo.test/a", anchor).origin).toBe(
+      "https://auth.foo.test"
+    );
+  });
+
+  it.each([
+    "https://foo.test.evil.example/a",
+    "https://evilfoo.test/a",
+    "https://foo.example/a",
+    "http://foo.test/a",
+    "https://foo.test:8443/a",
+    "https://user:pw@foo.test/a",
+  ])("rejects %s", (value) => {
+    expect(() => mcpDestinationInRegistrableDomain(value, anchor)).toThrow(
+      expect.objectContaining({ code: "mcp_unsupported" })
+    );
+  });
+
+  it("treats private suffixes as public suffixes", () => {
+    const tenant = new URL("https://a.github.io");
+    expect(() => mcpDestinationInRegistrableDomain("https://b.github.io/x", tenant)).toThrow(
+      expect.objectContaining({ code: "mcp_unsupported" })
+    );
+    expect(mcpDestinationInRegistrableDomain("https://www.a.github.io/x", tenant).origin).toBe(
+      "https://www.a.github.io"
+    );
   });
 });
