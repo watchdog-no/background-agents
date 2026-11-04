@@ -11,6 +11,7 @@ the ``TurnOutcome`` returned here.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -134,6 +135,10 @@ class ClaudeHarnessConfig:
     # Appended to the claude_code preset system prompt (repo guidance notes).
     system_prompt_append: str | None = None
     tools: ToolServerConfig | None = None
+    # Other checkouts of a multi-repository session (``--add-dir``).
+    add_dirs: tuple[Path, ...] = ()
+    # Instruction files Claude Code must not load natively (``claudeMdExcludes``).
+    claude_md_excludes: tuple[str, ...] = ()
 
 
 def bare_model_id(model: str | None, default: str) -> str:
@@ -155,6 +160,16 @@ def reasoning_options(model: str, reasoning_effort: str | None) -> dict[str, Any
         budget = THINKING_BUDGETS.get(reasoning_effort)
         return {"thinking": {"type": "enabled", "budget_tokens": budget}} if budget else {}
     return {"effort": reasoning_effort} if reasoning_effort in EFFORT_LEVELS else {}
+
+
+def with_claude_md_excludes(settings: str, claude_md_excludes: tuple[str, ...]) -> str:
+    """``settings`` (a ``--settings`` JSON payload) plus instruction files to skip."""
+    if not claude_md_excludes:
+        return settings
+    return json.dumps(
+        {**json.loads(settings), "claudeMdExcludes": list(claude_md_excludes)},
+        separators=(",", ":"),
+    )
 
 
 class ClaudeHarness:
@@ -316,7 +331,10 @@ class ClaudeHarness:
             "disallowed_tools": [*DISALLOWED_TOOLS],
             "permission_mode": "dontAsk",
             "system_prompt": system_prompt,
-            "settings": mcp_policy_settings(self.config.mcp_servers, self._managed_mcp_allowed),
+            "settings": with_claude_md_excludes(
+                mcp_policy_settings(self.config.mcp_servers, self._managed_mcp_allowed),
+                self.config.claude_md_excludes,
+            ),
             "setting_sources": ["user", "project"],
             "include_partial_messages": True,
             "forward_subagent_text": False,
@@ -324,6 +342,8 @@ class ClaudeHarness:
             "stderr": self._trajectory.stderr,
             **reasoning_options(model, reasoning_effort),
         }
+        if self.config.add_dirs:
+            kwargs["add_dirs"] = [str(directory) for directory in self.config.add_dirs]
         if self._resume_on_connect:
             kwargs["resume"] = self.session_id
         else:

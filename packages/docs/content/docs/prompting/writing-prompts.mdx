@@ -175,7 +175,7 @@ Handoff: open a draft PR; in the body list the files changed and the commands yo
 
 The agent works in a clone of the repository, so anything you can name by path, it can open.
 
-- **File paths.** `src/orders/create.ts` beats "the order creation code". In multi-repository sessions, prefix with the repository directory: `api/src/orders/create.ts` when the repository is cloned at `/workspace/api`.
+- **File paths.** `src/orders/create.ts` beats "the order creation code". In multi-repository sessions, include the repository directory: `/workspace/api/src/orders/create.ts` when the repository is cloned at `/workspace/api`. The full path resolves the same way whichever directory the agent starts in.
 - **Commands.** Give the commands as you would type them: `npm test -- src/orders`, `uv run pytest tests/orders`. If a command needs a running service, say so or add it to `.openinspect/start.sh`.
 - **Existing tests.** Point at a test file to copy the setup from: "mirror the fixtures in `tests/orders/test_create.py`".
 - **Recent changes.** Name the PR or commit that introduced the behavior if you know it; the agent has git history and the GitHub CLI.

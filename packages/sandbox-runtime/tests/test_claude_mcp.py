@@ -158,3 +158,13 @@ async def test_no_personal_servers_skips_native_status_requests():
     client = AsyncMock(spec=McpStatusClient)
     await check_managed_mcp(client, set(), HarnessPrompt("m", "test"), AsyncMock())
     client.get_mcp_status.assert_not_awaited()
+
+
+async def test_denied_managed_names_and_instruction_excludes_share_one_settings_payload(tmp_path):
+    """A multi-repo session's ``claudeMdExcludes`` must not replace the MCP denials."""
+    f = Harness(tmp_path, mcp_servers=(SERVER,), claude_md_excludes=("/workspace/AGENTS.md",))
+    await f.harness.open()
+    await f.harness.create_session()
+    settings = json.loads(f.harness.build_options("claude-sonnet-4-6", None)["settings"])
+    assert settings["deniedMcpServers"] == [{"serverName": "example"}]
+    assert settings["claudeMdExcludes"] == ["/workspace/AGENTS.md"]

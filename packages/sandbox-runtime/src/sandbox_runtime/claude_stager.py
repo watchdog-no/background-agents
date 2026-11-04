@@ -10,9 +10,15 @@ so ``start()`` only prepares the filesystem the child will see:
   tree through ``ManagedSkillsMaterializer``);
 - the standalone bin scripts the agent calls from Bash;
 - a small JSON handoff (``CLAUDE_HARNESS_FILE_PATH``) telling the bridge which
-  workdir and config dir the supervisor chose. It carries decisions only: MCP
-  configuration, which can hold credentials, reaches the bridge through its
-  own ``SESSION_CONFIG`` and is never written to disk here.
+  workdir, additional directories and config dir the supervisor chose. It
+  carries decisions only: MCP configuration, which can hold credentials,
+  reaches the bridge through its own ``SESSION_CONFIG`` and is never written
+  to disk here.
+
+In a multi-repository session the workdir is the primary checkout, not the
+shared ``/workspace``: Claude Code takes ``.claude/settings.json`` (hooks
+included) only from where it starts. The other members become additional
+directories (``--add-dir``).
 """
 
 from __future__ import annotations
@@ -97,6 +103,23 @@ class ClaudeStager(HarnessStager):
 
     def _prepare_config_dir(self) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
+
+    def _agent_directories(
+        self, repositories: Sequence[RepoEntry], workdir: Path
+    ) -> tuple[Path, tuple[Path, ...], Path | None]:
+        if len(repositories) < 2:
+            return workdir, (), None
+        primary, *others = repositories
+        members = tuple(repo.path for repo in others if _is_checkout(repo.path))
+        # A primary whose checkout is missing (a failed sync on restore) keeps
+        # the workspace as the start directory rather than an empty one.
+        if not _is_checkout(primary.path):
+            return workdir, members, workdir
+        return primary.path, members, workdir
+
+
+def _is_checkout(path: Path) -> bool:
+    return (path / ".git").exists()
 
 
 def _resolve_lenient(path: Path) -> Path:

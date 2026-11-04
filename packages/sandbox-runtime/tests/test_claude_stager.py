@@ -185,3 +185,111 @@ def test_config_dir_defaults_outside_every_repository(monkeypatch, tmp_path: Pat
     assert resolve_claude_config_dir() == tmp_path / ".openinspect" / "claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/elsewhere")
     assert resolve_claude_config_dir() == Path("/elsewhere")
+
+
+def _checkout(root: Path, name: str, *, git: bool = True) -> RepoEntry:
+    path = root / "workspace" / name
+    path.mkdir(parents=True)
+    if git:
+        (path / ".git").mkdir()
+    return RepoEntry(owner="acme", name=name, branch="main", path=path)
+
+
+@pytest.mark.asyncio
+async def test_multi_repo_handoff_starts_in_the_primary_with_members_as_extra_dirs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Claude Code reads ``.claude/settings.json`` only from where it starts, so a
+    multi-repo session starts in the primary checkout, not the shared workspace."""
+    stager = _stager(tmp_path, monkeypatch)
+    repos = tuple(_checkout(tmp_path, name) for name in ("api", "web", "infra"))
+    workspace = tmp_path / "workspace"
+
+    await stager.start(repos, workspace)
+
+    handoff = ClaudeHarnessHandoff.read(tmp_path / "handoff.json")
+    assert handoff.workdir == repos[0].path
+    assert handoff.additional_dirs == (repos[1].path, repos[2].path)
+    assert handoff.workspace_dir == workspace
+
+
+@pytest.mark.asyncio
+async def test_single_repo_handoff_is_unchanged(tmp_path: Path, monkeypatch) -> None:
+    stager = _stager(tmp_path, monkeypatch)
+    repo = _checkout(tmp_path, "api")
+
+    await stager.start((repo,), repo.path)
+
+    raw = json.loads((tmp_path / "handoff.json").read_text())
+    assert raw == {
+        "workdir": str(repo.path),
+        "configDir": str(tmp_path / "claude-config"),
+        "hasRepository": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_primary_checkout_keeps_the_workspace(tmp_path: Path, monkeypatch) -> None:
+    """A restore whose primary failed to sync doesn't start the agent in an empty directory."""
+    stager = _stager(tmp_path, monkeypatch)
+    web = _checkout(tmp_path, "web")
+    repos = (_checkout(tmp_path, "api", git=False), web)
+    workspace = tmp_path / "workspace"
+
+    await stager.start(repos, workspace)
+
+    handoff = ClaudeHarnessHandoff.read(tmp_path / "handoff.json")
+    assert handoff.workdir == workspace
+    # The intact members still load their skills at start.
+    assert handoff.additional_dirs == (web.path,)
+    # Still a multi-repo workspace: the bridge must keep its notes from loading twice.
+    assert handoff.workspace_dir == workspace
+
+
+@pytest.mark.asyncio
+async def test_each_boot_recomputes_the_handoff_from_current_checkouts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A restore whose checkouts changed since the last boot must not reuse its handoff."""
+    stager = _stager(tmp_path, monkeypatch)
+    api, web = _checkout(tmp_path, "api"), _checkout(tmp_path, "web")
+    infra = _checkout(tmp_path, "infra", git=False)
+    workspace = tmp_path / "workspace"
+    await stager.start((api, web, infra), workspace)
+
+    (api.path / ".git").rmdir()
+    (infra.path / ".git").mkdir()
+    await stager.start((api, web, infra), workspace)
+
+    handoff = ClaudeHarnessHandoff.read(tmp_path / "handoff.json")
+    assert handoff.workdir == workspace
+    assert handoff.additional_dirs == (web.path, infra.path)
+
+
+@pytest.mark.asyncio
+async def test_missing_member_checkout_is_not_passed_to_the_cli(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stager = _stager(tmp_path, monkeypatch)
+    api = _checkout(tmp_path, "api")
+    web = RepoEntry(owner="acme", name="web", branch="main", path=tmp_path / "workspace" / "web")
+    # A failed clone can leave an empty directory behind.
+    infra = _checkout(tmp_path, "infra", git=False)
+
+    await stager.start((api, web, infra), tmp_path / "workspace")
+
+    handoff = ClaudeHarnessHandoff.read(tmp_path / "handoff.json")
+    assert handoff.workdir == api.path
+    assert handoff.additional_dirs == ()
+
+
+def test_handoff_written_before_additional_dirs_reads_as_single_directory(tmp_path: Path) -> None:
+    """A snapshot taken before this field existed still yields a usable handoff."""
+    path = tmp_path / "handoff.json"
+    path.write_text(json.dumps({"workdir": "/workspace", "configDir": "/c", "hasRepository": True}))
+
+    handoff = ClaudeHarnessHandoff.read(path)
+
+    assert handoff.workdir == Path("/workspace")
+    assert handoff.additional_dirs == ()
+    assert handoff.workspace_dir is None

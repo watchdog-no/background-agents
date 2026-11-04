@@ -71,3 +71,30 @@ def test_boot_and_managed_skills_share_owned_home_ignoring_user_codex_home(tmp_p
     assert supervisor.harness_process.config_dir == decided
     assert supervisor.managed_skills is not None
     assert supervisor.managed_skills.destination == decided / "skills"
+
+
+@pytest.mark.asyncio
+async def test_multi_repo_handoff_keeps_the_shared_workspace(tmp_path, monkeypatch):
+    """Only the Claude stager moves its start directory; Codex keeps ``/workspace``."""
+    from sandbox_runtime.repo_config import RepoEntry
+
+    monkeypatch.setenv(BIN_INSTALL_DIR_ENV_VAR, str(tmp_path / "bin"))
+    workspace = tmp_path / "workspace"
+    repos = []
+    for name in ("api", "web"):
+        (workspace / name / ".git").mkdir(parents=True)
+        repos.append(RepoEntry(owner="acme", name=name, branch="main", path=workspace / name))
+    stager = CodexStager(
+        CodexStagerConfig(has_repository=True, mcp_servers=()),
+        MagicMock(),
+        config_dir=tmp_path / "codex-home",
+        bundled_skills_path=tmp_path / "no-skills",
+        handoff_path=tmp_path / "handoff.json",
+        mcp_packages=MagicMock(install=AsyncMock()),
+    )
+
+    await stager.start(tuple(repos), workspace)
+
+    assert CodexHarnessHandoff.read(tmp_path / "handoff.json") == CodexHarnessHandoff(
+        workspace, stager.config_dir, True
+    )

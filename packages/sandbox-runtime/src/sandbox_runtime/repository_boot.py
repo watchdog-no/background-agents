@@ -26,6 +26,18 @@ if TYPE_CHECKING:
     from .tunnel_environment import TunnelEnvironment
 
 
+# Per-repository instructions the workspace manifest points at, in the names
+# the supported harnesses read natively. A harness that starts outside a
+# member may never load them on its own.
+INSTRUCTION_PATHS = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude/AGENTS.md",
+    ".claude/CLAUDE.md",
+    ".claude/rules",
+)
+
+
 @dataclass(frozen=True)
 class RepositoryBootResult:
     git_sync_success: bool
@@ -121,6 +133,17 @@ class RepositoryBoot:
         except Exception as error:
             self.log.warn("supervisor.repo_manifest_write_failed", exc=error)
 
+    def _instruction_entry(self, path: Path) -> str | None:
+        # A committed .claude symlink can point somewhere the sandbox user
+        # can't search; one unreadable entry must not fail the boot.
+        try:
+            if not path.exists():
+                return None
+            return str(path) + ("/" if path.is_dir() else "")
+        except OSError as error:
+            self.log.warn("workspace.instruction_path_unreadable", path=str(path), exc=error)
+            return None
+
     def _write_workspace_manifest(self) -> None:
         if not self.is_multi_repo:
             return
@@ -130,7 +153,8 @@ class RepositoryBoot:
             "",
             "# Workspace",
             "",
-            "This session spans multiple repositories, checked out side by side:",
+            f"This session spans multiple repositories, checked out side by side in "
+            f"`{self.workspace_path}` (table paths are relative to it):",
             "",
             "| Path | Repository | Base branch |",
             "| --- | --- | --- |",
@@ -145,14 +169,21 @@ class RepositoryBoot:
             lines.extend(
                 [f"All work happens on the branch `{working_branch}` in every repository.", ""]
             )
-        member_docs = [repo for repo in self.repositories if (repo.path / "AGENTS.md").exists()]
+        member_docs = [
+            entry
+            for repo in self.repositories
+            for name in INSTRUCTION_PATHS
+            if (entry := self._instruction_entry(repo.path / name)) is not None
+        ]
         if member_docs:
             lines.extend(
                 [
-                    "Repository-specific instructions are NOT loaded automatically. "
-                    "Read them before working in a repository:",
+                    "Each repository's own instructions may not be loaded for you. Before "
+                    "working in a repository, read its entries below unless they are already "
+                    "in your context. A trailing `/` is a directory of rule files; a rule "
+                    "with `paths` frontmatter applies only to the files it matches:",
                     "",
-                    *(f"- `./{repo.name}/AGENTS.md`" for repo in member_docs),
+                    *(f"- `{doc}`" for doc in member_docs),
                     "",
                 ]
             )

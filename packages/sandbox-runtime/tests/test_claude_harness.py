@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from claude_agent_sdk import (
@@ -52,9 +53,6 @@ from tests.claude_fakes import (
     _stream,
     _text_delta,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestOpen:
@@ -208,6 +206,40 @@ class TestOptions:
         assert "mcp__linear__*" in options["allowed_tools"]
         assert "mcp__local__*" in options["allowed_tools"]
         assert "Bash" in options["allowed_tools"]
+
+    async def test_single_directory_session_passes_no_extra_options(self, tmp_path: Path) -> None:
+        h = Harness(tmp_path, turns=[[_result(0.1)]])
+        await h.harness.open()
+        await h.harness.create_session()
+        await _run(h.harness, HarnessPrompt(message_id="m1", text="hi"))
+        options = h.client.options
+        assert "add_dirs" not in options
+        assert "claudeMdExcludes" not in json.loads(options["settings"])
+
+    async def test_multi_repo_session_adds_members_and_skips_native_workspace_notes(
+        self, tmp_path: Path
+    ) -> None:
+        """The other members reach the CLI as ``--add-dir``; the workspace notes,
+        already in the system prompt, are kept out of its native AGENTS.md load."""
+        h = Harness(
+            tmp_path,
+            turns=[[_result(0.1)]],
+            add_dirs=(tmp_path / "frontend", tmp_path / "infra"),
+            claude_md_excludes=(str(tmp_path / "AGENTS.md"),),
+        )
+        await h.harness.open()
+        await h.harness.create_session()
+        await _run(h.harness, HarnessPrompt(message_id="m1", text="hi"))
+        options = h.client.options
+        assert options["cwd"] == str(tmp_path / "repo")
+        assert options["add_dirs"] == [str(tmp_path / "frontend"), str(tmp_path / "infra")]
+        assert json.loads(options["settings"]) == {
+            "attribution": {"commit": "", "pr": "", "sessionUrl": False},
+            "feedbackDrafts": "off",
+            "feedbackSurveyRate": 0,
+            "claudeMdExcludes": [str(tmp_path / "AGENTS.md")],
+        }
+        assert options["setting_sources"] == ["user", "project"]
 
     async def test_stdout_ceiling_clears_the_whole_attachment_budget(self, tmp_path: Path) -> None:
         """One NDJSON line carries every attachment the runtime accepts.
@@ -1009,3 +1041,17 @@ class TestDefaultTranscriptLookup:
         )
         assert not _default_transcript_exists("not-a-uuid", tmp_path / "repo", config_dir)
         assert not _default_transcript_exists(session_id, tmp_path / "repo", tmp_path / "missing")
+
+    def test_finds_a_transcript_written_before_the_start_directory_moved(
+        self, tmp_path: Path
+    ) -> None:
+        """A multi-repo session started in /workspace resumes from the primary checkout."""
+        from sandbox_runtime.harness.claude import _default_transcript_exists
+
+        config_dir = tmp_path / "claude-config"
+        session_id = "617347e9-9ff5-4205-9efe-c185b3459127"
+        workspace_project = config_dir / "projects" / "-workspace"
+        workspace_project.mkdir(parents=True)
+        (workspace_project / f"{session_id}.jsonl").write_text("{}\n")
+
+        assert _default_transcript_exists(session_id, Path("/workspace/api"), config_dir)

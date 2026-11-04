@@ -34,16 +34,25 @@ class HarnessHandoff:
     workdir: Path
     config_dir: Path
     has_repository: bool
+    # Other checkouts the agent may use beyond ``workdir``, and, in a
+    # multi-repository session, the directory holding the supervisor's
+    # generated AGENTS.md. Both default to the single-directory layout, so a
+    # handoff written before they existed reads the same.
+    additional_dirs: tuple[Path, ...] = ()
+    workspace_dir: Path | None = None
 
     def write(self, path: Path | None = None) -> None:
         path = path if path is not None else self.default_path
-        payload = json.dumps(
-            {
-                "workdir": str(self.workdir),
-                "configDir": str(self.config_dir),
-                "hasRepository": self.has_repository,
-            }
-        )
+        data: dict[str, Any] = {
+            "workdir": str(self.workdir),
+            "configDir": str(self.config_dir),
+            "hasRepository": self.has_repository,
+        }
+        if self.additional_dirs:
+            data["additionalDirs"] = [str(directory) for directory in self.additional_dirs]
+        if self.workspace_dir is not None:
+            data["workspaceDir"] = str(self.workspace_dir)
+        payload = json.dumps(data)
         # Owner-only and atomic: a reader sees the whole file or none of it.
         staging = path.with_name(path.name + ".tmp")
         descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -55,10 +64,16 @@ class HarnessHandoff:
     def read(cls, path: Path | None = None) -> Self:
         path = path if path is not None else cls.default_path
         data = json.loads(path.read_text())
+        additional = data.get("additionalDirs")
+        workspace_dir = data.get("workspaceDir")
         return cls(
             workdir=Path(str(data["workdir"])),
             config_dir=Path(str(data["configDir"])),
             has_repository=bool(data.get("hasRepository")),
+            additional_dirs=tuple(Path(str(entry)) for entry in additional)
+            if isinstance(additional, list)
+            else (),
+            workspace_dir=Path(str(workspace_dir)) if workspace_dir else None,
         )
 
 
@@ -104,13 +119,29 @@ class HarnessStager(ABC):
             await self._mcp_packages.install(list(self.config.mcp_servers))
         except Exception as error:
             self.log.warn(f"{self._log_prefix}.mcp_preinstall_failed", exc=error)
+        agent_workdir, additional_dirs, workspace_dir = self._agent_directories(
+            repositories, workdir
+        )
         HarnessHandoff(
-            workdir=workdir,
+            workdir=agent_workdir,
             config_dir=self.config_dir,
             has_repository=self.config.has_repository,
+            additional_dirs=additional_dirs,
+            workspace_dir=workspace_dir,
         ).write(self.handoff_path)
         self.started = True
         self.log.info(f"{self._log_prefix}.staged", repo_count=len(repositories))
+
+    def _agent_directories(
+        self, repositories: Sequence[RepoEntry], workdir: Path
+    ) -> tuple[Path, tuple[Path, ...], Path | None]:
+        """Where the agent starts, the other directories it may use, and the
+        multi-repository workspace whose generated AGENTS.md it must be given.
+
+        The supervisor's ``workdir`` alone by default. A harness overrides this
+        when its vendor loads project configuration only from where it starts.
+        """
+        return workdir, (), None
 
     def _install_bundled_skills(self) -> None:
         if not self.bundled_skills_path.is_dir():

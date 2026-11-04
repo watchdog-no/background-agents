@@ -9,6 +9,7 @@ import pytest
 
 from sandbox_runtime import supervisor as supervisor_module
 from sandbox_runtime.constants import BOOT_COMPLETE_MARKER_ENV_VAR
+from sandbox_runtime.repo_config import RepoEntry
 from sandbox_runtime.repository_boot import RepositoryBootResult
 from sandbox_runtime.runtime_config import BootMode, RuntimeConfig
 from sandbox_runtime.supervisor import SandboxSupervisor
@@ -283,6 +284,28 @@ async def test_catalog_recovery_precedes_harness_start(tmp_path, monkeypatch, ha
         supervisor_module.ensure_model_catalog.assert_not_awaited()
     else:
         assert events.index("catalog") < events.index("opencode") < events.index("bridge")
+
+
+@pytest.mark.parametrize("mode", [BootMode.FRESH, BootMode.REPO_IMAGE, BootMode.SNAPSHOT_RESTORE])
+async def test_harness_starts_from_this_boots_repositories(tmp_path, monkeypatch, mode):
+    """The Claude stager derives its start directory from these on every boot mode."""
+    supervisor, repository, harness_process, *_ = _supervisor(tmp_path, [])
+    supervisor.config = replace(supervisor.config, session_config={"harness": "claude"})
+    repos = tuple(
+        RepoEntry(owner="acme", name=name, branch="main", path=tmp_path / name)
+        for name in ("api", "web")
+    )
+    result = RepositoryBootResult(True, [], True, True, repos, tmp_path)
+    repository.boot.side_effect = None
+    repository.boot.return_value = result
+    monkeypatch.delenv("IMAGE_BUILD_MODE", raising=False)
+    monkeypatch.setenv("FROM_REPO_IMAGE", str(mode is BootMode.REPO_IMAGE).lower())
+    monkeypatch.setenv("RESTORED_FROM_SNAPSHOT", str(mode is BootMode.SNAPSHOT_RESTORE).lower())
+
+    assert await supervisor.run() is True
+    repository.boot.assert_awaited_once()
+    assert repository.boot.await_args.args[0] is mode
+    harness_process.start.assert_awaited_once_with(repos, tmp_path)
 
 
 async def test_graceful_bridge_exit_requests_shutdown(tmp_path):

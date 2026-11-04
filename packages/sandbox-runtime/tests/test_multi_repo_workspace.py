@@ -8,6 +8,7 @@ the generated workspace manifest, and .opencode assembly.
 import asyncio
 import json
 import os
+from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -411,10 +412,76 @@ class TestWorkspaceManifest:
         assert "| `./frontend/` | acme/frontend | `main` |" in manifest
         assert "| `./backend/` | acme/backend | `develop` |" in manifest
         assert "`open-inspect/sess-1`" in manifest
-        assert "`./backend/AGENTS.md`" in manifest
-        assert "`./frontend/AGENTS.md`" not in manifest
+        assert f"`{tmp_path}/backend/AGENTS.md`" in manifest
+        assert "frontend/AGENTS.md" not in manifest
         assert "create-pull-request" in manifest
         assert "`repo`" in manifest
+
+    def test_lists_instruction_files_under_every_common_name(self, tmp_path):
+        """A member whose instructions live in CLAUDE.md, .claude/AGENTS.md or
+        .claude/CLAUDE.md gets a pointer too, not only AGENTS.md."""
+        sup = _make_repository_boot(tmp_path)
+        (tmp_path / "frontend" / ".claude").mkdir(parents=True)
+        (tmp_path / "frontend" / ".claude" / "CLAUDE.md").write_text("# frontend rules")
+        (tmp_path / "frontend" / ".claude" / "AGENTS.md").write_text("# frontend agents")
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "AGENTS.md").write_text("# shared rules")
+        (tmp_path / "backend" / "CLAUDE.md").write_text("# claude rules")
+
+        sup._write_workspace_manifest()
+
+        manifest = (tmp_path / "AGENTS.md").read_text()
+        assert f"`{tmp_path}/frontend/.claude/CLAUDE.md`" in manifest
+        assert f"`{tmp_path}/frontend/.claude/AGENTS.md`" in manifest
+        assert f"`{tmp_path}/backend/AGENTS.md`" in manifest
+        assert f"`{tmp_path}/backend/CLAUDE.md`" in manifest
+        assert "frontend/AGENTS.md" not in manifest
+        assert "frontend/CLAUDE.md`" not in manifest
+
+    def test_points_at_rules_directories_with_absolute_paths(self, tmp_path):
+        """A harness started inside one member must still resolve every pointer."""
+        sup = _make_repository_boot(tmp_path)
+        (tmp_path / "frontend" / ".claude" / "rules").mkdir(parents=True)
+        (tmp_path / "backend").mkdir()
+
+        sup._write_workspace_manifest()
+
+        manifest = (tmp_path / "AGENTS.md").read_text()
+        assert f"`{tmp_path}/frontend/.claude/rules/`" in manifest
+        assert f"side by side in `{tmp_path}` (table paths are relative to it)" in manifest
+        pointers = [line for line in manifest.splitlines() if line.startswith("- `")]
+        assert pointers
+        assert all(line.startswith(f"- `{tmp_path}/") for line in pointers)
+
+    def test_unreadable_instruction_path_is_skipped(self, tmp_path, monkeypatch):
+        """A .claude the sandbox user can't search must not fail the boot."""
+        sup = _make_repository_boot(tmp_path)
+        (tmp_path / "frontend" / ".claude").mkdir(parents=True)
+        (tmp_path / "frontend" / "AGENTS.md").write_text("# Frontend")
+        (tmp_path / "backend").mkdir()
+        exists = Path.exists
+
+        def guarded(path, *args, **kwargs):
+            if ".claude" in path.parts:
+                raise PermissionError(13, "Permission denied", str(path))
+            return exists(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "exists", guarded)
+
+        sup._write_workspace_manifest()
+
+        manifest = (tmp_path / "AGENTS.md").read_text()
+        assert f"`{tmp_path}/frontend/AGENTS.md`" in manifest
+        assert ".claude" not in manifest
+
+    def test_omits_instruction_list_when_no_member_has_one(self, tmp_path):
+        sup = _make_repository_boot(tmp_path)
+        (tmp_path / "frontend").mkdir()
+        (tmp_path / "backend").mkdir()
+
+        sup._write_workspace_manifest()
+
+        assert "instructions" not in (tmp_path / "AGENTS.md").read_text()
 
     def test_omits_working_branch_line_when_absent(self, tmp_path):
         config = json.loads(MULTI_SESSION_CONFIG)

@@ -171,6 +171,8 @@ class Harness:
             oauth_managed=oauth_managed,
             system_prompt_append=overrides.pop("system_prompt_append", None),
             tools=None,
+            add_dirs=overrides.pop("add_dirs", ()),
+            claude_md_excludes=overrides.pop("claude_md_excludes", ()),
         )
         binary = tmp_path / "claude-bin"
         binary.write_text("#!/bin/sh\n")
