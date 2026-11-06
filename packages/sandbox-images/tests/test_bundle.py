@@ -40,7 +40,7 @@ def test_image_bin_directory_heads_the_launch_path(provider):
     assert environment["PATH"].split(":")[0] == "/opt/openinspect/bin"
     tools = (REPO_ROOT / "packages/sandbox-images/install/tools.sh").read_text()
     languages = (REPO_ROOT / "packages/sandbox-images/install/languages.sh").read_text()
-    for command in ("agent-browser", "code-server", "ttyd", "google-chrome", "codex"):
+    for command in ("agent-browser", "code-server", "ttyd", "rg", "google-chrome", "codex"):
         assert f"/opt/openinspect/bin/{command}" in tools
     assert '"/opt/openinspect/bin/$command"' in languages
 

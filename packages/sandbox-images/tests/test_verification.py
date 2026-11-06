@@ -97,6 +97,11 @@ def test_smoke_test_preserves_failures(monkeypatch):
         ),
         ("ttyd", "ttyd version 1.7.7", "1.7.7"),
         ("ttyd", "ttyd version 1.7.7-40e79c7", "1.7.7"),
+        (
+            "rg",
+            "ripgrep 15.2.0 (rev 0a88cdd5a4)\n\nfeatures:+pcre2\nPCRE2 10.45 is available (JIT is available)",
+            "15.2.0",
+        ),
         ("google-chrome", "Google Chrome for Testing 152.0.7977.82", "152.0.7977.82"),
     ],
 )

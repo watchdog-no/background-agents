@@ -247,6 +247,7 @@ def observed_tool_version(command: str, expected: str, output: str) -> str:
         "agent-browser": r"agent-browser\s+",
         "code-server": r"",
         "ttyd": r"ttyd version\s+",
+        "rg": r"ripgrep\s+",
         "google-chrome": r"Google Chrome(?: for Testing)?\s+",
     }
     # ttyd's pinned release appends its source commit, not a prerelease label.
@@ -272,6 +273,7 @@ def inspect_image(plan: dict[str, Any], tools: dict[str, Any], *, services: bool
         ("agent-browser", tools["agentBrowser"]),
         ("code-server", tools["codeServer"]["version"]),
         ("ttyd", tools["ttyd"]["version"]),
+        ("rg", tools["ripgrep"]["version"]),
         ("google-chrome", tools["chrome"]["version"]),
     ):
         observed = probe.run([command, "--version"])

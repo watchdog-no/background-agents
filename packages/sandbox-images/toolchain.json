@@ -57,6 +57,10 @@
     "version": "4.109.5",
     "sha256": "15ca7472e4522f214e01143673559938536571d7152c5fca3cb42966e79a688b"
   },
+  "ripgrep": {
+    "version": "15.2.0",
+    "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+  },
   "ttyd": {
     "version": "1.7.7",
     "sha256": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"

@@ -30,6 +30,12 @@ ln -sf /opt/openinspect/code-server/bin/code-server /opt/openinspect/bin/code-se
 download_checked "https://github.com/tsl0922/ttyd/releases/download/$TTYD_VERSION/ttyd.x86_64" "$TTYD_SHA256" "$download_dir/ttyd"
 install -m 0755 "$download_dir/ttyd" /usr/local/bin/ttyd
 ln -sf /usr/local/bin/ttyd /opt/openinspect/bin/ttyd
+# Agents in every harness run `rg` from their shell tools. Codex's bundled copy
+# (codex-path/rg) is private to Codex and never on the shell's PATH.
+download_checked "https://github.com/BurntSushi/ripgrep/releases/download/$RIPGREP_VERSION/ripgrep-$RIPGREP_VERSION-x86_64-unknown-linux-musl.tar.gz" "$RIPGREP_SHA256" "$download_dir/ripgrep.tar.gz"
+tar -xzf "$download_dir/ripgrep.tar.gz" -C "$download_dir" --strip-components=1 "ripgrep-$RIPGREP_VERSION-x86_64-unknown-linux-musl/rg"
+install -m 0755 "$download_dir/rg" /usr/local/bin/rg
+ln -sf /usr/local/bin/rg /opt/openinspect/bin/rg
 download_checked "https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/linux64/chrome-linux64.zip" "$CHROME_SHA256" "$download_dir/chrome.zip"
 mkdir -p /opt/openinspect/chrome
 unzip -q "$download_dir/chrome.zip" -d /opt/openinspect/chrome

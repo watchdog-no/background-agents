@@ -47,6 +47,7 @@ Every provider's image installs the shared toolchain with Node.js 24. The Vercel
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Operating system   | Debian (Amazon Linux on Vercel) with common build and system tools, including `git`, `curl`, `jq`, `unzip`, `ffmpeg`, and `ca-certificates` |
 | Source control     | GitHub CLI (`gh`)                                                                                                                           |
+| Code search        | `rg` (ripgrep) on the shell `PATH`                                                                                                          |
 | Node.js            | Node.js 24 with `npm` and `npx`, plus `pnpm`, `bun`, and `bunx`                                                                             |
 | Python             | Python 3.12 with `uv` and `uvx`. `python` and `python3` point at the same interpreter                                                       |
 | Browser automation | The `agent-browser` CLI with a headless Chrome for Testing build at `/usr/local/bin/google-chrome`                                          |
