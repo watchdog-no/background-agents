@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from ...managed_mcp import managed_marker
 from ..base import HarnessStartError
 
-CODEX_VERSION = "0.163.0"
+CODEX_VERSION = "0.170.0"
 # The image's pinned install, never a /usr/local/bin link: a substrate may
 # re-link its own coding agents there at boot (Boat does).
 CODEX_BINARY = "/opt/openinspect/codex/bin/codex"
